@@ -1,0 +1,7 @@
+package-as: GuildFoundCraigslist
+
+enable-nolib-creation: no
+
+ignore:
+  - .github
+  - .pkgmeta
