@@ -5,7 +5,7 @@
 Initial public release.
 
 - Confederation-gated marketplace driven by a config block in the guild information
-  (`GFCc`/`GFCp`, with GreenWall `GWc`/`GWp` also supported). No dependency on other addons.
+  (`GFMc`/`GFMp`, with GreenWall `GWc`/`GWp` also supported). No dependency on other addons.
 - **Buy tab:** item search with multilingual, self-building autocomplete (arrow-key nav,
   quality colors, shift-click an item link to search). Live offers from online sellers,
   sorted cheapest first, showing seller, quantity, price (or "Bid") and current location.
@@ -15,4 +15,4 @@ Initial public release.
   to large confederations without broadcast lag.
 - Self-building item database (learned + optional one-time background "Build full DB" scan),
   auto-localized.
-- Minimap button; `/gfc` and `/craigslist` slash commands.
+- Minimap button; `/gfm` and `/market` slash commands.

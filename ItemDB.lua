@@ -30,8 +30,8 @@ local function add(itemID, name, q)
     if have[itemID] then return end
     have[itemID] = true
     searchList[#searchList + 1] = { id = itemID, name = name, norm = normalize(name), q = q or 1 }
-    GuildFoundCraigslistDB.names[itemID] = name
-    GuildFoundCraigslistDB.quals[itemID] = q or 1
+    GuildFoundMarketDB.names[itemID] = name
+    GuildFoundMarketDB.quals[itemID] = q or 1
 end
 
 -- Learn an itemID: store its (localized) name now if cached, else request it.
@@ -69,7 +69,7 @@ local HARVEST_TICK  = 0.05  -- seconds between ticks
 local PENDING_CAP   = 100   -- max outstanding server requests at once (bounds uncached rate)
 
 local function harvestTick()
-    local n = GuildFoundCraigslistDB.harvestNext or 1
+    local n = GuildFoundMarketDB.harvestNext or 1
     if n > MAX_ITEM_ID then
         ItemDB.StopHarvest()
         ns.Feedback(("Item harvest complete — %d items."):format(#searchList), false)
@@ -79,11 +79,11 @@ local function harvestTick()
     while budget > 0 and n <= MAX_ITEM_ID and pendingCount < PENDING_CAP do
         ItemDB.Learn(n); n = n + 1; budget = budget - 1
     end
-    GuildFoundCraigslistDB.harvestNext = n
+    GuildFoundMarketDB.harvestNext = n
 end
 
 function ItemDB.StartHarvest()
-    GuildFoundCraigslistDB.harvestNext = GuildFoundCraigslistDB.harvestNext or 1
+    GuildFoundMarketDB.harvestNext = GuildFoundMarketDB.harvestNext or 1
     if not harvestTicker then harvestTicker = C_Timer.NewTicker(HARVEST_TICK, harvestTick) end
 end
 
@@ -92,17 +92,17 @@ function ItemDB.StopHarvest()
 end
 
 function ItemDB.IsHarvesting() return harvestTicker ~= nil end
-function ItemDB.HarvestProgress() return GuildFoundCraigslistDB.harvestNext or 1, MAX_ITEM_ID end
+function ItemDB.HarvestProgress() return GuildFoundMarketDB.harvestNext or 1, MAX_ITEM_ID end
 
 -- Wipe everything to simulate a clean install.
 function ItemDB.Reset()
     ItemDB.StopHarvest()
     wipe(searchList); wipe(have); wipe(pending); wipe(unused)
     pendingCount = 0
-    GuildFoundCraigslistDB.names = {}
-    GuildFoundCraigslistDB.quals = {}
-    GuildFoundCraigslistDB.harvestNext = 1
-    GuildFoundCraigslistDB.auxSeeded = nil
+    GuildFoundMarketDB.names = {}
+    GuildFoundMarketDB.quals = {}
+    GuildFoundMarketDB.harvestNext = 1
+    GuildFoundMarketDB.auxSeeded = nil
 end
 
 -- Scan bags (+ open bank) and learn what you carry.
@@ -120,7 +120,7 @@ end
 -- name when the item is cached, else fall back to aux's name. No server requests
 -- are fired here (so it can't flood/throttle) — full coverage, instantly.
 function ItemDB.SeedFromAux()
-    if GuildFoundCraigslistDB.disableAux or GuildFoundCraigslistDB.auxSeeded then return end
+    if GuildFoundMarketDB.disableAux or GuildFoundMarketDB.auxSeeded then return end
     local a = _G.aux
     if type(a) == "table" and type(a.account) == "table" and type(a.account.item_ids) == "table" then
         local isCached = C_Item and C_Item.IsItemDataCachedByID
@@ -136,7 +136,7 @@ function ItemDB.SeedFromAux()
                 end
             end
         end
-        GuildFoundCraigslistDB.auxSeeded = true
+        GuildFoundMarketDB.auxSeeded = true
     end
 end
 
@@ -144,11 +144,11 @@ end
 -- IMPORTANT: never call GetItemInfo here — for uncached items that fires a server
 -- request, and doing it for thousands of stored items freezes the client on login.
 function ItemDB.Load()
-    GuildFoundCraigslistDB.names = GuildFoundCraigslistDB.names or {}
-    GuildFoundCraigslistDB.quals = GuildFoundCraigslistDB.quals or {}
-    local quals = GuildFoundCraigslistDB.quals
+    GuildFoundMarketDB.names = GuildFoundMarketDB.names or {}
+    GuildFoundMarketDB.quals = GuildFoundMarketDB.quals or {}
+    local quals = GuildFoundMarketDB.quals
     wipe(searchList); wipe(have)
-    for id, name in pairs(GuildFoundCraigslistDB.names) do
+    for id, name in pairs(GuildFoundMarketDB.names) do
         if not have[id] then
             have[id] = true
             searchList[#searchList + 1] = { id = id, name = name, norm = normalize(name), q = quals[id] or 1 }

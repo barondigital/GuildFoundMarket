@@ -56,7 +56,7 @@ function ns.Feedback(msg, isError)
             C_Timer.After(6, function() if fbToken == mine and main and main.status then main.status:SetText("") end end)
         end
     elseif msg and msg ~= "" then
-        print("|cff00ff96GFC|r: " .. msg)
+        print("|cff00ff96GFM|r: " .. msg)
     end
 end
 
@@ -66,8 +66,8 @@ end
 local minimapBtn
 function ns.CreateMinimapButton()
     if minimapBtn then return end
-    GuildFoundCraigslistDB.minimapAngle = GuildFoundCraigslistDB.minimapAngle or 220
-    local b = CreateFrame("Button", "GuildFoundCraigslistMinimapButton", Minimap)
+    GuildFoundMarketDB.minimapAngle = GuildFoundMarketDB.minimapAngle or 220
+    local b = CreateFrame("Button", "GuildFoundMarketMinimapButton", Minimap)
     b:SetSize(31, 31); b:SetFrameStrata("MEDIUM"); b:SetFrameLevel(8)
     b:RegisterForClicks("LeftButtonUp"); b:RegisterForDrag("LeftButton")
     local icon = b:CreateTexture(nil, "BACKGROUND")
@@ -75,14 +75,14 @@ function ns.CreateMinimapButton()
     local overlay = b:CreateTexture(nil, "OVERLAY")
     overlay:SetSize(53, 53); overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder"); overlay:SetPoint("TOPLEFT")
     local function updatePos()
-        local angle = math.rad(GuildFoundCraigslistDB.minimapAngle or 220)
+        local angle = math.rad(GuildFoundMarketDB.minimapAngle or 220)
         b:ClearAllPoints(); b:SetPoint("CENTER", Minimap, "CENTER", 80 * math.cos(angle), 80 * math.sin(angle))
     end
     local function onDrag()
         local mx, my = Minimap:GetCenter()
         local scale = Minimap:GetEffectiveScale()
         local px, py = GetCursorPosition(); px, py = px / scale, py / scale
-        GuildFoundCraigslistDB.minimapAngle = math.deg(math.atan2(py - my, px - mx)) % 360
+        GuildFoundMarketDB.minimapAngle = math.deg(math.atan2(py - my, px - mx)) % 360
         updatePos()
     end
     b:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", onDrag) end)
@@ -90,7 +90,7 @@ function ns.CreateMinimapButton()
     b:SetScript("OnClick", function() ns.ToggleUI() end)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Guild Found Craigslist")
+        GameTooltip:AddLine("Guild Found Market")
         GameTooltip:AddLine("Click to open / close", 1, 1, 1)
         GameTooltip:Show()
     end)
@@ -179,7 +179,7 @@ end
 function ns.RefreshMine()
     if not main or not main:IsShown() or currentTab ~= "MINE" then return end
     wipe(view)
-    for id, o in pairs(GuildFoundCraigslistCharDB.offers) do
+    for id, o in pairs(GuildFoundMarketCharDB.offers) do
         view[#view + 1] = { id = id, qty = o.qty, price = o.price }
     end
     table.sort(view, function(a, b) return itemName(a.id) < itemName(b.id) end)
@@ -190,7 +190,7 @@ end
 -- build the window
 --========================================================================
 local function CreateUI()
-    main = CreateFrame("Frame", "GuildFoundCraigslistFrame", UIParent, "BackdropTemplate")
+    main = CreateFrame("Frame", "GuildFoundMarketFrame", UIParent, "BackdropTemplate")
     main:SetSize(560, 470)
     main:SetPoint("CENTER")
     main:SetMovable(true); main:EnableMouse(true); main:RegisterForDrag("LeftButton")
@@ -202,10 +202,10 @@ local function CreateUI()
         insets = { left = 11, right = 12, top = 12, bottom = 11 },
     })
     main:SetClampedToScreen(true)
-    table.insert(UISpecialFrames, "GuildFoundCraigslistFrame")
+    table.insert(UISpecialFrames, "GuildFoundMarketFrame")
 
     local title = main:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Craigslist|r")
+    title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
 
     -- tabs
@@ -265,7 +265,7 @@ local function CreateUI()
                 local q = m.q
                 if C_Item.IsItemDataCachedByID and C_Item.IsItemDataCachedByID(m.id) then
                     local _, _, cq = GetItemInfo(m.id)
-                    if cq then q = cq; m.q = cq; GuildFoundCraigslistDB.quals[m.id] = cq end
+                    if cq then q = cq; m.q = cq; GuildFoundMarketDB.quals[m.id] = cq end
                 end
                 local col = ITEM_QUALITY_COLORS[q] or ITEM_QUALITY_COLORS[1]
                 row.fs:SetText(m.name); row.fs:SetTextColor(col.r, col.g, col.b)
@@ -329,7 +329,7 @@ local function CreateUI()
     main.h1 = header(28); main.h2 = header(215); main.h3 = header(265); main.h4 = header(380)
 
     -- scroll + rows
-    local scroll = CreateFrame("ScrollFrame", "GuildFoundCraigslistScroll", main, "FauxScrollFrameTemplate")
+    local scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScroll", main, "FauxScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -112); scroll:SetSize(520, ROWS * ROW_H)
     scroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, ROW_H, renderRows) end)
     main.scroll = scroll
@@ -361,7 +361,7 @@ local function CreateUI()
     panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74)
     main.postPanel = panel
 
-    local slot = CreateFrame("Button", "GuildFoundCraigslistSlot", panel, "ItemButtonTemplate")
+    local slot = CreateFrame("Button", "GuildFoundMarketSlot", panel, "ItemButtonTemplate")
     slot:SetPoint("LEFT", 4, 0); slot:SetSize(36, 36)
     local function setDraft()
         local t, id = GetCursorInfo()
@@ -478,7 +478,7 @@ function ns.ToggleUI()
         if ns.RefreshConfig then ns.RefreshConfig() end
         ns.SelectTab(currentTab)
         if not ns.channelName then
-            ns.Feedback("Not in a Guild Found confederation — open guild (J) once, then /gfc again.", true)
+            ns.Feedback("Not in a Guild Found confederation — open guild (J) once, then /gfm again.", true)
         end
     end
 end

@@ -1,4 +1,4 @@
-package-as: GuildFoundCraigslist
+package-as: GuildFoundMarket
 
 enable-nolib-creation: no
 

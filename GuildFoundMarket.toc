@@ -1,10 +1,10 @@
 ## Interface: 11507
-## Title: Guild Found |cff00ff96Craigslist|r
+## Title: Guild Found |cff00ff96Market|r
 ## Notes: Private cross-guild marketplace for guild-locked communities. Search live offers; trade face-to-face.
 ## Author: Soepel
 ## Version: 0.2.0
-## SavedVariables: GuildFoundCraigslistDB
-## SavedVariablesPerCharacter: GuildFoundCraigslistCharDB
+## SavedVariables: GuildFoundMarketDB
+## SavedVariablesPerCharacter: GuildFoundMarketCharDB
 ## X-Curse-Project-ID: 0
 ## X-License: MIT
 

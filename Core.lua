@@ -3,7 +3,7 @@ local ADDON, ns = ...
 --========================================================================
 -- Config
 --========================================================================
-local PREFIX        = "GFCraigslist"  -- addon-message prefix (<=16 chars)
+local PREFIX        = "GFMarket"  -- addon-message prefix (<=16 chars)
 local SEND_TICK     = 0.30            -- min seconds between outgoing messages (throttle)
 local SCAN_INTERVAL = 10             -- how often offers are reconciled with inventory
 local QUERY_SETTLE  = 5             -- seconds we collect responses for a search
@@ -22,10 +22,10 @@ local activeQid  = nil
 local querySeq   = 0
 
 function ns.Feedback(msg, isError)
-    if msg and msg ~= "" then print("|cff00ff96GFC|r: " .. msg) end
+    if msg and msg ~= "" then print("|cff00ff96GFM|r: " .. msg) end
 end
 
-local function offers() return GuildFoundCraigslistCharDB.offers end
+local function offers() return GuildFoundMarketCharDB.offers end
 
 local function liveLoc()
     local s = GetSubZoneText()
@@ -34,7 +34,7 @@ local function liveLoc()
 end
 
 --========================================================================
--- Guild-info confederation config (GFCc/GFCp + GreenWall GWc/GWp). GFC wins.
+-- Guild-info confederation config (GFMc/GFMp + GreenWall GWc/GWp). GFM wins.
 --========================================================================
 local function simpleHash(s)
     local h = 5381
@@ -49,7 +49,7 @@ local function parseGuildConfig()
     local function applyVars(s) return (s:gsub("%$(.)", function(n) return vars[n] or ("$" .. n) end)) end
     for line in text:gmatch("[^\r\n]+") do
         local src, op, args
-        op, args = line:match("^GFC(%a):(.*)$"); if op then src = "GFC" end
+        op, args = line:match("^GFM(%a):(.*)$"); if op then src = "GFM" end
         if not op then op, args = line:match("^GW(%a):(.*)$");  if op then src = "GW" end end
         if not op then op, args = line:match("^GW:(%a):(.*)$"); if op then src = "GW" end end
         if op then
@@ -66,7 +66,7 @@ local function parseGuildConfig()
             end
         end
     end
-    local chosen = picked.GFC or picked.GW
+    local chosen = picked.GFM or picked.GW
     if not chosen or not chosen.channel or chosen.channel == "" then return nil end
     cfg.channel, cfg.password = chosen.channel, chosen.password
     return cfg
@@ -75,7 +75,7 @@ end
 local function refreshConfig()
     local cfg = parseGuildConfig()
     ns.config = cfg
-    local newName = cfg and ("GFC" .. string.format("%x", simpleHash(cfg.channel .. ":" .. (cfg.password or "")))) or nil
+    local newName = cfg and ("GFM" .. string.format("%x", simpleHash(cfg.channel .. ":" .. (cfg.password or "")))) or nil
     if newName ~= ns.channelName then
         if ns.channelName then LeaveChannelByName(ns.channelName) end
         ns.channelName  = newName
@@ -222,11 +222,11 @@ frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
-        GuildFoundCraigslistDB = GuildFoundCraigslistDB or {}
-        GuildFoundCraigslistDB.names = GuildFoundCraigslistDB.names or {}
-        GuildFoundCraigslistDB.quals = GuildFoundCraigslistDB.quals or {}
-        GuildFoundCraigslistCharDB = GuildFoundCraigslistCharDB or {}
-        GuildFoundCraigslistCharDB.offers = GuildFoundCraigslistCharDB.offers or {}
+        GuildFoundMarketDB = GuildFoundMarketDB or {}
+        GuildFoundMarketDB.names = GuildFoundMarketDB.names or {}
+        GuildFoundMarketDB.quals = GuildFoundMarketDB.quals or {}
+        GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
+        GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
 
         C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
         if ns.CreateMinimapButton then ns.CreateMinimapButton() end
@@ -280,46 +280,46 @@ frame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 -- Slash command
-SLASH_GFCRAIGSLIST1 = "/gfc"
-SLASH_GFCRAIGSLIST2 = "/craigslist"
-SlashCmdList.GFCRAIGSLIST = function(msg)
+SLASH_GFMARKET1 = "/gfm"
+SLASH_GFMARKET2 = "/market"
+SlashCmdList.GFMARKET = function(msg)
     msg = (msg or ""):lower():gsub("%s+", "")
     if msg == "dev" then
         ns.dev = not ns.dev
-        print("|cff00ff96GFC|r: dev mode " .. (ns.dev and "ON" or "off"))
+        print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off"))
     elseif msg == "debug" then
         refreshConfig()
         local t = GetGuildInfoText() or ""
         local cur, max = ns.ItemDB.HarvestProgress()
-        print("|cff00ff96GFC debug|r")
+        print("|cff00ff96GFM debug|r")
         print("  guild: " .. tostring(GetGuildInfo("player")))
         print("  guildInfoText length: " .. #t)
         print("  channelName: " .. tostring(ns.channelName) .. " | joined: " .. tostring(ns.channelIndex ~= nil))
         print(("  item DB size: %d | harvest %d/%d (%s) | auxSeeded=%s | disableAux=%s"):format(
             ns.ItemDB.Count(), cur, max, ns.ItemDB.IsHarvesting() and "running" or "idle",
-            tostring(GuildFoundCraigslistDB.auxSeeded), tostring(GuildFoundCraigslistDB.disableAux)))
+            tostring(GuildFoundMarketDB.auxSeeded), tostring(GuildFoundMarketDB.disableAux)))
         local n = 0; for _ in pairs(offers()) do n = n + 1 end
         print("  my offers: " .. n)
     elseif msg == "harvest" then
         ns.ItemDB.StartHarvest()
         local cur, max = ns.ItemDB.HarvestProgress()
-        ns.Feedback(("Harvest running — at item %d/%d, DB %d. Watch with /gfc debug."):format(cur, max, ns.ItemDB.Count()), false)
+        ns.Feedback(("Harvest running — at item %d/%d, DB %d. Watch with /gfm debug."):format(cur, max, ns.ItemDB.Count()), false)
     elseif msg == "harveststop" then
         ns.ItemDB.StopHarvest(); ns.Feedback("Harvest stopped.", false)
     elseif ns.dev and msg == "noaux" then
-        GuildFoundCraigslistDB.disableAux = not GuildFoundCraigslistDB.disableAux
-        ns.Feedback("aux seed " .. (GuildFoundCraigslistDB.disableAux and "DISABLED" or "enabled")
-            .. " — run /gfc dbreset to clear the current DB and test a clean build.", false)
+        GuildFoundMarketDB.disableAux = not GuildFoundMarketDB.disableAux
+        ns.Feedback("aux seed " .. (GuildFoundMarketDB.disableAux and "DISABLED" or "enabled")
+            .. " — run /gfm dbreset to clear the current DB and test a clean build.", false)
     elseif ns.dev and msg == "dbreset" then
         ns.ItemDB.Reset()
         if ns.RefreshBuy then ns.RefreshBuy() end
-        ns.Feedback("Item DB wiped (clean-install state). /gfc harvest to rebuild from scratch.", false)
+        ns.Feedback("Item DB wiped (clean-install state). /gfm harvest to rebuild from scratch.", false)
     elseif ns.dev and msg == "selftest" then
         ns.selfTest = not ns.selfTest
         ns.Feedback("Self-test " .. (ns.selfTest and "ON — search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
     elseif ns.dev and msg == "faketest" then
         if not ns.searchItemID then
-            ns.Feedback("Open Buy, search an item first, then /gfc faketest.", true)
+            ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)
         else
             ns.results["Testseller1"]  = { qty = 5,  price = 150000, loc = "Bank, Orgrimmar" }
             ns.results["Cheapcharlie"] = { qty = 20, price = 95000,  loc = "Auction House, Orgrimmar" }
