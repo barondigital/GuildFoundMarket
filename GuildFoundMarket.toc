@@ -5,7 +5,7 @@
 ## Version: 0.2.0
 ## SavedVariables: GuildFoundMarketDB
 ## SavedVariablesPerCharacter: GuildFoundMarketCharDB
-## X-Curse-Project-ID: 0
+## X-Curse-Project-ID: 1584683
 ## X-License: MIT
 
 ItemDB.lua
