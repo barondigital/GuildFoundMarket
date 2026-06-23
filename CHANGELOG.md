@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Minimap button is now a standard LibDBIcon launcher, so minimap-button managers
+  (Leatrix Plus, etc.) can collect and hide it like any other addon icon.
+- Added `/gfm minimap` to hide/show the button. The old custom-button position is
+  migrated to the new icon automatically.
+- Bundled the required libraries (LibStub, CallbackHandler-1.0, LibDataBroker-1.1,
+  LibDBIcon-1.0) under `Libs/`.
+
 ## 0.2.0
 
 Initial public release.

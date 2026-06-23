@@ -45,6 +45,8 @@ GreenWall you don't need to add anything.
 ## Usage
 
 - `/gfm` (or `/market`) — open the window. Also available via the minimap button.
+- `/gfm minimap` — hide or show the minimap button. (The button is a standard
+  LibDBIcon launcher, so addons like Leatrix Plus can also collect/hide it.)
 - **Search:** start typing, use the arrow keys to navigate the dropdown, Enter to pick.
   You can also shift-click an item (bags, character sheet, chat link, AtlasLoot, …) into the
   focused search box.

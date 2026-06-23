@@ -63,39 +63,35 @@ end
 --========================================================================
 -- minimap button
 --========================================================================
-local minimapBtn
+local LDB    = LibStub and LibStub("LibDataBroker-1.1", true)
+local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+local minimapLDB
 function ns.CreateMinimapButton()
-    if minimapBtn then return end
-    GuildFoundMarketDB.minimapAngle = GuildFoundMarketDB.minimapAngle or 220
-    local b = CreateFrame("Button", "GuildFoundMarketMinimapButton", Minimap)
-    b:SetSize(31, 31); b:SetFrameStrata("MEDIUM"); b:SetFrameLevel(8)
-    b:RegisterForClicks("LeftButtonUp"); b:RegisterForDrag("LeftButton")
-    local icon = b:CreateTexture(nil, "BACKGROUND")
-    icon:SetSize(20, 20); icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01"); icon:SetPoint("TOPLEFT", 7, -6)
-    local overlay = b:CreateTexture(nil, "OVERLAY")
-    overlay:SetSize(53, 53); overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder"); overlay:SetPoint("TOPLEFT")
-    local function updatePos()
-        local angle = math.rad(GuildFoundMarketDB.minimapAngle or 220)
-        b:ClearAllPoints(); b:SetPoint("CENTER", Minimap, "CENTER", 80 * math.cos(angle), 80 * math.sin(angle))
+    if not (LDB and DBIcon) then return end
+    -- per-account state for the icon (LibDBIcon stores .hide and .minimapPos here)
+    GuildFoundMarketDB.minimap = GuildFoundMarketDB.minimap or {}
+    -- migrate the old custom-button angle to LibDBIcon's minimapPos
+    if GuildFoundMarketDB.minimapAngle and GuildFoundMarketDB.minimap.minimapPos == nil then
+        GuildFoundMarketDB.minimap.minimapPos = GuildFoundMarketDB.minimapAngle
+        GuildFoundMarketDB.minimapAngle = nil
     end
-    local function onDrag()
-        local mx, my = Minimap:GetCenter()
-        local scale = Minimap:GetEffectiveScale()
-        local px, py = GetCursorPosition(); px, py = px / scale, py / scale
-        GuildFoundMarketDB.minimapAngle = math.deg(math.atan2(py - my, px - mx)) % 360
-        updatePos()
+
+    if not minimapLDB then
+        minimapLDB = LDB:NewDataObject("GuildFoundMarket", {
+            type = "launcher",
+            icon = "Interface\\Icons\\INV_Misc_Coin_01",
+            label = "Guild Found Market",
+            OnClick = function() ns.ToggleUI() end,
+            OnTooltipShow = function(tt)
+                tt:AddLine("Guild Found Market")
+                tt:AddLine("Click to open / close", 1, 1, 1)
+            end,
+        })
     end
-    b:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", onDrag) end)
-    b:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
-    b:SetScript("OnClick", function() ns.ToggleUI() end)
-    b:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("Guild Found Market")
-        GameTooltip:AddLine("Click to open / close", 1, 1, 1)
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", GameTooltip_Hide)
-    minimapBtn = b; updatePos()
+
+    if not DBIcon:IsRegistered("GuildFoundMarket") then
+        DBIcon:Register("GuildFoundMarket", minimapLDB, GuildFoundMarketDB.minimap)
+    end
 end
 
 --========================================================================

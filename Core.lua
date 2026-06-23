@@ -306,6 +306,16 @@ SlashCmdList.GFMARKET = function(msg)
         ns.Feedback(("Harvest running — at item %d/%d, DB %d. Watch with /gfm debug."):format(cur, max, ns.ItemDB.Count()), false)
     elseif msg == "harveststop" then
         ns.ItemDB.StopHarvest(); ns.Feedback("Harvest stopped.", false)
+    elseif msg == "minimap" then
+        local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+        if DBIcon and GuildFoundMarketDB.minimap then
+            GuildFoundMarketDB.minimap.hide = not GuildFoundMarketDB.minimap.hide
+            if GuildFoundMarketDB.minimap.hide then DBIcon:Hide("GuildFoundMarket") else DBIcon:Show("GuildFoundMarket") end
+            ns.Feedback("Minimap button " .. (GuildFoundMarketDB.minimap.hide
+                and "hidden — type /gfm minimap to show it again, or open with /market." or "shown."), false)
+        else
+            ns.Feedback("Minimap button not available.", true)
+        end
     elseif ns.dev and msg == "noaux" then
         GuildFoundMarketDB.disableAux = not GuildFoundMarketDB.disableAux
         ns.Feedback("aux seed " .. (GuildFoundMarketDB.disableAux and "DISABLED" or "enabled")
