@@ -3,7 +3,11 @@ local ADDON, ns = ...
 --========================================================================
 -- Config
 --========================================================================
-local PREFIX        = "GFMarket"  -- addon-message prefix (<=16 chars)
+local PREFIX        = "GFMarket"  -- addon-message prefix for whispered replies (<=16 chars)
+local CHAT_TAG      = "GFMqp1:"   -- marks our hidden chat-channel protocol messages
+                                  -- (broadcast queries; addon messages over custom
+                                  --  channels are dropped in Classic Era, so we ride the
+                                  --  chat layer like GreenWall does and filter it from view)
 local SEND_TICK     = 0.30            -- min seconds between outgoing messages (throttle)
 local SCAN_INTERVAL = 10             -- how often offers are reconciled with inventory
 local QUERY_SETTLE  = 5             -- seconds we collect responses for a search
@@ -90,7 +94,6 @@ ns.RefreshConfig = refreshConfig
 -- Outgoing message queue (throttle). Items: {msg, to=whisperTarget or nil=channel}
 --========================================================================
 local sendQ = {}
-local function enqueue(msg)            sendQ[#sendQ + 1] = { msg = msg } end
 local function enqueueWhisper(msg, to)  sendQ[#sendQ + 1] = { msg = msg, to = to } end
 
 local function ensureChannel()
@@ -148,7 +151,16 @@ function ns.Search(itemID)
     wipe(ns.results)
     ns.searchItemID = itemID
     ns.searching = true
-    enqueue(("Q~%s~%d"):format(activeQid, itemID))
+    -- Broadcast the query right here, inside the search keypress/click. SendChatMessage
+    -- to a channel is only allowed from a hardware event (never a timer), and addon
+    -- messages over custom channels are disabled in Classic Era, so this is the only path.
+    local idx = ensureChannel()
+    if idx then
+        SendChatMessage(CHAT_TAG .. ("Q~%s~%d"):format(activeQid, itemID), "CHANNEL", nil, idx)
+        if ns.dev then print("|cff00ff96GFM|r → channel: Q~" .. activeQid .. "~" .. itemID) end
+    else
+        ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
+    end
     if ns.selfTest then
         -- deliver our own offer directly (don't rely on the channel echo)
         local o = offers()[itemID]
@@ -172,7 +184,7 @@ end
 --========================================================================
 -- Incoming messages
 --========================================================================
-local function onAddonMsg(text, sender)
+local function handleMsg(text, sender)
     local cmd, a, b, c, d, e = strsplit("~", text)
     if cmd == "Q" then
         ns.ItemDB.Learn(tonumber(b))   -- learn the searched item (vocabulary)
@@ -215,6 +227,7 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("CHAT_MSG_ADDON")
+frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
@@ -229,6 +242,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
 
         C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
+        -- hide our hidden-channel protocol chatter from every chat frame
+        ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", function(_, _, msg)
+            if msg and msg:sub(1, #CHAT_TAG) == CHAT_TAG then return true end
+        end)
         if ns.CreateMinimapButton then ns.CreateMinimapButton() end
 
         ns.ItemDB.Load()
@@ -242,16 +259,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         C_Timer.NewTicker(SEND_TICK, function()
-            ensureChannel()
+            ensureChannel()   -- keep the marketplace channel joined (to send/receive queries)
+            -- only whispered replies go through the queue; addon whispers are allowed from
+            -- any context, unlike the channel broadcast which must ride a hardware event
             local item = sendQ[1]
-            if item then
-                if item.to then
-                    C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "WHISPER", item.to)
-                    table.remove(sendQ, 1)
-                elseif ns.channelIndex then
-                    C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "CHANNEL", ns.channelIndex)
-                    table.remove(sendQ, 1)
-                end
+            if item and item.to then
+                C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "WHISPER", item.to)
+                table.remove(sendQ, 1)
             end
         end)
         C_Timer.NewTicker(SCAN_INTERVAL, reconcileOffers)
@@ -265,7 +279,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "CHAT_MSG_ADDON" then
         local prefix, text, _, sender = ...
-        if prefix == PREFIX then onAddonMsg(text, sender) end
+        if prefix == PREFIX then handleMsg(text, sender) end
+
+    elseif event == "CHAT_MSG_CHANNEL" then
+        local text, sender = ...
+        if text and text:sub(1, #CHAT_TAG) == CHAT_TAG then
+            if ns.dev then print("|cff00ff96GFM|r ← channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
+            handleMsg(text:sub(#CHAT_TAG + 1), sender)
+        end
 
     elseif event == "BAG_UPDATE_DELAYED" then
         reconcileOffers()

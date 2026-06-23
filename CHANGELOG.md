@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1
+
+- **Fix: cross-guild search never returned offers.** GFM broadcast its queries as
+  addon messages over a custom channel, but Blizzard disabled addon messages on
+  custom channels in Classic patch 1.13.3, so they were silently dropped. Queries
+  now ride the chat layer (a hidden, filtered chat message sent from the search
+  action itself, the only context Blizzard permits), while replies stay as addon
+  whispers. Both members of a confederation must run 0.3.1+ for search to work.
+- Added dev-mode logging of outgoing/incoming channel traffic (`/gfm dev`).
+
 ## 0.3.0
 
 - Minimap button is now a standard LibDBIcon launcher, so minimap-button managers
