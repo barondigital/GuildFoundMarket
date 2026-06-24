@@ -56,7 +56,9 @@ local function liveLoc()
 end
 
 --========================================================================
--- Guild-info confederation config (GFMc/GFMp + GreenWall GWc/GWp). GFM wins.
+-- Guild-info marketplace config: a single channel line — GFMc (preferred) or
+-- GreenWall's GWc as fallback. The marketplace is gated purely by who can read
+-- that secret, so peer-guild lines (GFMp/GWp) are not needed and are ignored.
 --========================================================================
 local function simpleHash(s)
     local h = 5381
@@ -67,7 +69,7 @@ end
 local function parseGuildConfig()
     local text = GetGuildInfoText()
     if not text or text == "" then return nil end
-    local vars, cfg, picked = {}, { guilds = {} }, {}
+    local vars, picked = {}, {}
     local function applyVars(s) return (s:gsub("%$(.)", function(n) return vars[n] or ("$" .. n) end)) end
     for line in text:gmatch("[^\r\n]+") do
         local src, op, args
@@ -81,17 +83,14 @@ local function parseGuildConfig()
             elseif op == "c" then
                 local chan, pass = strsplit(":", args)
                 picked[src] = { channel = applyVars(chan or ""), password = pass or "" }
-            elseif op == "p" then
-                local gname, tag = strsplit(":", args)
-                gname = applyVars(gname or "")
-                if gname ~= "" then cfg.guilds[gname:lower()] = (tag and tag ~= "" and tag) or gname end
             end
+            -- "p" (peer-guild) lines belong to GreenWall's chat bridge; GFM gates on the
+            -- channel secret alone, so they are intentionally not parsed.
         end
     end
     local chosen = picked.GFM or picked.GW
     if not chosen or not chosen.channel or chosen.channel == "" then return nil end
-    cfg.channel, cfg.password = chosen.channel, chosen.password
-    return cfg
+    return { channel = chosen.channel, password = chosen.password, source = picked.GFM and "GFM" or "GW" }
 end
 
 local function refreshConfig()
@@ -102,7 +101,10 @@ local function refreshConfig()
         if ns.channelName then LeaveChannelByName(ns.channelName) end
         ns.channelName  = newName
         ns.channelIndex = nil
-        if newName then ns.Feedback("Connected to your confederation marketplace.", false) end
+        if newName then
+            ns.Feedback(("Connected to your marketplace channel (using %s config)."):format(
+                cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall"), false)
+        end
         if ns.RefreshBuy then ns.RefreshBuy() end
     end
 end

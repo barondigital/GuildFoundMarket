@@ -664,11 +664,18 @@ local function CreateUI()
     pauseBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.pauseBtn = pauseBtn
 
-    --==================== Help tab ====================
-    local helpPanel = CreateFrame("Frame", nil, main)
-    helpPanel:SetPoint("TOPLEFT", 24, -66); helpPanel:SetPoint("BOTTOMRIGHT", -24, 16); helpPanel:Hide()
-    local helpText = helpPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    helpText:SetPoint("TOPLEFT"); helpText:SetPoint("TOPRIGHT")
+    --==================== Help tab (scrollable) ====================
+    local helpScroll = CreateFrame("ScrollFrame", "GuildFoundMarketHelpScroll", main, "UIPanelScrollFrameTemplate")
+    helpScroll:SetPoint("TOPLEFT", 24, -66); helpScroll:SetPoint("BOTTOMRIGHT", -30, 16); helpScroll:Hide()
+    helpScroll:EnableMouseWheel(true)
+    helpScroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxScroll = self:GetVerticalScrollRange()
+        self:SetVerticalScroll(math.min(maxScroll, math.max(0, self:GetVerticalScroll() - delta * 30)))
+    end)
+    local helpContent = CreateFrame("Frame", nil, helpScroll); helpContent:SetSize(500, 1)
+    helpScroll:SetScrollChild(helpContent)
+    local helpText = helpContent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    helpText:SetPoint("TOPLEFT"); helpText:SetWidth(500)
     helpText:SetJustifyH("LEFT"); helpText:SetJustifyV("TOP"); helpText:SetSpacing(2)
     helpText:SetText(table.concat({
         "|cffff4040» FIRST TIME — open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
@@ -690,10 +697,23 @@ local function CreateUI()
         "Add your items; your client answers searches automatically — no pop-ups.",
         "• |cffffffffOnline / Offline|r — pause answering while you raid or PvP. Your items are kept.",
         " ",
+        "|cffffd100Configuration (guild officers)|r",
+        "The whole marketplace is one shared channel. Put this single line in a guild's Information text (Guild window > Information tab):",
+        "    |cff66ff66GFMc:MyMarket:somesharedsecret|r",
+        "Anyone whose guild information contains the identical line joins the same marketplace. If you run GreenWall, its GWc channel is reused automatically; when both are present, |cffffffffGFMc takes precedence|r. On login GFM prints which config it used.",
+        " ",
+        "|cffffd100Sister guilds — trading outside GreenWall|r",
+        "To include guilds that are NOT in your GreenWall confederation, give them the |cffffffffsame GFMc line|r — that is all. (Peer-guild GFMp/GWp lines are not used.)",
+        "• |cffff5555Do not share your GWc line|r with them: that is your GreenWall chat-bridge secret, and a sister guild running GreenWall would land in your private guild chat. Keep GWc for the confederation and use a separate GFMc for the market.",
+        "• |cffffd100Consequence:|r the GFMc secret is the only gate. Everyone you hand it to can see and answer every search and browse all listed sellers. Share it only with guilds you trust to trade.",
+        " ",
         "|cffffd100Opening & minimap|r",
         "Open with |cffffffff/gfm|r or |cffffffff/market|r, or the minimap button. Toggle the minimap icon with |cffffffff/gfm minimap|r.",
     }, "\n"))
-    main.helpPanel = helpPanel
+    helpContent:SetHeight(helpText:GetStringHeight() + 8)
+    main.helpPanel = helpScroll
+    main.helpContent = helpContent
+    main.helpText = helpText
 
     ns.SelectTab("BUY")
     main:Hide()
@@ -774,6 +794,8 @@ function ns.SelectTab(tab, goSeller, goLoc)
     elseif help then
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
         wipe(view); renderRows()
+        main.helpContent:SetHeight(main.helpText:GetStringHeight() + 8)  -- size to text now it's laid out
+        main.helpPanel:SetVerticalScroll(0)                             -- start at the top
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
         ns.RefreshMine()

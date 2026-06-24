@@ -25,22 +25,28 @@ community — any group of guilds can use it.
 
 ## Setup (guild officers)
 
-Access is controlled by a small config block in the **Guild Information** text
-(`Guild` window → `J` → Information tab). Add a common channel line and one line per guild:
+Access is controlled by a **single line** in the **Guild Information** text
+(`Guild` window → `J` → Information tab):
 
 ```
-GFMc:MyCommunity:somesharedsecret
-GFMp:My Main Guild:MG
-GFMp:My Second Guild:MG2
+GFMc:MyMarket:somesharedsecret
 ```
 
-- `GFMc:<name>:<secret>` — the shared secret. Only members who can read this (i.e. members of
-  the listed guilds) can join the marketplace. Pick any secret string.
-- `GFMp:<exact guild name>:<short tag>` — one per guild in your confederation.
+`GFMc:<name>:<secret>` defines the private marketplace channel. GFM derives a hidden
+broadcast channel from this line, and everyone whose guild information contains the
+**identical** line joins the same marketplace. Pick any secret string.
 
-The block must be **identical** across all guilds in the confederation.
-GreenWall's `GWc`/`GWp` config is also supported automatically, so if you already run
-GreenWall you don't need to add anything.
+The trust boundary is simply *who can read it*: only a guild's own members can read that
+guild's information, so only the guilds you paste the line into take part. Put the same
+`GFMc` line in **every** guild that should trade together — including **sister guilds**
+outside your GreenWall confederation. Nothing else is needed; peer-guild lines (`GFMp`/`GWp`)
+are not used by GFM.
+
+**Already running GreenWall?** GFM reuses GreenWall's `GWc` channel automatically, so a
+confederation works with no extra setup. When both are present, **`GFMc` takes precedence
+over `GWc`** — so keep `GWc` for the GreenWall chat bridge (confederation only) and add a
+shared `GFMc` line wherever you want the marketplace, sister guilds included. On login GFM
+prints which config it picked up.
 
 ## Usage
 

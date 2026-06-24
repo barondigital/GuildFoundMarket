@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3
+
+- **Simpler setup.** The marketplace now needs only a single channel line — `GFMc`
+  (preferred) or GreenWall's `GWc` as a fallback, with `GFMc` taking precedence. The
+  peer-guild lines (`GFMp`/`GWp`) are no longer parsed or required; access is gated purely
+  by who can read the channel secret. On login GFM prints which config it picked up.
+- **Sister guilds.** You can now include guilds outside your GreenWall confederation simply
+  by sharing the same `GFMc` line with them — no need to expose your GreenWall `GWc` secret.
+- **Help tab: Configuration section.** The Help tab is now scrollable and explains the
+  channel config, how to add sister guilds, and the trust consequences of sharing the secret.
+
 ## 0.4.2
 
 - Hover any item to see its full in-game tooltip — in Buy results, a seller's item
