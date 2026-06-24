@@ -124,7 +124,7 @@ local function formatBuyRow(r, d)
     r.c1.fs:SetText(d.seller)
     r.c1.fs:SetTextColor(1, 1, 1)
     r.c1:EnableMouse(true)
-    r.c1.tip = "Left-click: see this seller's items  •  Right-click: whisper about this item"
+    r.c1.tip = "Click for items · right-click to whisper"
     r.c1:SetScript("OnClick", function(_, button)
         if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.price)
         else ns.SelectTab("SELLERS", d.seller, d.loc) end
@@ -170,9 +170,10 @@ local function formatSellerRow(r, d)
         r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
         r.c1.fs:SetTextColor(1, 1, 1)
         r.c1:EnableMouse(true)
-        r.c1.tip = "Right-click to whisper " .. d.seller .. " about this item"
+        r.c1.tip = "Ctrl-click to compare · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, d.id, d.price) end
+            if button == "RightButton" then whisperItem(d.seller, d.id, d.price)
+            elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
         r.c2:SetText(d.qty)
         r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
@@ -343,11 +344,13 @@ local function CreateUI()
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
 
     -- tabs
-    local TABS = { { tab = "BUY", label = "Buy", w = 70 }, { tab = "SELLERS", label = "Sellers", w = 80 }, { tab = "MINE", label = "My Items", w = 90 } }
+    local TABS = { { tab = "BUY", label = "Buy", w = 70 }, { tab = "SELLERS", label = "Sellers", w = 80 }, { tab = "MINE", label = "My Items", w = 90 }, { tab = "HELP", label = "Help", w = 50, right = true } }
     local tx = 20
     for i, t in ipairs(TABS) do
         local b = CreateFrame("Button", nil, main)
-        b:SetSize(t.w, 24); b:SetPoint("TOPLEFT", tx, -36); tx = tx + t.w + 8; b.tab = t.tab
+        b:SetSize(t.w, 24)
+        if t.right then b:SetPoint("TOPRIGHT", -14, -36) else b:SetPoint("TOPLEFT", tx, -36); tx = tx + t.w + 8 end
+        b.tab = t.tab
         local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
         local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
         local txt = b:CreateFontString(nil, "OVERLAY", "GameFontNormal"); txt:SetPoint("CENTER"); txt:SetText(t.label); b.text = txt
@@ -602,6 +605,37 @@ local function CreateUI()
     pauseBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.pauseBtn = pauseBtn
 
+    --==================== Help tab ====================
+    local helpPanel = CreateFrame("Frame", nil, main)
+    helpPanel:SetPoint("TOPLEFT", 24, -66); helpPanel:SetPoint("BOTTOMRIGHT", -24, 16); helpPanel:Hide()
+    local helpText = helpPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    helpText:SetPoint("TOPLEFT"); helpText:SetPoint("TOPRIGHT")
+    helpText:SetJustifyH("LEFT"); helpText:SetJustifyV("TOP"); helpText:SetSpacing(2)
+    helpText:SetText(table.concat({
+        "|cffff4040» FIRST TIME — open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
+        "|cffffffffRequired before you can search:|r until the database is built, autocomplete can't find items you don't already own. It's a safe one-time background scan that resumes if you stop.",
+        " ",
+        "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation — only sellers who are |cffffffffonline right now|r answer.",
+        " ",
+        "|cffffd100Buy|r  — find an item",
+        "Type a name (or shift-click an item link) and pick it. Online sellers are listed cheapest first.",
+        "• |cffffffffLeft-click|r a seller — open their full list of items.",
+        "• |cffffffffRight-click|r a seller — whisper them about this item.",
+        " ",
+        "|cffffd100Sellers|r  — browse who's online",
+        "Click a seller to see everything they sell. On one of their items:",
+        "• |cffffffffCtrl-click|r — search that item to find who else is selling it.",
+        "• |cffffffffRight-click|r — whisper the seller, pre-filled with the item and price.",
+        " ",
+        "|cffffd100My Items|r  — what you sell",
+        "Add your items; your client answers searches automatically — no pop-ups.",
+        "• |cffffffffOnline / Offline|r — pause answering while you raid or PvP. Your items are kept.",
+        " ",
+        "|cffffd100Opening & minimap|r",
+        "Open with |cffffffff/gfm|r or |cffffffff/market|r, or the minimap button. Toggle the minimap icon with |cffffffff/gfm minimap|r.",
+    }, "\n"))
+    main.helpPanel = helpPanel
+
     ns.SelectTab("BUY")
     main:Hide()
 end
@@ -649,6 +683,7 @@ function ns.SelectTab(tab, goSeller, goLoc)
     local buy     = (tab == "BUY")
     local mine    = (tab == "MINE")
     local sellers = (tab == "SELLERS")
+    local help    = (tab == "HELP")
     main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)
     main.ac:Hide()
     main.postPanel:SetShown(mine)
@@ -658,6 +693,8 @@ function ns.SelectTab(tab, goSeller, goLoc)
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
     end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
+    main.helpPanel:SetShown(help)
+    main.scroll:SetShown(not help)
     if mine then ns.UpdatePauseButton() end
     if buy then ns.UpdateDBPanel() end
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
@@ -674,6 +711,9 @@ function ns.SelectTab(tab, goSeller, goLoc)
             ns.SetSellersView("INDEX")   -- sets its own headers + refresh
             ns.ScanSellers()             -- auto-scan on entering (driven by the tab click = hardware event)
         end
+    elseif help then
+        main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
+        wipe(view); renderRows()
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
         ns.RefreshMine()

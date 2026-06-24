@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- **Sellers tab — browse who's online.** Scan your confederation for sellers who
+  are online right now (name + item count + location), then open one to see their
+  full list. Catalogs are fetched on demand and chunked, so large lists are fine.
+  Includes a client-side name filter.
+- **Online / Offline toggle (My Items).** Pause your listings while you raid or do
+  PvP without clearing anything — your client stops answering searches and seller
+  scans, then resumes when you go back online.
+- **Richer row actions.** In Buy, left-click a seller to open their item list and
+  right-click to whisper. On a seller's item, right-click opens a whisper pre-filled
+  with the item link and price (`[Item]@1g2s45c `), and Ctrl-click searches that
+  item to find who else is selling it.
+- **Help tab** documenting the first-run "Build full DB" step, the click actions,
+  and the slash commands (`/gfm`, `/market`, `/gfm minimap`).
+
 ## 0.3.1
 
 - **Fix: cross-guild search never returned offers.** GFM broadcast its queries as
