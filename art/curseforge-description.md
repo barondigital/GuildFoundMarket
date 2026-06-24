@@ -14,6 +14,8 @@ The Auction House can't be restricted to your own guilds, and guild-locked / sel
 
 Searches are sent over a hidden channel and answers come straight back to the searcher, so it stays fast and quiet even in large communities.
 
+This is a live, peer-to-peer marketplace — offers come straight from sellers who are online right now, with no central server storing listings. It shines once a good number of people in your confederation run it: the more active members online, the more offers you see.
+
 ## Features
 
 - Item search with a self-building, multilingual autocomplete (arrow-key navigation, quality colors, shift-click an item link to search it).
@@ -39,7 +41,7 @@ The block must be identical across all guilds in the confederation. If you alrea
 
 1. Open the window with /gfm, /market, or the minimap button.
 2. In the Buy tab, type an item name and press Enter (arrow keys to navigate the suggestions). You can also shift-click an item from your bags, character sheet, a chat link, or AtlasLoot into the search box.
-3. The first time, click "Build full DB" once so autocomplete knows every item in the game. It is a safe background scan that resumes if you stop, and is only needed once.
+3. **First run — build the item database.** Autocomplete turns the item name you type into the ID used to search, and it is built locally. On a fresh install it only knows the items in your bags, so to search for things you *don't* own you need to run the one-time "Build full DB" scan first (or have aux installed, which seeds it instantly). It is a safe background scan that resumes if you stop and is only needed once. (Already own the item, or have a chat link / AtlasLoot? You can also shift-click it straight into the search box, no database needed.)
 4. In the My Items tab, add the items you want to sell. That is all — your client answers other people's searches on its own.
 
 ## Good to know
