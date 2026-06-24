@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+- **Season of Discovery items are now searchable.** The "Build full DB" scan fetches a
+  bundled list of real SoD item IDs (derived from the Questie addon's database) instead of
+  brute-forcing the 200000-250000 range, which was almost all non-existent IDs — slow and
+  prone to disconnecting you. Classic items are still covered, and skipped instantly when
+  the aux addon has already seeded them. Questie is not required at runtime.
+- **Faster, safer database scan:** two phases (classic range + SoD list), a gentler request
+  throttle, and a fix so the scan can no longer stall on stale outstanding requests.
+- **Debug log + sidebar.** A copyable debug panel (the new Debug button) logs searches,
+  seller browsing, offers, config, the database scan, and server throttling, so guild members
+  can send a bug/latency report. Newest line on top, with a live/paused indicator.
+- **Sellers tab at scale:** debounced list refresh, a scan cap with jittered replies, and a
+  name-substring query to find a seller in a large confederation.
+- **Item tooltips on hover** in Buy results, a seller's item list, and My Items.
+- **Mouse-wheel scrolling** in every list.
+- The Help tab now notes the benefit of the aux addon (instant classic item names).
+
 ## 0.4.3
 
 - **Simpler setup.** The marketplace now needs only a single channel line — `GFMc`

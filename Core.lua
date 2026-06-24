@@ -104,6 +104,9 @@ local function refreshConfig()
         if newName then
             ns.Feedback(("Connected to your marketplace channel (using %s config)."):format(
                 cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall"), false)
+            if ns.Log then ns.Log(("CONFIG connected: %s channel (%s)"):format(cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall", newName)) end
+        elseif ns.Log then
+            ns.Log("CONFIG disconnected — no marketplace config in guild info")
         end
         if ns.RefreshBuy then ns.RefreshBuy() end
     end
@@ -114,6 +117,7 @@ ns.RefreshConfig = refreshConfig
 -- Outgoing message queue (throttle). Items: {msg, to=whisperTarget or nil=channel}
 --========================================================================
 local sendQ = {}
+local sendBacklogWarned = false
 local function enqueueWhisper(msg, to)  sendQ[#sendQ + 1] = { msg = msg, to = to } end
 
 local function ensureChannel()
@@ -142,11 +146,13 @@ function ns.AddOffer(itemID, qty, price)
     ns.ItemDB.Learn(itemID)
     if ns.RefreshMine then ns.RefreshMine() end
     ns.Feedback(("Offering %s x%d%s."):format(GetItemInfo(itemID) or ("item:" .. itemID), qty, price == 0 and " (bids)" or ""), false)
+    ns.Log(("OFFER added: %s x%d @ %s"):format(GetItemInfo(itemID) or ("item:" .. itemID), qty, price == 0 and "bid" or (price .. "c")))
     return true
 end
 
 function ns.RemoveOffer(itemID)
     offers()[itemID] = nil
+    ns.Log("OFFER removed: " .. (GetItemInfo(itemID) or ("item:" .. itemID)))
     if ns.RefreshMine then ns.RefreshMine() end
 end
 
@@ -186,12 +192,14 @@ function ns.Search(itemID)
     -- Broadcast the query right here, inside the search keypress/click. SendChatMessage
     -- to a channel is only allowed from a hardware event (never a timer), and addon
     -- messages over custom channels are disabled in Classic Era, so this is the only path.
+    ns.searchStart = GetTime()
     local idx = ensureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("Q~%s~%d"):format(activeQid, itemID), "CHANNEL", nil, idx)
-        if ns.dev then print("|cff00ff96GFM|r → channel: Q~" .. activeQid .. "~" .. itemID) end
+        ns.Log(("SEARCH \"%s\" (id %d) sent"):format(GetItemInfo(itemID) or ("item:" .. itemID), itemID))
     else
         ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
+        ns.Log(("SEARCH (id %d) FAILED — channel not ready"):format(itemID))
     end
     if ns.selfTest and not isPaused() then
         -- deliver our own offer directly (don't rely on the channel echo)
@@ -208,6 +216,8 @@ function ns.Search(itemID)
     C_Timer.After(QUERY_SETTLE, function()
         if activeQid == thisQid then
             ns.searching = false
+            local n = 0; for _ in pairs(ns.results) do n = n + 1 end
+            ns.Log(("SEARCH done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.searchStart or GetTime())))
             if ns.RefreshBuy then ns.RefreshBuy() end
         end
     end)
@@ -230,12 +240,14 @@ function ns.ScanSellers(filter)
     ns.sellerCount = 0
     ns.sellerCapped = false
     ns.scanningSellers = true
+    ns.scanStart = GetTime()
     local idx = ensureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("S~%s~%s"):format(activeSid, filter), "CHANNEL", nil, idx)
-        if ns.dev then print("|cff00ff96GFM|r → channel: S~" .. activeSid .. "~" .. filter) end
+        ns.Log(("SELLERS scan sent%s"):format(filter ~= "" and (" (filter \"" .. filter .. "\")") or ""))
     else
         ns.Feedback("Marketplace channel not ready yet — try again in a second.", true)
+        ns.Log("SELLERS scan FAILED — channel not ready")
     end
     if ns.selfTest and not isPaused() and (filter == "" or playerName:lower():find(filter, 1, true)) then
         local list = inStockOffers()
@@ -246,6 +258,8 @@ function ns.ScanSellers(filter)
     C_Timer.After(QUERY_SETTLE, function()
         if activeSid == thisSid then
             ns.scanningSellers = false
+            ns.Log(("SELLERS scan done: %d seller(s)%s in %.1fs"):format(
+                ns.sellerCount or 0, ns.sellerCapped and " (capped)" or "", GetTime() - (ns.scanStart or GetTime())))
             if ns.RefreshSellers then ns.RefreshSellers() end
         end
     end)
@@ -255,6 +269,7 @@ end
 function ns.OpenSeller(seller, loc)
     if not seller then return end
     loc = loc or (ns.sellerResults[seller] and ns.sellerResults[seller].loc) or ""
+    ns.Log("OPEN " .. seller .. " — requesting catalog")
     sellerSeq = sellerSeq + 1
     activeLid = playerName .. "#L" .. sellerSeq
     ns.sellerCatalog = { seller = seller, loc = loc, items = {}, loading = true }
@@ -302,12 +317,14 @@ local function handleMsg(text, sender)
                 end
             elseif not isPaused() then
                 enqueueWhisper(("R~%s~%d~%d~%d~%s"):format(a, itemID, math.min(o.qty, has), o.price, liveLoc()), sender)
+                ns.Log("answered " .. Ambiguate(sender, "short") .. "'s search for " .. (GetItemInfo(itemID) or ("item:" .. itemID)))
             end
         end
     elseif cmd == "R" then
         if a == activeQid and tonumber(b) == ns.searchItemID then
             ns.results[Ambiguate(sender, "short")] = { qty = tonumber(c), price = tonumber(d), loc = e or "" }
             ns.ItemDB.Learn(tonumber(b))
+            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(Ambiguate(sender, "short"), tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
             if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         end
     elseif cmd == "S" then
@@ -335,6 +352,7 @@ local function handleMsg(text, sender)
                 ns.sellerCount = (ns.sellerCount or 0) + 1
             end
             ns.sellerResults[s] = { count = tonumber(b) or 0, loc = c or "" }
+            ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.scanStart or GetTime())))
             if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
         end
     elseif cmd == "L" then
@@ -349,6 +367,7 @@ local function handleMsg(text, sender)
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
         flush(0)   -- final chunk (empty if I have nothing listed)
+        ns.Log(("sent my catalog (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
     elseif cmd == "K" then
         if a == activeLid and ns.sellerCatalog then
             for chunk in (c or ""):gmatch("[^;]+") do
@@ -359,7 +378,11 @@ local function handleMsg(text, sender)
                     ns.ItemDB.Learn(id)
                 end
             end
-            if tonumber(b) == 0 then ns.sellerCatalog.loading = false end
+            if tonumber(b) == 0 then
+                ns.sellerCatalog.loading = false
+                local n = 0; for _ in pairs(ns.sellerCatalog.items) do n = n + 1 end
+                ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellerCatalog.seller, n, GetTime() - (ns.openStart or GetTime())))
+            end
             if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
         end
     end
@@ -382,6 +405,7 @@ frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
+frame:RegisterEvent("CHAT_MSG_SYSTEM")
 
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -414,8 +438,22 @@ frame:SetScript("OnEvent", function(_, event, ...)
             -- any context, unlike the channel broadcast which must ride a hardware event
             local item = sendQ[1]
             if item and item.to then
-                C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "WHISPER", item.to)
-                table.remove(sendQ, 1)
+                local res = C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "WHISPER", item.to)
+                local throttled = Enum and Enum.SendAddonMessageResult
+                    and res == Enum.SendAddonMessageResult.AddonMessageThrottle
+                if throttled then
+                    ns.Log("THROTTLE: addon whisper to " .. item.to .. " throttled by server — will retry")
+                else
+                    table.remove(sendQ, 1)
+                end
+            end
+            -- surface a growing backlog (latency / throttling symptom), edge-triggered
+            if #sendQ >= 20 and not sendBacklogWarned then
+                sendBacklogWarned = true
+                ns.Log("SEND backlog: " .. #sendQ .. " replies queued (throttle/latency?)")
+            elseif #sendQ == 0 and sendBacklogWarned then
+                sendBacklogWarned = false
+                ns.Log("SEND backlog cleared")
             end
         end)
         C_Timer.NewTicker(SCAN_INTERVAL, reconcileOffers)
@@ -436,6 +474,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if text and text:sub(1, #CHAT_TAG) == CHAT_TAG then
             if ns.dev then print("|cff00ff96GFM|r ← channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
             handleMsg(text:sub(#CHAT_TAG + 1), sender)
+        end
+
+    elseif event == "CHAT_MSG_SYSTEM" then
+        local msg = ...
+        if msg and ERR_CHAT_THROTTLED and msg == ERR_CHAT_THROTTLED then
+            ns.Log("THROTTLE: server says chat is being sent too quickly (channel broadcast may have dropped)")
         end
 
     elseif event == "BAG_UPDATE_DELAYED" then

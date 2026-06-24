@@ -372,6 +372,17 @@ local function CreateUI()
     local title = main:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
+    -- debug-log toggle (opens the copyable sidebar; available to everyone for bug reports)
+    local debugBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    debugBtn:SetSize(52, 18); debugBtn:SetPoint("TOPRIGHT", -40, -11); debugBtn:SetText("Debug")
+    debugBtn:SetScript("OnClick", function() if ns.ToggleDebug then ns.ToggleDebug() end end)
+    debugBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Debug log")
+        GameTooltip:AddLine("Open a copyable log of searches, sellers, and any throttling — to send a bug/latency report.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    debugBtn:SetScript("OnLeave", GameTooltip_Hide)
 
     -- tabs
     local TABS = { { tab = "BUY", label = "Buy", w = 70 }, { tab = "SELLERS", label = "Sellers", w = 80 }, { tab = "MINE", label = "My Items", w = 90 }, { tab = "HELP", label = "Help", w = 50, right = true } }
@@ -680,6 +691,7 @@ local function CreateUI()
     helpText:SetText(table.concat({
         "|cffff4040» FIRST TIME — open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
         "|cffffffffRequired before you can search:|r until the database is built, autocomplete can't find items you don't already own. It's a safe one-time background scan that resumes if you stop.",
+        "|cffffffffFaster with the |r|cffffd100aux|r|cffffffff addon:|r if you have aux installed, GFM seeds the classic item names from it instantly on login, so the scan only has to fetch the newer Season of Discovery items.",
         " ",
         "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation — only sellers who are |cffffffffonline right now|r answer.",
         " ",
@@ -742,7 +754,8 @@ function ns.UpdateDBPanel()
     main.dbInfo:SetText(("Item database: %d items"):format(ns.ItemDB.Count()))
     if ns.ItemDB.IsHarvesting() then
         local cur, max = ns.ItemDB.HarvestProgress()
-        main.dbBtn:SetText(("Stop (%d%%)"):format(math.floor(cur / max * 100)))
+        local pct = (max and max > 0) and math.floor(cur / max * 100) or 0
+        main.dbBtn:SetText(("Stop (%d%%)"):format(pct))
     else
         main.dbBtn:SetText("Build full DB")
     end

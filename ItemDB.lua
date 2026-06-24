@@ -19,8 +19,15 @@ local have      = {}         -- [itemID] = true (dedupe)
 local pending   = {}         -- [itemID] = true (requested, awaiting GET_ITEM_INFO_RECEIVED)
 local unused    = {}         -- [itemID] = true (server says it doesn't exist; don't retry)
 local pendingCount = 0
+local lastLearned             -- name of the most recently added item (for the debug panel)
+local lastLoggedPct = -1      -- throttles harvest progress lines into the debug log
+local lastLogTime = 0
 local harvestTicker
-local MAX_ITEM_ID  = 30000
+-- The full-DB scan has two phases: brute-force the classic/vanilla range 1..CLASSIC_MAX
+-- (aux usually covers these instantly), then fetch the bundled SoD item list (ns.SoDItems)
+-- directly — so we never probe the ~46000 dead IDs in 200000-250000, which is slow and
+-- can disconnect you. Both phases resolve names via GetItemInfo, so the DB stays localized.
+local CLASSIC_MAX = 30000
 
 local function normalize(s)
     return (s or ""):lower():gsub("[^%w]", "")   -- drop spaces/apostrophes/punctuation
@@ -32,6 +39,7 @@ local function add(itemID, name, q)
     searchList[#searchList + 1] = { id = itemID, name = name, norm = normalize(name), q = q or 1 }
     GuildFoundMarketDB.names[itemID] = name
     GuildFoundMarketDB.quals[itemID] = q or 1
+    lastLearned = name
 end
 
 -- Learn an itemID: store its (localized) name now if cached, else request it.
@@ -60,31 +68,89 @@ function ItemDB.OnItemInfoReceived(itemID, success)
 end
 
 --========================================================================
--- Self-harvest: iterate all itemIDs (aux-style), throttled & resumable, so the
--- DB builds itself with no aux dependency. Bounded outstanding requests so we
--- never flood the server.
+-- Self-harvest: walk the item-ID windows (aux-style), throttled & resumable, so
+-- the DB builds itself with no aux dependency. Bounded outstanding requests so
+-- we never flood the server. The gap between windows (e.g. 30000..200000) is
+-- skipped, so we don't waste requests on IDs that can't exist.
 --========================================================================
-local HARVEST_BATCH = 400   -- ids processed per tick (cached ones are instant, no request)
-local HARVEST_TICK  = 0.05  -- seconds between ticks
-local PENDING_CAP   = 100   -- max outstanding server requests at once (bounds uncached rate)
+local HARVEST_BATCH = 400   -- ids processed per tick (cached/known ones are instant, no request)
+local HARVEST_TICK  = 0.1   -- seconds between ticks
+local PENDING_CAP   = 25    -- max outstanding server requests at once — kept low so brute-force
+                            -- probing can't flood the server (which risks a disconnect)
+
+local function sodList()  return ns.SoDItems or {} end
+local function totalRaw() return CLASSIC_MAX + #sodList() end
+local function scannedRaw()
+    local pos = GuildFoundMarketDB.harvestNext or 1
+    local classicDone = math.min(pos - 1, CLASSIC_MAX)
+    local sodDone = (pos > CLASSIC_MAX) and ((GuildFoundMarketDB.sodNext or 1) - 1) or 0
+    return classicDone + sodDone
+end
+-- progress is measured from where THIS run started, so a SoD-only run (classic skipped
+-- via aux) reads 0→100% instead of starting near 93%.
+local function progressDone()  return scannedRaw() - (GuildFoundMarketDB.harvestStartScanned or 0) end
+local function progressTotal() return totalRaw() - (GuildFoundMarketDB.harvestStartScanned or 0) end
+
+local function logProgress()
+    if not ns.Log then return end
+    local pos = GuildFoundMarketDB.harvestNext or 1
+    local pct = progressTotal() > 0 and math.floor(progressDone() / progressTotal() * 100) or 0
+    if math.floor(pct / 10) > math.floor(lastLoggedPct / 10) or (GetTime() - lastLogTime) >= 5 then
+        lastLoggedPct = pct; lastLogTime = GetTime()
+        local where = (pos <= CLASSIC_MAX) and ("classic id " .. pos)
+            or ("SoD item " .. math.min(GuildFoundMarketDB.sodNext or 1, #sodList()) .. "/" .. #sodList())
+        ns.Log(("DBSCAN %d%% · %s · %d pending · %d items"):format(pct, where, pendingCount, #searchList))
+    end
+end
 
 local function harvestTick()
-    local n = GuildFoundMarketDB.harvestNext or 1
-    if n > MAX_ITEM_ID then
-        ItemDB.StopHarvest()
-        ns.Feedback(("Item harvest complete — %d items."):format(#searchList), false)
-        return
+    local pos = GuildFoundMarketDB.harvestNext or 1
+    if pos <= CLASSIC_MAX then
+        -- phase 1: brute-force the classic range
+        local budget = HARVEST_BATCH
+        while budget > 0 and pos <= CLASSIC_MAX and pendingCount < PENDING_CAP do
+            ItemDB.Learn(pos); pos = pos + 1; budget = budget - 1
+        end
+        GuildFoundMarketDB.harvestNext = pos
+    else
+        -- phase 2: fetch the bundled SoD list (real IDs only, no dead probes)
+        local list = sodList()
+        local idx = GuildFoundMarketDB.sodNext or 1
+        if idx > #list then
+            ItemDB.StopHarvest()
+            ns.Feedback(("Item harvest complete — %d items."):format(#searchList), false)
+            if ns.Log then ns.Log(("DBSCAN complete — %d items"):format(#searchList)) end
+            return
+        end
+        local budget = HARVEST_BATCH
+        while budget > 0 and idx <= #list and pendingCount < PENDING_CAP do
+            ItemDB.Learn(list[idx]); idx = idx + 1; budget = budget - 1
+        end
+        GuildFoundMarketDB.sodNext = idx
     end
-    local budget = HARVEST_BATCH
-    while budget > 0 and n <= MAX_ITEM_ID and pendingCount < PENDING_CAP do
-        ItemDB.Learn(n); n = n + 1; budget = budget - 1
-    end
-    GuildFoundMarketDB.harvestNext = n
+    logProgress()
 end
 
 function ItemDB.StartHarvest()
     GuildFoundMarketDB.harvestNext = GuildFoundMarketDB.harvestNext or 1
-    if not harvestTicker then harvestTicker = C_Timer.NewTicker(HARVEST_TICK, harvestTick) end
+    GuildFoundMarketDB.sodNext = GuildFoundMarketDB.sodNext or 1
+    -- aux already seeded the classic names → skip the slow classic brute-force (and its
+    -- disconnect-prone dead-ID probing) and go straight to the SoD list.
+    if GuildFoundMarketDB.auxSeeded and GuildFoundMarketDB.harvestNext <= CLASSIC_MAX then
+        GuildFoundMarketDB.harvestNext = CLASSIC_MAX + 1
+    end
+    if not harvestTicker then
+        wipe(pending); pendingCount = 0   -- clear any stale outstanding requests so we never stall
+        GuildFoundMarketDB.harvestStartScanned = scannedRaw()
+        harvestTicker = C_Timer.NewTicker(HARVEST_TICK, harvestTick)
+        lastLoggedPct = -1; lastLogTime = GetTime()
+        if ns.Log then
+            local pos = GuildFoundMarketDB.harvestNext
+            local where = (pos <= CLASSIC_MAX) and ("classic id " .. pos)
+                or ("SoD list (" .. #sodList() .. " items)" .. (GuildFoundMarketDB.auxSeeded and ", classic via aux" or ""))
+            ns.Log(("DBSCAN started — %s · %d items so far"):format(where, #searchList))
+        end
+    end
 end
 
 function ItemDB.StopHarvest()
@@ -92,7 +158,7 @@ function ItemDB.StopHarvest()
 end
 
 function ItemDB.IsHarvesting() return harvestTicker ~= nil end
-function ItemDB.HarvestProgress() return GuildFoundMarketDB.harvestNext or 1, MAX_ITEM_ID end
+function ItemDB.HarvestProgress() return progressDone(), progressTotal() end
 
 -- Wipe everything to simulate a clean install.
 function ItemDB.Reset()
@@ -102,6 +168,8 @@ function ItemDB.Reset()
     GuildFoundMarketDB.names = {}
     GuildFoundMarketDB.quals = {}
     GuildFoundMarketDB.harvestNext = 1
+    GuildFoundMarketDB.sodNext = 1
+    GuildFoundMarketDB.harvestStartScanned = 0
     GuildFoundMarketDB.auxSeeded = nil
 end
 

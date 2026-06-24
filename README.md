@@ -67,6 +67,15 @@ prints which config it picked up.
 2. Make sure the folder is named `GuildFoundMarket`.
 3. Enable it on the character-select AddOns screen.
 
+## Credits
+
+The bundled Season of Discovery item-ID list (`SoDItems.lua`) is derived from the SoD item
+database of the [Questie](https://github.com/Questie/Questie) addon (`sodBaseItems.lua`).
+The list is generated once and shipped with this addon — **Questie is not required at runtime.**
+The IDs let the database scan fetch only real SoD items instead of brute-forcing tens of
+thousands of non-existent IDs. Item names still resolve in your client's language via
+`GetItemInfo`, so the database stays multilingual.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
