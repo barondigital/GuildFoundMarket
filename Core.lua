@@ -11,6 +11,11 @@ local CHAT_TAG      = "GFMqp1:"   -- marks our hidden chat-channel protocol mess
 local SEND_TICK     = 0.30            -- min seconds between outgoing messages (throttle)
 local SCAN_INTERVAL = 10             -- how often offers are reconciled with inventory
 local QUERY_SETTLE  = 5             -- seconds we collect responses for a search
+local SELLER_CAP    = 150           -- max distinct sellers a scan collects (protects the scanner)
+local SCAN_JITTER   = 2.0           -- seconds sellers spread scan replies over (unfiltered scan)
+local FILTER_MIN    = 3             -- min chars before a seller-name scan goes over the network
+ns.SELLER_CAP = SELLER_CAP
+ns.FILTER_MIN = FILTER_MIN
 
 --========================================================================
 -- State
@@ -211,22 +216,28 @@ end
 -- whisper back a one-line summary (count + location). Opening a seller fetches
 -- their full catalog with a directed whisper (chunked, so big lists are fine).
 --========================================================================
-function ns.ScanSellers()
+-- filter: optional lowercase name substring. Empty = "who's online" (capped sample);
+-- non-empty = only sellers whose name contains it answer, so it scales to big groups.
+function ns.ScanSellers(filter)
     if not ns.channelName then ns.Feedback("Not in a confederation — can't browse sellers.", true); return end
+    filter = filter or ""
+    ns.scanFilter = filter
     sellerSeq = sellerSeq + 1
     activeSid = playerName .. "#S" .. sellerSeq
     wipe(ns.sellerResults)
+    ns.sellerCount = 0
+    ns.sellerCapped = false
     ns.scanningSellers = true
     local idx = ensureChannel()
     if idx then
-        SendChatMessage(CHAT_TAG .. ("S~%s"):format(activeSid), "CHANNEL", nil, idx)
-        if ns.dev then print("|cff00ff96GFM|r → channel: S~" .. activeSid) end
+        SendChatMessage(CHAT_TAG .. ("S~%s~%s"):format(activeSid, filter), "CHANNEL", nil, idx)
+        if ns.dev then print("|cff00ff96GFM|r → channel: S~" .. activeSid .. "~" .. filter) end
     else
         ns.Feedback("Marketplace channel not ready yet — try again in a second.", true)
     end
-    if ns.selfTest and not isPaused() then
+    if ns.selfTest and not isPaused() and (filter == "" or playerName:lower():find(filter, 1, true)) then
         local list = inStockOffers()
-        if #list > 0 then ns.sellerResults[playerName] = { count = #list, loc = liveLoc() } end
+        if #list > 0 then ns.sellerResults[playerName] = { count = #list, loc = liveLoc() }; ns.sellerCount = 1 end
     end
     if ns.RefreshSellers then ns.RefreshSellers() end
     local thisSid = activeSid
@@ -295,18 +306,34 @@ local function handleMsg(text, sender)
         if a == activeQid and tonumber(b) == ns.searchItemID then
             ns.results[Ambiguate(sender, "short")] = { qty = tonumber(c), price = tonumber(d), loc = e or "" }
             ns.ItemDB.Learn(tonumber(b))
-            if ns.RefreshBuy then ns.RefreshBuy() end
+            if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         end
     elseif cmd == "S" then
         -- a seller-browse scan: answer with my summary (count + location) if I have stock
+        -- and (when the scan is filtered) my name matches the requested substring.
         if Ambiguate(sender, "short") == playerName then return end   -- ignore my own broadcast
         if isPaused() then return end                                 -- paused: stay invisible
+        local filter = b
+        if filter and filter ~= "" and not playerName:lower():find(filter, 1, true) then return end
         local list = inStockOffers()
-        if #list > 0 then enqueueWhisper(("C~%s~%d~%s"):format(a, #list, liveLoc()), sender) end
+        if #list > 0 then
+            -- spread replies over time so the scanner isn't hit by a burst; filtered
+            -- scans match few people, so answer those almost immediately.
+            local sid, n, loc = a, #list, liveLoc()
+            local jitter = (filter and filter ~= "") and 0.3 or SCAN_JITTER
+            C_Timer.After(math.random() * jitter, function()
+                enqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
+            end)
+        end
     elseif cmd == "C" then
         if a == activeSid then
-            ns.sellerResults[Ambiguate(sender, "short")] = { count = tonumber(b) or 0, loc = c or "" }
-            if ns.RefreshSellers then ns.RefreshSellers() end
+            local s = Ambiguate(sender, "short")
+            if not ns.sellerResults[s] then
+                if (ns.sellerCount or 0) >= SELLER_CAP then ns.sellerCapped = true; return end
+                ns.sellerCount = (ns.sellerCount or 0) + 1
+            end
+            ns.sellerResults[s] = { count = tonumber(b) or 0, loc = c or "" }
+            if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
         end
     elseif cmd == "L" then
         -- a directed request for my full catalog; reply in <=180-char chunks
@@ -331,7 +358,7 @@ local function handleMsg(text, sender)
                 end
             end
             if tonumber(b) == 0 then ns.sellerCatalog.loading = false end
-            if ns.RefreshSellerCatalog then ns.RefreshSellerCatalog() end
+            if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
         end
     end
 end
@@ -416,9 +443,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         local itemID, success = ...
         ns.ItemDB.OnItemInfoReceived(itemID, success)
-        if ns.RefreshBuy then ns.RefreshBuy() end
-        if ns.RefreshMine then ns.RefreshMine() end
-        if ns.RefreshSellerCatalog then ns.RefreshSellerCatalog() end
+        if ns.RefreshBuySoon then ns.RefreshBuySoon() end
+        if ns.RefreshMineSoon then ns.RefreshMineSoon() end
+        if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
     end
 end)
 

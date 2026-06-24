@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1
+
+- **Find a seller by name.** The Sellers filter now also runs as a network query:
+  type at least three letters and press Enter, and only sellers whose name matches
+  answer — so you can locate someone even in a large confederation. Typing still
+  narrows the already-listed sellers instantly client-side.
+- **Scales to busy markets.** Incoming replies are coalesced so the list re-sorts
+  at most a few times per second instead of once per message; a seller scan now
+  collects up to 150 sellers and sellers spread their replies over a couple of
+  seconds, so a crowded confederation no longer floods the client.
+- **Mouse-wheel scrolling** in every list (Buy, Sellers, a seller's items, My Items).
+
 ## 0.4.0
 
 - **Sellers tab — browse who's online.** Scan your confederation for sellers who

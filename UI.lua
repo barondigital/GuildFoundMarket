@@ -255,7 +255,7 @@ end
 function ns.RefreshSellers()
     if not main or not main:IsShown() or currentTab ~= "SELLERS" or sellersView ~= "INDEX" then return end
     wipe(view)
-    local filter = (main.sellerFilter:GetText() or ""):lower()
+    local filter = (main.sellerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
     local names = {}
     for s in pairs(ns.sellerResults) do
         if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
@@ -267,12 +267,17 @@ function ns.RefreshSellers()
     end
     renderRows()
     main.status:SetTextColor(0.7, 0.7, 0.7)
+    local sf = ns.scanFilter
     if ns.scanningSellers then
-        main.status:SetText("Scanning your confederation for online sellers ...")
+        main.status:SetText((sf and sf ~= "") and ("Searching sellers matching \"" .. sf .. "\" ...")
+            or "Scanning your confederation for online sellers ...")
     elseif next(ns.sellerResults) == nil then
-        main.status:SetText("No online sellers right now.")
+        main.status:SetText((sf and sf ~= "") and ("No online seller matches \"" .. sf .. "\".")
+            or "No online sellers right now.")
     elseif #names == 0 then
         main.status:SetText("No seller matches \"" .. filter .. "\".")
+    elseif ns.sellerCapped then
+        main.status:SetText(("Showing %d online sellers (capped) — type %d+ letters of a name and press Enter to find a specific one."):format(#names, ns.FILTER_MIN))
     else
         main.status:SetText(("%d online seller(s) — click one to see their items."):format(#names))
     end
@@ -320,6 +325,30 @@ function ns.SetSellersView(v)
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
     if index then ns.RefreshSellers() else ns.RefreshSellerCatalog() end
 end
+
+--========================================================================
+-- Coalesced refreshes — network replies (R/C/K) and item-info events can arrive
+-- in bursts; debounce so we re-sort/re-render at most ~5x/sec, not once per message.
+--========================================================================
+local pendingRefresh = {}
+local refreshScheduled = false
+local function scheduleRefresh(which)
+    pendingRefresh[which] = true
+    if refreshScheduled then return end
+    refreshScheduled = true
+    C_Timer.After(0.2, function()
+        refreshScheduled = false
+        local p = pendingRefresh; pendingRefresh = {}
+        if p.buy     and ns.RefreshBuy            then ns.RefreshBuy() end
+        if p.mine    and ns.RefreshMine           then ns.RefreshMine() end
+        if p.sellers and ns.RefreshSellers        then ns.RefreshSellers() end
+        if p.catalog and ns.RefreshSellerCatalog  then ns.RefreshSellerCatalog() end
+    end)
+end
+function ns.RefreshBuySoon()           scheduleRefresh("buy") end
+function ns.RefreshMineSoon()          scheduleRefresh("mine") end
+function ns.RefreshSellersSoon()       scheduleRefresh("sellers") end
+function ns.RefreshSellerCatalogSoon() scheduleRefresh("catalog") end
 
 --========================================================================
 -- build the window
@@ -469,6 +498,12 @@ local function CreateUI()
     local scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScroll", main, "FauxScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -112); scroll:SetSize(520, ROWS * ROW_H)
     scroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, ROW_H, renderRows) end)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxOff = math.max(0, #view - ROWS)
+        local off = math.min(maxOff, math.max(0, FauxScrollFrame_GetOffset(self) - delta))
+        FauxScrollFrame_SetOffset(self, off); self:SetVerticalScroll(off * ROW_H); renderRows()
+    end)
     main.scroll = scroll
 
     for i = 1, ROWS do
@@ -566,12 +601,24 @@ local function CreateUI()
     main.sellerFilterLabel = sellerFilterLabel
     local sellerFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
     sellerFilter:SetPoint("TOPLEFT", 100, -64); sellerFilter:SetSize(225, 22); sellerFilter:SetAutoFocus(false); sellerFilter:Hide()
+    -- typing narrows the already-received list instantly (client-side); pressing Enter
+    -- sends a network query so sellers matching the name answer even if they weren't in
+    -- the capped first scan. (Channel broadcasts are only allowed from a key/click, not a timer.)
+    local function sellerFilterText() return (sellerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower() end
     sellerFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshSellers() end end)
-    sellerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshSellers() end)
+    sellerFilter:SetScript("OnEnterPressed", function(self)
+        local t = sellerFilterText(); self:ClearFocus()
+        if t == "" then ns.ScanSellers("")
+        elseif #t >= ns.FILTER_MIN then ns.ScanSellers(t)
+        else ns.Feedback(("Type at least %d letters of a name to search sellers."):format(ns.FILTER_MIN), true) end
+    end)
+    sellerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanSellers("") end)
     main.sellerFilter = sellerFilter
     local sellerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     sellerRefreshBtn:SetSize(80, 22); sellerRefreshBtn:SetPoint("TOPLEFT", 335, -64); sellerRefreshBtn:SetText("Refresh"); sellerRefreshBtn:Hide()
-    sellerRefreshBtn:SetScript("OnClick", function() ns.ScanSellers() end)
+    sellerRefreshBtn:SetScript("OnClick", function()
+        local t = sellerFilterText(); ns.ScanSellers((#t >= ns.FILTER_MIN) and t or "")
+    end)
     main.sellerRefreshBtn = sellerRefreshBtn
 
     local sellerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
@@ -703,13 +750,14 @@ function ns.SelectTab(tab, goSeller, goLoc)
         main.h1:SetText("Seller"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("Location")
         ns.RefreshBuy()
     elseif sellers then
+        main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then
             ns.SetSellersView("SHOW")    -- jump straight to one seller (e.g. from a Buy result)
             ns.OpenSeller(goSeller, goLoc)
-            ns.ScanSellers()             -- also populate the index so "< Back" has the full list
+            ns.ScanSellers("")           -- also populate the index so "< Back" has the full list
         else
             ns.SetSellersView("INDEX")   -- sets its own headers + refresh
-            ns.ScanSellers()             -- auto-scan on entering (driven by the tab click = hardware event)
+            ns.ScanSellers("")           -- auto-scan on entering (driven by the tab click = hardware event)
         end
     elseif help then
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
