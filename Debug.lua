@@ -27,7 +27,7 @@ function ns.RefreshDebug()
     -- While the box has focus (you're selecting/copying) we don't rewrite the text,
     -- or it would wipe your selection — so the view "freezes". Tell the user how to resume.
     if editBox:HasFocus() then
-        setStatus("PAUSED — click outside or press Esc to resume", 1, 0.7, 0.2)
+        setStatus("PAUSED — press Esc or click the panel to resume", 1, 0.7, 0.2)
         return
     end
     -- Newest line on top, so the latest is always visible without scrolling.
@@ -53,6 +53,10 @@ local function createSidebar()
         tile = true, tileSize = 32, edgeSize = 32,
         insets = { left = 11, right = 12, top = 12, bottom = 11 },
     })
+    -- clicking anywhere on the panel (outside the text box) drops the edit focus and
+    -- resumes the live view (an EditBox won't release focus on its own otherwise)
+    panel:EnableMouse(true)
+    panel:SetScript("OnMouseDown", function() if editBox then editBox:ClearFocus() end end)
 
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", 0, -16); title:SetText("GFM |cff00ff96Debug|r")
@@ -76,7 +80,7 @@ local function createSidebar()
     editBox:SetFontObject(ChatFontSmall)
     editBox:SetWidth(290)
     editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    editBox:SetScript("OnEditFocusGained", function() setStatus("PAUSED — click outside or press Esc to resume", 1, 0.7, 0.2) end)
+    editBox:SetScript("OnEditFocusGained", function() setStatus("PAUSED — press Esc or click the panel to resume", 1, 0.7, 0.2) end)
     editBox:SetScript("OnEditFocusLost", function() ns.RefreshDebug() end)
     scroll:SetScrollChild(editBox)
     scroll:EnableMouseWheel(true)
