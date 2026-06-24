@@ -133,14 +133,15 @@ local function formatBuyRow(r, d)
     r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(d.loc or ""); r.c4:Show()
     r.x:Hide()
-    r.itemID = nil
+    r.itemID = nil; r.c1.itemID = ns.searchItemID   -- every Buy row is the searched item
 end
 
 local function formatMineRow(r, d)
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
-    r.c1:EnableMouse(false)
+    r.c1:EnableMouse(true)           -- enable hover for the item tooltip (no click action)
     r.c1.tip = nil
+    r.c1.itemID = d.id
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(d.qty)
     r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
@@ -164,7 +165,7 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.count)
         r.c3:SetText("")
         r.c4:SetText(d.loc or ""); r.c4:Show()
-        r.x:Hide(); r.itemID = nil
+        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
@@ -178,7 +179,7 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.qty)
         r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
         r.c4:SetText(""); r.c4:Hide()
-        r.x:Hide(); r.itemID = nil
+        r.x:Hide(); r.itemID = nil; r.c1.itemID = d.id
     end
 end
 
@@ -514,7 +515,18 @@ local function CreateUI()
         r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 26, 0); r.c1:SetSize(185, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
         local c1hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); c1hl:SetAllPoints(); c1hl:SetColorTexture(1, 1, 1, 0.12)
-        r.c1:SetScript("OnEnter", function(self) if self.tip then GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT"); GameTooltip:SetText(self.tip, 1, 1, 1); GameTooltip:Show() end end)
+        r.c1:SetScript("OnEnter", function(self)
+            if self.itemID then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetItemByID(self.itemID)
+                if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
+                GameTooltip:Show()
+            elseif self.tip then
+                GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+                GameTooltip:SetText(self.tip, 1, 1, 1)
+                GameTooltip:Show()
+            end
+        end)
         r.c1:SetScript("OnLeave", GameTooltip_Hide)
         r.c2 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c2:SetPoint("LEFT", 215, 0); r.c2:SetWidth(45); r.c2:SetJustifyH("LEFT")
         r.c3 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c3:SetPoint("LEFT", 263, 0); r.c3:SetWidth(112); r.c3:SetJustifyH("LEFT")

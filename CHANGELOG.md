@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Hover any item to see its full in-game tooltip — in Buy results, a seller's item
+  list, and My Items. The click hint now shows as a small line beneath it.
+
 ## 0.4.1
 
 - **Find a seller by name.** The Sellers filter now also runs as a network query:
