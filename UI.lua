@@ -129,8 +129,8 @@ local function formatBuyRow(r, d)
         if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.price)
         else ns.SelectTab("SELLERS", d.seller, d.loc) end
     end)
-    r.c2:SetText(d.qty)
-    r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+    r.c2:SetText(d.qty or 0)
+    r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(d.loc or ""); r.c4:Show()
     r.x:Hide()
     r.itemID = nil; r.c1.itemID = ns.searchItemID   -- every Buy row is the searched item
@@ -148,8 +148,8 @@ local function formatMineRow(r, d)
             if link then ChatEdit_InsertLink(link) end
         end
     end)
-    r.c2:SetText(d.qty)
-    r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+    r.c2:SetText(d.qty or 0)
+    r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(""); r.c4:Hide()
     r.x:Show()
     r.x:SetScript("OnClick", function() ns.RemoveOffer(d.id) end)
@@ -167,7 +167,7 @@ local function formatSellerRow(r, d)
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
         end)
-        r.c2:SetText(d.count)
+        r.c2:SetText(d.count or 0)
         r.c3:SetText("")
         r.c4:SetText(d.loc or ""); r.c4:Show()
         r.x:Hide(); r.itemID = nil; r.c1.itemID = nil
@@ -181,8 +181,8 @@ local function formatSellerRow(r, d)
             if button == "RightButton" then whisperItem(d.seller, d.id, d.price)
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
-        r.c2:SetText(d.qty)
-        r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+        r.c2:SetText(d.qty or 0)
+        r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
         r.c4:SetText(""); r.c4:Hide()
         r.x:Hide(); r.itemID = nil; r.c1.itemID = d.id
     end
@@ -216,8 +216,8 @@ function ns.RefreshBuy()
     end
     table.sort(view, function(a, b)
         -- real prices ascending; "bid" offers (price 0) sink to the bottom
-        local pa = a.price > 0 and a.price or math.huge
-        local pb = b.price > 0 and b.price or math.huge
+        local pa = (a.price or 0) > 0 and a.price or math.huge
+        local pb = (b.price or 0) > 0 and b.price or math.huge
         if pa ~= pb then return pa < pb end
         return a.seller < b.seller
     end)
@@ -328,6 +328,7 @@ function ns.SetSellersView(v)
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
     end
+    wipe(view)   -- avoid feeding the other view's stale rows to the formatter on scroll reset
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
     if index then ns.RefreshSellers() else ns.RefreshSellerCatalog() end
 end

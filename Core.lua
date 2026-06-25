@@ -118,7 +118,12 @@ ns.RefreshConfig = refreshConfig
 --========================================================================
 local sendQ = {}
 local sendBacklogWarned = false
-local function enqueueWhisper(msg, to)  sendQ[#sendQ + 1] = { msg = msg, to = to } end
+local SEND_QUEUE_MAX = 50   -- under sustained server throttling, drop the oldest (already-stale)
+                            -- reply instead of growing unbounded: a >5s-old search answer is useless
+local function enqueueWhisper(msg, to)
+    if #sendQ >= SEND_QUEUE_MAX then table.remove(sendQ, 1) end
+    sendQ[#sendQ + 1] = { msg = msg, to = to }
+end
 
 local function ensureChannel()
     local name = ns.channelName
@@ -342,7 +347,7 @@ local function handleMsg(text, sender)
         end
     elseif cmd == "R" then
         if a == activeQid and tonumber(b) == ns.searchItemID then
-            ns.results[Ambiguate(sender, "short")] = { qty = tonumber(c), price = tonumber(d), loc = e or "" }
+            ns.results[Ambiguate(sender, "short")] = { qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
             ns.ItemDB.Learn(tonumber(b))
             ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(Ambiguate(sender, "short"), tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
             if ns.RefreshBuySoon then ns.RefreshBuySoon() end
@@ -466,30 +471,22 @@ local SHARE_EVENTS = {
     "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
 }
 
--- Handle a clicked shop link ourselves and stop. We intercept the chat frame's
--- OnHyperlinkClick (which runs before SetItemRef) instead of hooking SetItemRef,
--- so our custom link never reaches SetItemRef or other addons' SetItemRef hooks
--- (NovaWorldBuffs, Questie, …) which throw "Unknown link type" on it. Clicking is
--- a hardware event, so we may broadcast the seller scan from here.
-local function onChatHyperlink(chatFrame, link, text, button)
-    if type(link) == "string" and link:sub(1, 8) == "gfmshop:" then
-        if ns.OpenShopLink then ns.OpenShopLink(link:sub(9)) end
-        return
-    end
-    return ChatFrame_OnHyperlinkShow(chatFrame, link, text, button)
-end
-
+-- Open a clicked shop link via a taint-free securehook on SetItemRef. We must NOT
+-- replace the chat frame's OnHyperlinkClick script instead: doing so taints the chat
+-- frames, which then intermittently blocks our SendChatMessage channel broadcasts
+-- (ADDON_ACTION_BLOCKED) and breaks search/scan. The trade-off: addons that
+-- securehook SetItemRef and call SetHyperlink unconditionally (NovaWorldBuffs,
+-- Questie) log a harmless "Unknown link type" on click. Secure hooks are dispatched
+-- independently, so the link still works; we accept that over breaking search.
 local shareInstalled = false
 local function installShareLinks()
     if shareInstalled then return end
     shareInstalled = true
     for _, e in ipairs(SHARE_EVENTS) do ChatFrame_AddMessageEventFilter(e, shareFilter) end
-    for i = 1, NUM_CHAT_WINDOWS do
-        local cf = _G["ChatFrame" .. i]
-        if cf and cf:GetScript("OnHyperlinkClick") then
-            cf:SetScript("OnHyperlinkClick", onChatHyperlink)
-        end
-    end
+    hooksecurefunc("SetItemRef", function(link)
+        local name = type(link) == "string" and link:match("^gfmshop:(.+)$")
+        if name and ns.OpenShopLink then ns.OpenShopLink(name) end
+    end)
 end
 
 --========================================================================
