@@ -61,6 +61,10 @@ local function createSidebar()
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", 0, -16); title:SetText("GFM |cff00ff96Debug|r")
 
+    local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -4, -4)
+    close:SetScript("OnClick", function() panel:Hide() end)
+
     statusFS = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     statusFS:SetPoint("TOPLEFT", 16, -62); statusFS:SetJustifyH("LEFT"); statusFS:SetText("")
 

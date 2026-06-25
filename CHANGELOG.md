@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+- **Announce your shop.** A new Announce button on the My Items tab drops a
+  "Shop is open!" line, with a clickable shop link, into your guild chat box.
+  Nothing is sent automatically (that is your call, and it keeps things spam
+  free); you can add items or extra text before pressing Enter. Guild members
+  running GFM see the link as a clickable button, everyone else just sees plain
+  text.
+- **Safe by design.** Clicking a shop link never opens the listing straight from
+  the link. It runs a name filtered seller scan over your private marketplace
+  channel and opens the shop only once that seller actually answers, so a shop
+  can never be shown to someone outside your confederation.
+- **Debug button moved.** The Debug log button now lives on the Help tab, top
+  right, instead of next to the close button.
+
 ## 0.5.0
 
 - **Season of Discovery items are now searchable.** The "Build full DB" scan fetches a

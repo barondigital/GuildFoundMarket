@@ -139,10 +139,15 @@ end
 local function formatMineRow(r, d)
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
-    r.c1:EnableMouse(true)           -- enable hover for the item tooltip (no click action)
-    r.c1.tip = nil
+    r.c1:EnableMouse(true)
+    r.c1.tip = "Shift-click to drop this item into your open chat message (e.g. an announce)"
     r.c1.itemID = d.id
-    r.c1:SetScript("OnClick", nil)
+    r.c1:SetScript("OnClick", function()
+        if IsModifiedClick("CHATLINK") then
+            local link = itemLink(d.id)
+            if link then ChatEdit_InsertLink(link) end
+        end
+    end)
     r.c2:SetText(d.qty)
     r.c3:SetText(d.price > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(""); r.c4:Hide()
@@ -372,9 +377,10 @@ local function CreateUI()
     local title = main:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
-    -- debug-log toggle (opens the copyable sidebar; available to everyone for bug reports)
+    -- debug-log toggle (opens the copyable sidebar; available to everyone for bug
+    -- reports). Lives on the Help tab, top right — shown only there.
     local debugBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    debugBtn:SetSize(52, 18); debugBtn:SetPoint("TOPRIGHT", -40, -11); debugBtn:SetText("Debug")
+    debugBtn:SetSize(60, 20); debugBtn:SetPoint("TOPRIGHT", -30, -64); debugBtn:SetText("Debug"); debugBtn:Hide()
     debugBtn:SetScript("OnClick", function() if ns.ToggleDebug then ns.ToggleDebug() end end)
     debugBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -383,6 +389,7 @@ local function CreateUI()
         GameTooltip:Show()
     end)
     debugBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.debugBtn = debugBtn
 
     -- tabs
     local TABS = { { tab = "BUY", label = "Buy", w = 70 }, { tab = "SELLERS", label = "Sellers", w = 80 }, { tab = "MINE", label = "My Items", w = 90 }, { tab = "HELP", label = "Help", w = 50, right = true } }
@@ -675,9 +682,31 @@ local function CreateUI()
     pauseBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.pauseBtn = pauseBtn
 
+    -- Announce: a chat/note icon, right-aligned. Disabled while listings are paused.
+    local announceBtn = CreateFrame("Button", nil, main)
+    announceBtn:SetSize(24, 24); announceBtn:SetPoint("TOPRIGHT", -14, -64); announceBtn:Hide()
+    announceBtn:SetNormalTexture("Interface\\FriendsFrame\\UI-Toast-ChatInviteIcon")
+    announceBtn:SetPushedTexture("Interface\\FriendsFrame\\UI-Toast-ChatInviteIcon")
+    announceBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    announceBtn:SetScript("OnClick", function() ns.AnnounceShop() end)
+    announceBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Announce your shop")
+        if GuildFoundMarketCharDB.paused then
+            GameTooltip:AddLine("Unavailable while your listings are offline. Go online first.", 1, 0.5, 0.2, true)
+        else
+            GameTooltip:AddLine("Drops a \"Shop is open!\" line, with a clickable shop link, into your guild chat box.", 1, 1, 1, true)
+            GameTooltip:AddLine("Nothing is sent automatically. Add items or text, then press Enter yourself.", 1, 1, 1, true)
+            GameTooltip:AddLine("Guildies running GFM can click the link to browse your shop. It opens only after you answer on the marketplace channel, so it never leaks outside your confederation.", 0.7, 0.7, 0.7, true)
+        end
+        GameTooltip:Show()
+    end)
+    announceBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.announceBtn = announceBtn
+
     --==================== Help tab (scrollable) ====================
     local helpScroll = CreateFrame("ScrollFrame", "GuildFoundMarketHelpScroll", main, "UIPanelScrollFrameTemplate")
-    helpScroll:SetPoint("TOPLEFT", 24, -66); helpScroll:SetPoint("BOTTOMRIGHT", -30, 16); helpScroll:Hide()
+    helpScroll:SetPoint("TOPLEFT", 24, -92); helpScroll:SetPoint("BOTTOMRIGHT", -30, 16); helpScroll:Hide()
     helpScroll:EnableMouseWheel(true)
     helpScroll:SetScript("OnMouseWheel", function(self, delta)
         local maxScroll = self:GetVerticalScrollRange()
@@ -708,6 +737,7 @@ local function CreateUI()
         "|cffffd100My Items|r  — what you sell",
         "Add your items; your client answers searches automatically — no pop-ups.",
         "• |cffffffffOnline / Offline|r — pause answering while you raid or PvP. Your items are kept.",
+        "• |cffffffffAnnounce|r: drop a \"shop is open\" line, with a clickable shop link, into guild chat. You send it yourself, and guildies who click it browse your shop live.",
         " ",
         "|cffffd100Configuration (guild officers)|r",
         "The whole marketplace is one shared channel. Put this single line in a guild's Information text (Guild window > Information tab):",
@@ -738,6 +768,19 @@ function ns.UpdatePauseButton()
     else
         main.pauseBtn:SetText("|cff40ff40Online|r")
     end
+    ns.UpdateAnnounceButton()
+end
+
+-- The announce only makes sense while you're answering searches, so disable it
+-- (greyed) whenever your listings are paused.
+function ns.UpdateAnnounceButton()
+    if not main or not main.announceBtn then return end
+    local btn = main.announceBtn
+    local paused = GuildFoundMarketCharDB.paused
+    if paused then btn:Disable() else btn:Enable() end
+    btn:SetAlpha(paused and 0.35 or 1)
+    local tex = btn:GetNormalTexture()
+    if tex then tex:SetDesaturated(paused) end
 end
 
 function ns.ToggleListings()
@@ -764,7 +807,7 @@ end
 --========================================================================
 -- tab switching
 --========================================================================
-function ns.SelectTab(tab, goSeller, goLoc)
+function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not main then return end
     currentTab = tab
     for _, b in ipairs(tabButtons) do
@@ -785,7 +828,9 @@ function ns.SelectTab(tab, goSeller, goLoc)
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
     end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
+    main.announceBtn:SetShown(mine)
     main.helpPanel:SetShown(help)
+    main.debugBtn:SetShown(help)
     main.scroll:SetShown(not help)
     if mine then ns.UpdatePauseButton() end
     if buy then ns.UpdateDBPanel() end
@@ -800,6 +845,16 @@ function ns.SelectTab(tab, goSeller, goLoc)
             ns.SetSellersView("SHOW")    -- jump straight to one seller (e.g. from a Buy result)
             ns.OpenSeller(goSeller, goLoc)
             ns.ScanSellers("")           -- also populate the index so "< Back" has the full list
+        elseif findSeller and findSeller ~= "" then
+            -- from a clicked shop link: scan for just this seller over the private
+            -- channel; Core auto-opens them once they answer (proof they're on it).
+            ns.SetSellersView("INDEX")
+            main.sellerFilter:SetText(findSeller)
+            ns.ScanSellers(findSeller:lower())
+            if ns.channelName then
+                ns.pendingOpenSeller = findSeller
+                ns.Feedback(("Checking the marketplace for %s's shop…"):format(findSeller), false)
+            end
         else
             ns.SetSellersView("INDEX")   -- sets its own headers + refresh
             ns.ScanSellers("")           -- auto-scan on entering (driven by the tab click = hardware event)
@@ -830,4 +885,23 @@ function ns.ToggleUI()
             ns.Feedback("Not in a Guild Found confederation — open guild (J) once, then /gfm again.", true)
         end
     end
+end
+
+-- Open a shop from a clicked announce link. Routed through a name-filtered seller
+-- scan (see Core) so the shop opens only if that seller answers on your private
+-- channel, never straight from the link itself.
+function ns.OpenShopLink(name)
+    if not name or name == "" then return end
+    if not main then CreateUI() end
+    if not main:IsShown() then
+        main:Show()
+        if ns.RefreshConfig then ns.RefreshConfig() end
+    end
+    if name == playerName and not ns.selfTest then
+        ns.SelectTab("MINE")
+        ns.Feedback("That's your own shop link. Here are your items.", false)
+        return
+    end
+    -- selftest falls through here, so your own link exercises the real scan/open path
+    ns.SelectTab("SELLERS", nil, nil, name)
 end
