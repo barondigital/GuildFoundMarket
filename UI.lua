@@ -834,6 +834,9 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.scroll:SetShown(not help)
     if mine then ns.UpdatePauseButton() end
     if buy then ns.UpdateDBPanel() end
+    -- clear stale rows before resetting the scroll: SetVerticalScroll fires renderRows,
+    -- and the old tab's data (e.g. sellers) would be fed to the new tab's row formatter
+    wipe(view)
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
     main.status:SetText("")
     if buy then
