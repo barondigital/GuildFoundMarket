@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2
+
+- **Minimap right-click toggles your listings online/offline**, the same as the
+  My Items pause button. The icon greys out while you are offline, and the
+  tooltip shows both actions (left-click to open, right-click to toggle).
+- **The marketplace channel no longer grabs channel /1.** It now joins after the
+  default chat channels (General, Trade, ...) have settled, so it lands on a
+  higher slot and stops shifting everyone's channel numbers.
+
 ## 0.8.1
 
 - **Browse is now the default view** on the Buy tab. Use the toggle in the top
