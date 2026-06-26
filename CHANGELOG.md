@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.7.0
+
+- **Random-enchant items show what you're actually buying.** A listing now
+  captures the specific variant ("Scouting Tunic of the Eagle" instead of a
+  generic "random enchantment"), so Buy results, seller catalogs and My Items
+  show the real name and the exact stats on hover. You can list several variants
+  of the same base item separately, and a search shows each seller's variant
+  tagged with its suffix. Plain items are unchanged.
+- **Soulbound items can't be listed.** Offering an item is blocked when every
+  copy in your bags is bound (soulbound or quest-bound), since it could never be
+  traded. Stock kept on a bank alt is unaffected.
+- **See your own offer while searching.** When you search an item you also sell,
+  your offer now appears among the results in the cheapest-first sort, marked
+  "(you)", so you can see your price rank and adjust to compete. It shows even
+  while your listings are paused.
+- **Sortable Sellers list.** Click the Seller or Items column header to sort, and
+  again to reverse; the active column shows an arrow. Defaults to most items
+  first, and the name filter still works alongside the chosen sort.
+- **Fix: listings no longer vanish after a loading screen.** Offers were checked
+  against your inventory, and a momentary empty reading during a zone or city
+  change (or while splitting a stack) could permanently delete a listing or
+  shrink its quantity. A listing is now treated as your claim and is never
+  auto-edited; what you actually have is settled face-to-face in the whisper. As
+  a bonus you can keep stock on a bank alt and list it from your main.
+- **Fix: shop links work for everyone, and search stays reliable.** Clicking a
+  shop link did nothing for players also running NovaWorldBuffs or Questie, and
+  an earlier click handler could taint the chat frames and intermittently block
+  the addon's channel broadcasts (breaking search and the seller scan). Reworked
+  to a taint-free path: links open reliably with no error, and search and the
+  scan are unaffected.
+- **Fix: switching tabs no longer errors** when stale rows from the previous tab
+  were briefly reused during the scroll reset.
+
 ## 0.6.0
 
 - **Announce your shop.** A new Announce button on the My Items tab drops a
