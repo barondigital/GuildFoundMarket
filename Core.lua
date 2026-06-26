@@ -196,14 +196,14 @@ function ns.Search(itemID)
         ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
         ns.Log(("SEARCH (id %d) FAILED — channel not ready"):format(itemID))
     end
-    if ns.selfTest and not isPaused() then
-        -- deliver our own offer directly (don't rely on the channel echo)
-        local o = offers()[itemID]
-        if o then
-            ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc() }
-        else
-            ns.Feedback(("self-test: you have no offer for itemID %d (%s)."):format(itemID, GetItemInfo(itemID) or "?"), true)
-        end
+    -- Always show our own offer for this item among the results, so we can see where our
+    -- price sits and adjust to compete. Local-only injection (we never whisper ourselves),
+    -- and shown even while paused since it's purely our own comparison view.
+    local mine = offers()[itemID]
+    if mine then
+        ns.results[playerName] = { qty = mine.qty, price = mine.price, loc = liveLoc(), self = true }
+    elseif ns.selfTest then
+        ns.Feedback(("self-test: you have no offer for itemID %d (%s)."):format(itemID, GetItemInfo(itemID) or "?"), true)
     end
     if ns.RefreshBuy then ns.RefreshBuy() end
     local thisQid = activeQid
@@ -325,7 +325,7 @@ local function handleMsg(text, sender)
             if isSelf then
                 -- self-test only: deliver our own offer locally (can't whisper yourself)
                 if a == activeQid and itemID == ns.searchItemID and not isPaused() then
-                    ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc() }
+                    ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc(), self = true }
                     if ns.RefreshBuy then ns.RefreshBuy() end
                 end
             elseif not isPaused() then

@@ -121,14 +121,25 @@ end
 local function formatBuyRow(r, d)
     -- every result is from an online seller (offline sellers can't respond)
     r.icon:Hide()
-    r.c1.fs:SetText(d.seller)
-    r.c1.fs:SetTextColor(1, 1, 1)
     r.c1:EnableMouse(true)
-    r.c1.tip = "Click for items · right-click to whisper"
-    r.c1:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.price)
-        else ns.SelectTab("SELLERS", d.seller, d.loc) end
-    end)
+    if d.self then
+        -- our own offer, injected locally so we can see our price rank (#6): no point
+        -- whispering or browsing ourselves, so left-click jumps to My Items to adjust.
+        r.c1.fs:SetText(ns.IsPaused() and (d.seller .. " (you, paused)") or (d.seller .. " (you)"))
+        r.c1.fs:SetTextColor(1, 0.82, 0)   -- gold: stands out as your own row
+        r.c1.tip = "Your offer — click to open My Items and adjust your price"
+        r.c1:SetScript("OnClick", function(_, button)
+            if button ~= "RightButton" then ns.SelectTab("MINE") end
+        end)
+    else
+        r.c1.fs:SetText(d.seller)
+        r.c1.fs:SetTextColor(1, 1, 1)
+        r.c1.tip = "Click for items · right-click to whisper"
+        r.c1:SetScript("OnClick", function(_, button)
+            if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.price)
+            else ns.SelectTab("SELLERS", d.seller, d.loc) end
+        end)
+    end
     r.c2:SetText(d.qty or 0)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(d.loc or ""); r.c4:Show()
@@ -212,7 +223,7 @@ function ns.RefreshBuy()
     if not main or not main:IsShown() or currentTab ~= "BUY" then return end
     wipe(view)
     for seller, o in pairs(ns.results) do
-        view[#view + 1] = { seller = seller, qty = o.qty, price = o.price, loc = o.loc }
+        view[#view + 1] = { seller = seller, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
     end
     table.sort(view, function(a, b)
         -- real prices ascending; "bid" offers (price 0) sink to the bottom
