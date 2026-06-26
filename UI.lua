@@ -178,20 +178,42 @@ function ns.CreateMinimapButton()
     end
 
     if not minimapLDB then
+        local function iconTooltip(tt)
+            tt:AddLine("Guild Found Market")
+            tt:AddLine("Left-click to open / close", 1, 1, 1)
+            tt:AddLine(ns.IsPaused() and "Listings: |cffff5555offline|r" or "Listings: |cff40ff40online|r", 1, 1, 1)
+            tt:AddLine("Right-click to toggle online / offline", 1, 1, 1)
+        end
         minimapLDB = LDB:NewDataObject("GuildFoundMarket", {
             type = "launcher",
             icon = "Interface\\Icons\\INV_Misc_Coin_01",
             label = "Guild Found Market",
-            OnClick = function() ns.ToggleUI() end,
-            OnTooltipShow = function(tt)
-                tt:AddLine("Guild Found Market")
-                tt:AddLine("Click to open / close", 1, 1, 1)
+            OnClick = function(_, button)
+                if button == "RightButton" then ns.ToggleListings()   -- listings online / offline (the icon dims when offline)
+                else ns.ToggleUI() end                                -- open / close the window
             end,
+            OnTooltipShow = iconTooltip,
         })
     end
 
     if not DBIcon:IsRegistered("GuildFoundMarket") then
         DBIcon:Register("GuildFoundMarket", minimapLDB, GuildFoundMarketDB.minimap)
+    end
+    ns.UpdateMinimapIcon()
+end
+
+-- Grey + dim the minimap icon while listings are offline (paused), as a live status cue.
+-- Set it straight on the button (most reliable) and also stash iconR/G/B so it survives
+-- LibDBIcon refreshes.
+function ns.UpdateMinimapIcon()
+    if not minimapLDB then return end
+    local paused = ns.IsPaused()
+    local v = paused and 0.4 or 1
+    minimapLDB.iconR, minimapLDB.iconG, minimapLDB.iconB = v, v, v
+    local btn = DBIcon and DBIcon.GetMinimapButton and DBIcon:GetMinimapButton("GuildFoundMarket")
+    if btn and btn.icon then
+        btn.icon:SetVertexColor(v, v, v)
+        if btn.icon.SetDesaturated then btn.icon:SetDesaturated(paused) end
     end
 end
 
@@ -1243,6 +1265,7 @@ end
 function ns.ToggleListings()
     GuildFoundMarketCharDB.paused = not GuildFoundMarketCharDB.paused
     ns.UpdatePauseButton()
+    if ns.UpdateMinimapIcon then ns.UpdateMinimapIcon() end
     if currentTab == "MINE" then ns.RefreshMine() end
     ns.Feedback(GuildFoundMarketCharDB.paused
         and "Listings paused — you won't answer searches until you go online."

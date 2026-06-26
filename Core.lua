@@ -166,16 +166,42 @@ local function enqueueWhisper(msg, to)
     sendQ[#sendQ + 1] = { msg = msg, to = to }
 end
 
+-- Hold off the first join until the default chat channels (General, Trade, LocalDefense...)
+-- have settled, so we don't grab a low slot like /1 or /2 and push everyone's channels up.
+-- Channels are numbered by join order, and the defaults trickle in over the first seconds,
+-- so we wait until the channel list stops growing, then join. Re-joins after a zone are
+-- immediate (the defaults are present by then).
+local channelJoinReady = false
+local joinScheduled = false
 local function ensureChannel()
     local name = ns.channelName
     if not name then ns.channelIndex = nil; return nil end
     local idx = GetChannelName(name)
-    if not idx or idx == 0 then
+    if (not idx or idx == 0) and channelJoinReady then
         JoinTemporaryChannel(name)
         idx = GetChannelName(name)
+        ns.Log(("CHANNEL joined %s on slot %s"):format(name, tostring(idx)))
     end
     ns.channelIndex = (idx and idx > 0) and idx or nil
     return ns.channelIndex
+end
+
+-- Hold the first join until the channel list settles (unchanged for ~4s), then join, so we
+-- land after the default channels instead of grabbing /1. A 20s cap joins anyway. Runs once.
+local function waitThenJoin()
+    if joinScheduled then return end
+    joinScheduled = true
+    local last, stable, waited, ticker = -1, 0, 0
+    ticker = C_Timer.NewTicker(2, function()
+        waited = waited + 2
+        local n = select("#", GetChannelList())
+        if n == last then stable = stable + 1 else stable, last = 0, n end
+        if stable >= 2 or waited >= 20 then
+            ticker:Cancel()
+            channelJoinReady = true
+            ensureChannel()
+        end
+    end)
 end
 
 --========================================================================
@@ -752,7 +778,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         refreshConfig()
-        ensureChannel()
+        if channelJoinReady then ensureChannel() else waitThenJoin() end
 
     elseif event == "GUILD_ROSTER_UPDATE" or event == "PLAYER_GUILD_UPDATE" then
         refreshConfig()
