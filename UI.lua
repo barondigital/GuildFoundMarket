@@ -8,6 +8,7 @@ local rows = {}
 local view = {}            -- current rows being displayed (buy results / my offers / sellers)
 local currentTab = "BUY"
 local sellersView = "INDEX"  -- within the Sellers tab: "INDEX" (list) or "SHOW" (one seller)
+local sellerSort = { col = "count", asc = false }  -- Sellers index sort: col "name"|"count", direction (default: most items first)
 local tabButtons = {}
 local draft = { itemID = nil }     -- item being composed in the My Items post panel
 local selectedSearchID = nil
@@ -277,7 +278,21 @@ function ns.RefreshSellers()
     for s in pairs(ns.sellerResults) do
         if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
     end
-    table.sort(names)
+    local asc = sellerSort.asc
+    if sellerSort.col == "count" then
+        table.sort(names, function(a, b)
+            local ca, cb = ns.sellerResults[a].count or 0, ns.sellerResults[b].count or 0
+            if ca ~= cb then return asc and ca < cb or (not asc and ca > cb) end
+            return a < b   -- stable tiebreak: name ascending
+        end)
+    else
+        table.sort(names, function(a, b) return asc and a < b or (not asc and a > b) end)
+    end
+    -- arrow on the active column (Blizzard arrow textures; the font lacks ▲▼ glyphs)
+    local up   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
+    local down = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
+    main.h1:SetText("Seller" .. (sellerSort.col == "name"  and (asc and up or down) or ""))
+    main.h2:SetText("Items"  .. (sellerSort.col == "count" and (asc and up or down) or ""))
     for _, s in ipairs(names) do
         local rec = ns.sellerResults[s]
         view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc }
@@ -334,6 +349,7 @@ function ns.SetSellersView(v)
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
     main.sellerBackBtn:SetShown(not index); main.sellerHeader:SetShown(not index)
+    main.sortName:SetShown(index); main.sortCount:SetShown(index)
     if index then
         main.h1:SetText("Seller"); main.h2:SetText("Items"); main.h3:SetText(""); main.h4:SetText("Location")
     else
@@ -524,6 +540,23 @@ local function CreateUI()
     -- column headers
     local function header(x) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); return fs end
     main.h1 = header(28); main.h2 = header(215); main.h3 = header(265); main.h4 = header(380)
+
+    -- clickable overlays on the Seller/Items headers to sort the Sellers index (#5);
+    -- shown only in that view (see SetSellersView / SelectTab). Toggle asc/desc on repeat.
+    local function sortHeaderBtn(target, col, w)
+        local b = CreateFrame("Button", nil, main)
+        b:SetPoint("LEFT", target, "LEFT", -2, 0); b:SetSize(w, 16)
+        b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        b:SetScript("OnClick", function()
+            if sellerSort.col == col then sellerSort.asc = not sellerSort.asc
+            else sellerSort.col = col; sellerSort.asc = true end
+            ns.RefreshSellers()
+        end)
+        b:Hide()
+        return b
+    end
+    main.sortName  = sortHeaderBtn(main.h1, "name", 150)
+    main.sortCount = sortHeaderBtn(main.h2, "count", 48)
 
     -- scroll + rows
     local scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScroll", main, "FauxScrollFrameTemplate")
@@ -838,6 +871,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not sellers then   -- hide all seller widgets when on another tab
         main.sellerFilter:Hide(); main.sellerFilterLabel:Hide(); main.sellerRefreshBtn:Hide()
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
+        main.sortName:Hide(); main.sortCount:Hide()
     end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
     main.announceBtn:SetShown(mine)
