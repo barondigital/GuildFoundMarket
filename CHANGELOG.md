@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+- **Browse is now the default view** on the Buy tab. Use the toggle in the top
+  right to switch to item search.
+- **Fix: ctrl-click an item always opens the search.** Ctrl-clicking an item in a
+  seller's list or the category browse now jumps straight to the item search
+  instead of leaving you in the Browse view.
+
 ## 0.8.0
 
 - **Browse by category.** A new Browse toggle on the Buy tab, with a Category to
