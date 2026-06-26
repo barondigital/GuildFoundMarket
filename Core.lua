@@ -37,6 +37,40 @@ local activeSid  = nil  -- id of the active "who's selling" scan (drops stale re
 local activeLid  = nil  -- id of the active per-seller catalog fetch
 local sellerSeq  = 0
 
+-- Browse-by-category state. A category query (class + subclass) collects matching offers
+-- from many sellers at once; results span many items, keyed by seller + item + variant.
+ns.browseResults = {}   -- [seller#id#suffix] = { seller, id, suffix, qty, price, self }
+ns.browseClass   = nil  -- active query's classID / subClassID (for the UI status + own-offer match)
+ns.browseSub     = nil
+local activeQCid = nil
+local browseSeq  = 0
+
+-- Version detection: ride our version along on the broadcasts (appended, so old clients
+-- ignore it), track the highest seen, and flag when we're behind.
+ns.version = ((C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata)(ADDON, "Version") or "?"
+ns.latestVersion = ns.version
+local function verNums(v) local t = {} for n in tostring(v):gmatch("%d+") do t[#t + 1] = tonumber(n) end return t end
+local function verNewer(a, b)   -- is version a strictly newer than b?
+    local na, nb = verNums(a), verNums(b)
+    for i = 1, math.max(#na, #nb) do
+        local x, y = na[i] or 0, nb[i] or 0
+        if x ~= y then return x > y end
+    end
+    return false
+end
+local function notePeerVersion(v)
+    if not v or v == "" or not verNewer(v, ns.latestVersion) then return end
+    ns.latestVersion = v
+    if verNewer(v, ns.version) then
+        ns.updateAvailable = v
+        if not ns._updateNotified then
+            ns._updateNotified = true
+            ns.Feedback(("A newer version (%s) of Guild Found Market is out (you have %s). Please update."):format(v, ns.version), true)
+        end
+        if ns.UpdateVersionDisplay then ns.UpdateVersionDisplay() end
+    end
+end
+
 function ns.Feedback(msg, isError)
     if msg and msg ~= "" then
         print("|cff00ff96GFM|r: " .. msg)
@@ -229,7 +263,7 @@ function ns.Search(itemID)
     ns.searchStart = GetTime()
     local idx = ensureChannel()
     if idx then
-        SendChatMessage(CHAT_TAG .. ("Q~%s~%d"):format(activeQid, itemID), "CHANNEL", nil, idx)
+        SendChatMessage(CHAT_TAG .. ("Q~%s~%d~%s"):format(activeQid, itemID, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SEARCH \"%s\" (id %d) sent"):format(GetItemInfo(itemID) or ("item:" .. itemID), itemID))
     else
         ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
@@ -282,7 +316,7 @@ function ns.ScanSellers(filter)
     ns.scanStart = GetTime()
     local idx = ensureChannel()
     if idx then
-        SendChatMessage(CHAT_TAG .. ("S~%s~%s"):format(activeSid, filter), "CHANNEL", nil, idx)
+        SendChatMessage(CHAT_TAG .. ("S~%s~%s~%s"):format(activeSid, filter, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SELLERS scan sent%s"):format(filter ~= "" and (" (filter \"" .. filter .. "\")") or ""))
     else
         ns.Feedback("Marketplace channel not ready yet — try again in a second.", true)
@@ -353,11 +387,64 @@ function ns.OpenSeller(seller, loc)
 end
 
 --========================================================================
+-- Browse by category. Like Search, but the query carries an item class + subclass
+-- instead of one itemID, and every seller answers with ALL their matching in-stock
+-- offers (chunked like the catalog). Always class + subclass, never a whole class, to
+-- bound the reply volume. Item quality/level are derived by the buyer from the itemID,
+-- so nothing extra rides the wire. Returns the matching offers across all sellers.
+--========================================================================
+local BROWSE_MATCH_CAP = 60   -- max matches one seller answers per category query (bounds the reply)
+
+-- class/subclass of an item (locale-independent); nil if the item isn't cached yet
+local function itemCategory(itemID)
+    local cid, sub = select(12, GetItemInfo(itemID))
+    return cid, sub
+end
+
+function ns.BrowseCategory(classID, subClassID)
+    if not ns.channelName then ns.Feedback("Not in a confederation — can't browse.", true); return end
+    if not classID or not subClassID then return end
+    browseSeq = browseSeq + 1
+    activeQCid = playerName .. "#QC" .. browseSeq
+    wipe(ns.browseResults)
+    ns.browseClass, ns.browseSub = classID, subClassID
+    ns.browsing = true
+    ns.browseStart = GetTime()
+    local idx = ensureChannel()
+    if idx then
+        SendChatMessage(CHAT_TAG .. ("QC~%s~%d~%d~%s"):format(activeQCid, classID, subClassID, ns.version), "CHANNEL", nil, idx)
+        ns.Log(("BROWSE category %d/%d sent"):format(classID, subClassID))
+    else
+        ns.Feedback("Marketplace channel not ready yet — try the browse again in a second.", true)
+        ns.Log("BROWSE FAILED — channel not ready")
+    end
+    -- inject my own matching offers locally (we never whisper ourselves), even while paused
+    for _, it in ipairs(offerList()) do
+        local cid, sub = itemCategory(it.id)
+        if cid == classID and sub == subClassID then
+            ns.browseResults[playerName .. "#" .. it.id .. "#" .. it.suffix] =
+                { seller = playerName, id = it.id, suffix = it.suffix, qty = it.qty, price = it.price, self = true }
+        end
+    end
+    if ns.RefreshBrowse then ns.RefreshBrowse() end
+    local thisId = activeQCid
+    C_Timer.After(QUERY_SETTLE, function()
+        if activeQCid == thisId then
+            ns.browsing = false
+            local n = 0; for _ in pairs(ns.browseResults) do n = n + 1 end
+            ns.Log(("BROWSE done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.browseStart or GetTime())))
+            if ns.RefreshBrowse then ns.RefreshBrowse() end
+        end
+    end)
+end
+
+--========================================================================
 -- Incoming messages
 --========================================================================
 local function handleMsg(text, sender)
     local cmd, a, b, c, d, e, f = strsplit("~", text)
     if cmd == "Q" then
+        notePeerVersion(c)             -- Q~qid~itemID~ver
         ns.ItemDB.Learn(tonumber(b))   -- learn the searched item (vocabulary)
         if Ambiguate(sender, "short") == playerName then return end   -- ignore my own query (own offers are injected locally)
         if isPaused() then return end                                 -- paused: stay invisible
@@ -367,7 +454,7 @@ local function handleMsg(text, sender)
         local answered = 0
         for _, it in ipairs(offerList()) do
             if it.id == itemID then
-                enqueueWhisper(("R~%s~%d~%d~%d~%d~%s"):format(a, it.id, it.suffix, it.qty, it.price, liveLoc()), sender)
+                enqueueWhisper(("R~%s~%d~%d~%d~%s~%d"):format(a, it.id, it.qty, it.price, liveLoc(), it.suffix), sender)
                 answered = answered + 1
             end
         end
@@ -375,13 +462,13 @@ local function handleMsg(text, sender)
             ns.Log(("answered %s's search for %s (%d variant(s))"):format(Ambiguate(sender, "short"), GetItemInfo(itemID) or ("item:" .. itemID), answered))
         end
     elseif cmd == "R" then
-        -- R~qid~itemID~suffixID~qty~price~loc
+        -- R~qid~itemID~qty~price~loc~suffixID  (suffix LAST so 0.6.0 clients read qty/price/loc correctly)
         if a == activeQid and tonumber(b) == ns.searchItemID then
-            local suffix = tonumber(c) or 0
+            local suffix = tonumber(f) or 0
             local s = Ambiguate(sender, "short")
-            ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(d) or 0, price = tonumber(e) or 0, loc = f or "" }
+            ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
             ns.ItemDB.Learn(tonumber(b))
-            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(d), tostring(e), GetTime() - (ns.searchStart or GetTime())))
+            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
             if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         end
     elseif cmd == "S" then
@@ -389,6 +476,7 @@ local function handleMsg(text, sender)
         -- and (when the scan is filtered) my name matches the requested substring.
         if Ambiguate(sender, "short") == playerName then return end   -- ignore my own broadcast
         if isPaused() then return end                                 -- paused: stay invisible
+        notePeerVersion(c)             -- S~sid~filter~ver
         local filter = b
         if filter and filter ~= "" and not playerName:lower():find(filter, 1, true) then return end
         local list = offerList()
@@ -425,7 +513,7 @@ local function handleMsg(text, sender)
         local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
         for i = 1, #list do
             local it = list[i]
-            local p = ("%d:%d:%d:%d"):format(it.id, it.suffix, it.qty, it.price)
+            local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
             if #buf + #p + 1 > 180 then flush(1) end
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
@@ -434,7 +522,7 @@ local function handleMsg(text, sender)
     elseif cmd == "K" then
         if a == activeLid and ns.sellerCatalog then
             for chunk in (c or ""):gmatch("[^;]+") do
-                local id, suffix, qty, price = strsplit(":", chunk)
+                local id, qty, price, suffix = strsplit(":", chunk)
                 id = tonumber(id)
                 if id then
                     local sfx = tonumber(suffix) or 0
@@ -448,6 +536,53 @@ local function handleMsg(text, sender)
                 ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellerCatalog.seller, n, GetTime() - (ns.openStart or GetTime())))
             end
             if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
+        end
+    elseif cmd == "QC" then
+        -- a category browse: answer with every in-stock offer matching class b + subclass c,
+        -- chunked like the catalog and capped + jittered like the seller scan
+        if Ambiguate(sender, "short") == playerName then return end   -- own query: injected locally
+        if isPaused() then return end
+        notePeerVersion(d)             -- QC~qid~class~sub~ver
+        local classID, subID = tonumber(b), tonumber(c)
+        if not classID or not subID then return end
+        local matches = {}
+        for _, it in ipairs(offerList()) do
+            local cid, sub = itemCategory(it.id)
+            if cid == classID and sub == subID then
+                matches[#matches + 1] = it
+                if #matches >= BROWSE_MATCH_CAP then break end
+            end
+        end
+        if #matches > 0 then
+            local qid = a
+            C_Timer.After(math.random() * SCAN_JITTER, function()
+                local buf = ""
+                local function flush(more) enqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
+                for i = 1, #matches do
+                    local it = matches[i]
+                    local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
+                    if #buf + #p + 1 > 180 then flush(1) end
+                    buf = (buf == "") and p or (buf .. ";" .. p)
+                end
+                flush(0)
+            end)
+            ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
+        end
+    elseif cmd == "QR" then
+        -- category browse reply chunk: id:suffix:qty:price;... from one seller
+        if a == activeQCid then
+            local s = Ambiguate(sender, "short")
+            for chunk in (c or ""):gmatch("[^;]+") do
+                local id, qty, price, suffix = strsplit(":", chunk)
+                id = tonumber(id)
+                if id then
+                    local sfx = tonumber(suffix) or 0
+                    ns.browseResults[s .. "#" .. id .. "#" .. sfx] =
+                        { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+                    ns.ItemDB.Learn(id)
+                end
+            end
+            if ns.RefreshBrowseSoon then ns.RefreshBrowseSoon() end
         end
     end
 end

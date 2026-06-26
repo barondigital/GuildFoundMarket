@@ -13,6 +13,16 @@ local tabButtons = {}
 local draft = { itemID = nil }     -- item being composed in the My Items post panel
 local selectedSearchID = nil
 
+-- Buy tab has two sub-modes: item Search (existing) and category Browse (#3).
+local buyMode = "SEARCH"   -- "SEARCH" | "BROWSE"
+local BROWSE_CAP = 150     -- max Browse rows shown; beyond it the user narrows by level range / filter
+local browseSort = { col = "lvl", asc = false }   -- Browse results sort: "qual"|"lvl"|"price"; default level desc
+local browseSel = { class = nil, sub = nil }      -- selected category (nil = none picked yet)
+local browseExpanded = nil                        -- classID currently expanded in the sidebar (accordion)
+local browseRows, browseView = {}, {}             -- the 6-column results table
+local sideRows, sideView = {}, {}                 -- the category sidebar tree
+local setBuyMode                                  -- forward declaration (defined with the other refreshers)
+
 --========================================================================
 -- helpers
 --========================================================================
@@ -57,6 +67,50 @@ local function suffixTag(id, suffix)
     local full, base = vName(id, suffix), itemName(id)
     if full and base and full ~= base and full:sub(1, #base) == base then return full:sub(#base + 1) end
     return ""
+end
+
+-- Category tree for the Browse sidebar (#3). Built from GetItemClassInfo /
+-- GetItemSubClassInfo, whose IDs match GetItemInfo's classID/subClassID, so a query
+-- resolves correctly seller-side. Obsolete and non-tradeable classes are skipped.
+local SKIP_CLASS = { [3] = true, [8] = true, [10] = true, [12] = true, [13] = true, [14] = true }
+-- top-level order mirrors the Auction House browse list, not the numeric class IDs
+local CLASS_ORDER = { 2, 4, 1, 0, 7, 6, 11, 9, 5, 15 }  -- Weapon, Armor, Container, Consumable, Trade Goods, Projectile, Quiver, Recipe, Reagent, Miscellaneous
+local browseCats
+local function buildCats()
+    if browseCats then return browseCats end
+    browseCats = {}
+    local function addClass(classID)
+        if SKIP_CLASS[classID] then return end
+        local cname = GetItemClassInfo(classID)
+        if not cname or cname:find("OBSOLETE") then return end
+        local subs = {}
+        for subID = 0, 20 do
+            local sname = GetItemSubClassInfo(classID, subID)
+            if sname and sname ~= "" and not sname:find("OBSOLETE") then
+                subs[#subs + 1] = { id = subID, name = sname }
+            end
+        end
+        -- require real sub-categorisation: a class with one generic subclass (Consumable,
+        -- Reagent, Junk) is too broad to browse usefully, so we drop it from the sidebar
+        if #subs >= 2 then browseCats[#browseCats + 1] = { id = classID, name = cname, subs = subs } end
+    end
+    local seen = {}
+    for _, classID in ipairs(CLASS_ORDER) do seen[classID] = true; addClass(classID) end
+    for classID = 0, 19 do if not seen[classID] then addClass(classID) end end  -- any kept class not listed above, appended
+    return browseCats
+end
+
+-- An item's quality (number) and required level, derived locally from the variant.
+-- We use the required level (5th return), not item level, since that's what a buyer cares
+-- about; it drives the Lvl column, the level-range filter and the level sort.
+local function itemQualLevel(id, suffix)
+    local _, _, quality, _, minLevel = GetItemInfo(variantString(id, suffix))
+    return quality or 0, minLevel or 0
+end
+local function qualityRGB(quality)
+    local c = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality or 1]
+    if c then return c.r, c.g, c.b end
+    return 1, 1, 1
 end
 
 -- Copper -> short "1g2s45c" string (zero parts dropped), mirroring the price input.
@@ -228,6 +282,35 @@ local function formatSellerRow(r, d)
     end
 end
 
+-- Browse results row: Item (quality-coloured) | Qual swatch | Lvl | Qty | Price | Seller.
+local function formatBrowseRow(r, d)
+    local q, lvl = itemQualLevel(d.id, d.suffix)
+    r.icon:SetTexture(GetItemIcon(d.id))
+    r.c1.fs:SetText(vName(d.id, d.suffix))
+    r.c1.fs:SetTextColor(qualityRGB(q))
+    r.c1.itemLink = vLink(d.id, d.suffix)
+    r.c1.tip = "Ctrl-click to find who else sells this · right-click to whisper"
+    r.c1:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
+        elseif IsControlKeyDown() then setBuyMode("SEARCH"); selectSearchItem(d.id) end
+    end)
+    r.lvl:SetText(lvl > 0 and lvl or "")
+    r.qty:SetText(d.qty or 0)
+    r.price:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+    r.seller.fs:SetText(d.self and ("|cffffd100" .. d.seller .. " (you)|r") or d.seller)
+    if d.self then r.seller:SetScript("OnClick", function() ns.SelectTab("MINE") end)
+    else r.seller:SetScript("OnClick", function() ns.SelectTab("SELLERS", d.seller) end) end
+end
+
+-- Sidebar tree row: a class header (click to expand/collapse) or a subclass (click to query).
+local function formatSidebarRow(r, d)
+    r.fs:ClearAllPoints(); r.fs:SetPoint("LEFT", d.indent, 0); r.fs:SetPoint("RIGHT", -2, 0)
+    r.fs:SetText(d.label)
+    r.fs:SetTextColor(d.r, d.g, d.b)
+    r.sel:SetShown(d.selected)
+    r:SetScript("OnClick", d.onClick)
+end
+
 local function renderRows()
     local offset = FauxScrollFrame_GetOffset(main.scroll)
     FauxScrollFrame_Update(main.scroll, #view, ROWS, ROW_H)
@@ -249,7 +332,7 @@ end
 -- refresh: Buy results
 --========================================================================
 function ns.RefreshBuy()
-    if not main or not main:IsShown() or currentTab ~= "BUY" then return end
+    if not main or not main:IsShown() or currentTab ~= "BUY" or buyMode ~= "SEARCH" then return end
     wipe(view)
     -- results are keyed by seller+variant; a seller can return several random-enchant variants
     for _, o in pairs(ns.results) do
@@ -391,6 +474,147 @@ function ns.SetSellersView(v)
 end
 
 --========================================================================
+-- refresh: Browse (category) results + the category sidebar tree
+--========================================================================
+local SIDE_ROWS, SIDE_ROW_H = 22, 16
+
+local function renderBrowseRows()
+    local cur = FauxScrollFrame_GetOffset(main.browseScroll)
+    local offset = math.min(cur, math.max(0, #browseView - ROWS))   -- clamp when the list shrinks
+    FauxScrollFrame_Update(main.browseScroll, #browseView, ROWS, ROW_H)
+    if offset ~= cur then FauxScrollFrame_SetOffset(main.browseScroll, offset); main.browseScroll:SetVerticalScroll(offset * ROW_H) end
+    for i = 1, ROWS do
+        local r = browseRows[i]
+        local d = browseView[offset + i]
+        if d then formatBrowseRow(r, d); r:Show() else r:Hide() end
+    end
+end
+
+local function renderSidebarRows()
+    local cur = FauxScrollFrame_GetOffset(main.sideScroll)
+    local offset = math.min(cur, math.max(0, #sideView - SIDE_ROWS))   -- keep the top reachable when the tree shrinks
+    FauxScrollFrame_Update(main.sideScroll, #sideView, SIDE_ROWS, SIDE_ROW_H)
+    if offset ~= cur then FauxScrollFrame_SetOffset(main.sideScroll, offset); main.sideScroll:SetVerticalScroll(offset * SIDE_ROW_H) end
+    for i = 1, SIDE_ROWS do
+        local r = sideRows[i]
+        local d = sideView[offset + i]
+        if d then formatSidebarRow(r, d); r:Show() else r:Hide() end
+    end
+end
+
+local function updateBrowseHeaders()
+    local up   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
+    local down = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
+    local function arr(col) return (browseSort.col == col) and (browseSort.asc and up or down) or "" end
+    main.bhItem:SetText("Item" .. arr("qual"))
+    main.bhLvl:SetText("Lvl" .. arr("lvl"))
+    main.bhPrice:SetText("Price" .. arr("price"))
+end
+
+function ns.RefreshSidebar()
+    if not main then return end
+    wipe(sideView)
+    for _, cls in ipairs(buildCats()) do
+        local expanded = (browseExpanded == cls.id)
+        sideView[#sideView + 1] = {
+            label = (expanded and "- " or "+ ") .. cls.name, indent = 6, r = 1, g = 0.82, b = 0,
+            onClick = function()
+                if browseExpanded == cls.id then browseExpanded = nil else browseExpanded = cls.id end
+                ns.RefreshSidebar()
+            end,
+        }
+        if expanded then
+            for _, sub in ipairs(cls.subs) do
+                local sel = (browseSel.class == cls.id and browseSel.sub == sub.id)
+                sideView[#sideView + 1] = {
+                    label = sub.name, indent = 22, selected = sel,
+                    r = sel and 1 or 0.85, g = sel and 0.82 or 0.85, b = sel and 0 or 0.85,
+                    onClick = function()
+                        browseSel.class, browseSel.sub = cls.id, sub.id
+                        browseSel.label = cls.name .. " > " .. sub.name
+                        ns.RefreshSidebar()
+                        if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
+                    end,
+                }
+            end
+        end
+    end
+    renderSidebarRows()
+end
+
+function ns.RefreshBrowse()
+    if not main or not main:IsShown() or currentTab ~= "BUY" or buyMode ~= "BROWSE" then return end
+    updateBrowseHeaders()
+    wipe(browseView)
+    local filter = (main.browseFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    local lmin, lmax = tonumber(main.bLvlMin:GetText()), tonumber(main.bLvlMax:GetText())
+    local total = 0
+    for _, o in pairs(ns.browseResults) do
+        -- quality + level once per offer, so the sort comparator stays cheap at scale
+        local q, lvl = itemQualLevel(o.id, o.suffix)
+        local nameOK = filter == "" or vName(o.id, o.suffix):lower():find(filter, 1, true)
+        local lvlOK = (not lmin or lvl >= lmin) and (not lmax or lvl <= lmax)
+        if nameOK and lvlOK then
+            total = total + 1
+            browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, self = o.self, q = q, lvl = lvl }
+        end
+    end
+    local col, asc = browseSort.col, browseSort.asc
+    table.sort(browseView, function(a, b)
+        local va, vb
+        if col == "price" then
+            va = (a.price or 0) > 0 and a.price or math.huge
+            vb = (b.price or 0) > 0 and b.price or math.huge
+        elseif col == "qual" then va = a.q; vb = b.q
+        else va = a.lvl; vb = b.lvl end
+        if va ~= vb then return asc and va < vb or (not asc and va > vb) end
+        local na, nb = vName(a.id, a.suffix), vName(b.id, b.suffix)
+        if na ~= nb then return na < nb end
+        return a.seller < b.seller
+    end)
+    local capped = #browseView > BROWSE_CAP
+    if capped then for i = #browseView, BROWSE_CAP + 1, -1 do browseView[i] = nil end end
+    renderBrowseRows()
+    main.status:SetTextColor(0.7, 0.7, 0.7)
+    if not browseSel.sub then
+        main.status:SetText("Pick a category on the left to browse offers.")
+    elseif ns.browsing then
+        main.status:SetText("Browsing " .. (browseSel.label or "") .. " ...")
+    elseif total == 0 then
+        main.status:SetText("No offers for " .. (browseSel.label or "this category") .. " right now.")
+    elseif capped then
+        main.status:SetTextColor(1, 0.7, 0.2)
+        main.status:SetText(("Showing %d of %d. Narrow with the level range or filter."):format(BROWSE_CAP, total))
+    else
+        main.status:SetText(("%d offer(s) in %s."):format(total, browseSel.label or "this category"))
+    end
+end
+
+-- Switch the Buy tab between item Search and category Browse.
+setBuyMode = function(mode)
+    buyMode = mode
+    if not main then return end
+    local browse = (mode == "BROWSE")
+    if main.modeToggle then main.modeToggle:SetText(browse and "<< Search" or "Browse >>") end
+    main.searchBox:SetShown(not browse); main.searchLabel:SetShown(not browse); main.ac:Hide()
+    main.dbPanel:SetShown(not browse); main.scroll:SetShown(not browse)
+    main.h1:SetShown(not browse); main.h2:SetShown(not browse); main.h3:SetShown(not browse); main.h4:SetShown(not browse)
+    main.sidebar:SetShown(browse); main.browseScroll:SetShown(browse)
+    main.browseFilter:SetShown(browse); main.browseFilterLabel:SetShown(browse)
+    main.bLvlLabel:SetShown(browse); main.bLvlMin:SetShown(browse); main.bLvlTo:SetShown(browse); main.bLvlMax:SetShown(browse)
+    main.bhItem:SetShown(browse); main.bhLvl:SetShown(browse)
+    main.bhQty:SetShown(browse); main.bhPrice:SetShown(browse); main.bhSeller:SetShown(browse)
+    main.bSortItem:SetShown(browse); main.bSortLvl:SetShown(browse); main.bSortPrice:SetShown(browse)
+    if browse then
+        for i = 1, ROWS do rows[i]:Hide() end          -- clear the search table's rows
+        ns.RefreshSidebar(); ns.RefreshBrowse()
+    else
+        for i = 1, ROWS do browseRows[i]:Hide() end    -- clear the browse table's rows
+        ns.RefreshBuy()
+    end
+end
+
+--========================================================================
 -- Coalesced refreshes — network replies (R/C/K) and item-info events can arrive
 -- in bursts; debounce so we re-sort/re-render at most ~5x/sec, not once per message.
 --========================================================================
@@ -407,19 +631,31 @@ local function scheduleRefresh(which)
         if p.mine    and ns.RefreshMine           then ns.RefreshMine() end
         if p.sellers and ns.RefreshSellers        then ns.RefreshSellers() end
         if p.catalog and ns.RefreshSellerCatalog  then ns.RefreshSellerCatalog() end
+        if p.browse  and ns.RefreshBrowse         then ns.RefreshBrowse() end
     end)
 end
 function ns.RefreshBuySoon()           scheduleRefresh("buy") end
 function ns.RefreshMineSoon()          scheduleRefresh("mine") end
 function ns.RefreshSellersSoon()       scheduleRefresh("sellers") end
 function ns.RefreshSellerCatalogSoon() scheduleRefresh("catalog") end
+function ns.RefreshBrowseSoon()        scheduleRefresh("browse") end
+
+function ns.UpdateVersionDisplay()
+    if not main or not main.versionFS then return end
+    main.versionFS:SetTextColor(0.5, 0.5, 0.5)
+    if ns.updateAvailable then
+        main.versionFS:SetText(("v%s  |cffff6060update to v%s|r"):format(ns.version or "?", ns.updateAvailable))
+    else
+        main.versionFS:SetText("v" .. (ns.version or "?"))
+    end
+end
 
 --========================================================================
 -- build the window
 --========================================================================
 local function CreateUI()
     main = CreateFrame("Frame", "GuildFoundMarketFrame", UIParent, "BackdropTemplate")
-    main:SetSize(560, 470)
+    main:SetSize(760, 470)
     main:SetPoint("CENTER")
     main:SetMovable(true); main:EnableMouse(true); main:RegisterForDrag("LeftButton")
     main:SetScript("OnDragStart", main.StartMoving); main:SetScript("OnDragStop", main.StopMovingOrSizing)
@@ -469,14 +705,14 @@ local function CreateUI()
     searchLabel:SetPoint("TOPLEFT", 16, -68); searchLabel:SetText("Search item:")
     main.searchLabel = searchLabel
     local searchBox = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    searchBox:SetPoint("TOPLEFT", 100, -64); searchBox:SetSize(300, 22); searchBox:SetAutoFocus(false)
+    searchBox:SetPoint("TOPLEFT", 100, -64); searchBox:SetSize(460, 22); searchBox:SetAutoFocus(false)
     main.searchBox = searchBox
 
     -- autocomplete dropdown
     local ac = CreateFrame("Frame", nil, main, "BackdropTemplate")
     ac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
     ac:SetBackdropColor(0, 0, 0, 0.92); ac:SetBackdropBorderColor(0.4, 0.4, 0.4)
-    ac:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(304); ac:SetFrameStrata("DIALOG"); ac:Hide()
+    ac:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(464); ac:SetFrameStrata("DIALOG"); ac:Hide()
     ac.rows = {}
     for i = 1, 12 do
         local row = CreateFrame("Button", nil, ac)
@@ -569,7 +805,7 @@ local function CreateUI()
 
     -- column headers
     local function header(x) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); return fs end
-    main.h1 = header(28); main.h2 = header(215); main.h3 = header(265); main.h4 = header(380)
+    main.h1 = header(28); main.h2 = header(322); main.h3 = header(384); main.h4 = header(524)
 
     -- clickable overlays on the Seller/Items headers to sort the Sellers index (#5);
     -- shown only in that view (see SetSellersView / SelectTab). Toggle asc/desc on repeat.
@@ -590,7 +826,7 @@ local function CreateUI()
 
     -- scroll + rows
     local scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScroll", main, "FauxScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 14, -112); scroll:SetSize(520, ROWS * ROW_H)
+    scroll:SetPoint("TOPLEFT", 14, -112); scroll:SetSize(720, ROWS * ROW_H)
     scroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, ROW_H, renderRows) end)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -601,11 +837,11 @@ local function CreateUI()
     main.scroll = scroll
 
     for i = 1, ROWS do
-        local r = CreateFrame("Frame", nil, main); r:SetSize(520, ROW_H)
+        local r = CreateFrame("Frame", nil, main); r:SetSize(720, ROW_H)
         if i == 1 then r:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
         else r:SetPoint("TOPLEFT", rows[i - 1], "BOTTOMLEFT", 0, 0) end
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(18, 18); r.icon:SetPoint("LEFT", 4, 0)
-        r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 26, 0); r.c1:SetSize(185, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 26, 0); r.c1:SetSize(280, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
         local c1hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); c1hl:SetAllPoints(); c1hl:SetColorTexture(1, 1, 1, 0.12)
         r.c1:SetScript("OnEnter", function(self)
@@ -624,9 +860,9 @@ local function CreateUI()
             end
         end)
         r.c1:SetScript("OnLeave", GameTooltip_Hide)
-        r.c2 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c2:SetPoint("LEFT", 215, 0); r.c2:SetWidth(45); r.c2:SetJustifyH("LEFT")
-        r.c3 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c3:SetPoint("LEFT", 263, 0); r.c3:SetWidth(112); r.c3:SetJustifyH("LEFT")
-        r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 380, 0); r.c4:SetWidth(140); r.c4:SetJustifyH("LEFT")
+        r.c2 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c2:SetPoint("LEFT", 322, 0); r.c2:SetWidth(50); r.c2:SetJustifyH("LEFT")
+        r.c3 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c3:SetPoint("LEFT", 382, 0); r.c3:SetWidth(130); r.c3:SetJustifyH("LEFT")
+        r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r:Hide(); rows[i] = r
     end
@@ -635,6 +871,137 @@ local function CreateUI()
     local status = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     status:SetPoint("BOTTOMLEFT", 18, 96); status:SetPoint("BOTTOMRIGHT", -18, 96); status:SetJustifyH("CENTER"); status:SetText("")
     main.status = status
+
+    -- installed version (top-right, just left of the close button); turns into an
+    -- update notice when a newer one is seen
+    local versionFS = main:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    versionFS:SetPoint("TOPRIGHT", -44, -16); versionFS:SetJustifyH("RIGHT")
+    main.versionFS = versionFS
+    ns.UpdateVersionDisplay()
+
+    --==================== Browse (category) sub-view (#3) ====================
+    -- toggle between item Search and category Browse on the Buy tab
+    local modeToggle = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    modeToggle:SetSize(96, 22); modeToggle:SetPoint("TOPRIGHT", -16, -62); modeToggle:SetText("Browse >>")
+    modeToggle:SetScript("OnClick", function() setBuyMode(buyMode == "BROWSE" and "SEARCH" or "BROWSE") end)
+    modeToggle:Hide(); main.modeToggle = modeToggle
+
+    -- left sidebar: a Category > Subclass tree
+    local sidebar = CreateFrame("Frame", nil, main)
+    sidebar:SetPoint("TOPLEFT", 12, -90); sidebar:SetPoint("BOTTOMLEFT", 12, 88); sidebar:SetWidth(172); sidebar:Hide()
+    local sbg = sidebar:CreateTexture(nil, "BACKGROUND"); sbg:SetAllPoints(); sbg:SetColorTexture(0, 0, 0, 0.25)
+    main.sidebar = sidebar
+    local sideScroll = CreateFrame("ScrollFrame", "GuildFoundMarketSideScroll", sidebar, "FauxScrollFrameTemplate")
+    sideScroll:SetPoint("TOPLEFT", 6, -6); sideScroll:SetPoint("BOTTOMRIGHT", -26, 6)
+    sideScroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, SIDE_ROW_H, renderSidebarRows) end)
+    sideScroll:EnableMouseWheel(true)
+    sideScroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxOff = math.max(0, #sideView - SIDE_ROWS)
+        local off = math.min(maxOff, math.max(0, FauxScrollFrame_GetOffset(self) - delta))
+        FauxScrollFrame_SetOffset(self, off); self:SetVerticalScroll(off * SIDE_ROW_H); renderSidebarRows()
+    end)
+    main.sideScroll = sideScroll
+    for i = 1, SIDE_ROWS do
+        local r = CreateFrame("Button", nil, sidebar); r:SetSize(150, SIDE_ROW_H)
+        if i == 1 then r:SetPoint("TOPLEFT", sideScroll, "TOPLEFT", 0, 0)
+        else r:SetPoint("TOPLEFT", sideRows[i - 1], "BOTTOMLEFT", 0, 0) end
+        r:RegisterForClicks("LeftButtonUp")
+        r.sel = r:CreateTexture(nil, "BACKGROUND"); r.sel:SetAllPoints(); r.sel:SetColorTexture(1, 0.82, 0, 0.18); r.sel:Hide()
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
+        r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.fs:SetPoint("LEFT", 6, 0); r.fs:SetJustifyH("LEFT")
+        r:Hide(); sideRows[i] = r
+    end
+
+    -- results: client-side filter + sortable headers + the 6-column table
+    local browseFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    browseFilterLabel:SetPoint("TOPLEFT", 192, -68); browseFilterLabel:SetText("Filter:"); browseFilterLabel:Hide()
+    main.browseFilterLabel = browseFilterLabel
+    local browseFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    browseFilter:SetPoint("TOPLEFT", 236, -64); browseFilter:SetSize(180, 22); browseFilter:SetAutoFocus(false); browseFilter:Hide()
+    browseFilter:SetScript("OnTextChanged", function() if ns.RefreshBrowse then ns.RefreshBrowse() end end)
+    browseFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus() end)
+    main.browseFilter = browseFilter
+
+    -- level-range filter (required level, matching the Lvl column), to narrow a big category
+    local function smallLabel(x, text) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -68); fs:SetText(text); fs:Hide(); return fs end
+    local function lvlBox(x)
+        local b = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+        b:SetPoint("TOPLEFT", x, -64); b:SetSize(34, 22); b:SetAutoFocus(false); b:SetNumeric(true); b:SetMaxLetters(2); b:Hide()
+        b:SetScript("OnTextChanged", function(self, userInput)
+            if not userInput then return end   -- ignore our own SetText below (avoids recursion)
+            local t = self:GetText()
+            local clean = t
+            if t ~= "" then
+                local n = tonumber(t) or 0
+                if n > 60 then n = 60 end
+                clean = (n >= 1) and tostring(n) or ""   -- 1..60, strips leading zeros; 0/invalid clears
+            end
+            if clean ~= t then self:SetText(clean) end
+            if ns.RefreshBrowse then ns.RefreshBrowse() end
+        end)
+        b:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus() end)
+        return b
+    end
+    main.bLvlLabel = smallLabel(428, "Lvl")
+    main.bLvlMin   = lvlBox(452)
+    main.bLvlTo    = smallLabel(492, "to")
+    main.bLvlMax   = lvlBox(510)
+
+    local function bheader(x, text) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); fs:SetText(text); fs:Hide(); return fs end
+    main.bhItem   = bheader(212, "Item")
+    main.bhLvl    = bheader(428, "Lvl")
+    main.bhQty    = bheader(462, "Qty")
+    main.bhPrice  = bheader(496, "Price")
+    main.bhSeller = bheader(606, "Seller")
+    local function browseSortBtn(target, col, w)
+        local b = CreateFrame("Button", nil, main)
+        b:SetPoint("LEFT", target, "LEFT", -2, 0); b:SetSize(w, 16)
+        b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        b:SetScript("OnClick", function()
+            if browseSort.col == col then browseSort.asc = not browseSort.asc
+            else browseSort.col = col; browseSort.asc = (col == "price") end   -- price asc, qual/lvl desc by default
+            ns.RefreshBrowse()
+        end)
+        b:Hide(); return b
+    end
+    main.bSortItem  = browseSortBtn(main.bhItem,  "qual",  120)   -- Item header sorts by quality (the name colour)
+    main.bSortLvl   = browseSortBtn(main.bhLvl,   "lvl",   40)
+    main.bSortPrice = browseSortBtn(main.bhPrice, "price", 56)
+
+    local browseScroll = CreateFrame("ScrollFrame", "GuildFoundMarketBrowseScroll", main, "FauxScrollFrameTemplate")
+    browseScroll:SetPoint("TOPLEFT", 192, -112); browseScroll:SetSize(542, ROWS * ROW_H)
+    browseScroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, ROW_H, renderBrowseRows) end)
+    browseScroll:EnableMouseWheel(true)
+    browseScroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxOff = math.max(0, #browseView - ROWS)
+        local off = math.min(maxOff, math.max(0, FauxScrollFrame_GetOffset(self) - delta))
+        FauxScrollFrame_SetOffset(self, off); self:SetVerticalScroll(off * ROW_H); renderBrowseRows()
+    end)
+    browseScroll:Hide(); main.browseScroll = browseScroll
+    for i = 1, ROWS do
+        local r = CreateFrame("Frame", nil, main); r:SetSize(542, ROW_H)
+        if i == 1 then r:SetPoint("TOPLEFT", browseScroll, "TOPLEFT", 0, 0)
+        else r:SetPoint("TOPLEFT", browseRows[i - 1], "BOTTOMLEFT", 0, 0) end
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 0, 0)
+        r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 20, 0); r.c1:SetSize(212, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
+        local hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.12)
+        r.c1:SetScript("OnEnter", function(self)
+            if self.itemLink then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetHyperlink(self.itemLink)
+                if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
+                GameTooltip:Show()
+            end
+        end)
+        r.c1:SetScript("OnLeave", GameTooltip_Hide)
+        r.lvl    = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.lvl:SetPoint("LEFT", 236, 0); r.lvl:SetWidth(30); r.lvl:SetJustifyH("LEFT")
+        r.qty    = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.qty:SetPoint("LEFT", 270, 0); r.qty:SetWidth(30); r.qty:SetJustifyH("LEFT")
+        r.price  = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.price:SetPoint("LEFT", 304, 0); r.price:SetWidth(105); r.price:SetJustifyH("LEFT")
+        r.seller = CreateFrame("Button", nil, r); r.seller:SetPoint("LEFT", 414, 0); r.seller:SetSize(126, ROW_H); r.seller:RegisterForClicks("LeftButtonUp")
+        r.seller.fs = r.seller:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.seller.fs:SetAllPoints(); r.seller.fs:SetJustifyH("LEFT")
+        local shl = r.seller:CreateTexture(nil, "HIGHLIGHT"); shl:SetAllPoints(); shl:SetColorTexture(1, 1, 1, 0.12)
+        r:Hide(); browseRows[i] = r
+    end
 
     --==================== My Items post panel ====================
     local panel = CreateFrame("Frame", nil, main)
@@ -719,7 +1086,7 @@ local function CreateUI()
     sellerFilterLabel:SetPoint("TOPLEFT", 16, -68); sellerFilterLabel:SetText("Find seller:"); sellerFilterLabel:Hide()
     main.sellerFilterLabel = sellerFilterLabel
     local sellerFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    sellerFilter:SetPoint("TOPLEFT", 100, -64); sellerFilter:SetSize(225, 22); sellerFilter:SetAutoFocus(false); sellerFilter:Hide()
+    sellerFilter:SetPoint("TOPLEFT", 100, -64); sellerFilter:SetSize(300, 22); sellerFilter:SetAutoFocus(false); sellerFilter:Hide()
     -- typing narrows the already-received list instantly (client-side); pressing Enter
     -- sends a network query so sellers matching the name answer even if they weren't in
     -- the capped first scan. (Channel broadcasts are only allowed from a key/click, not a timer.)
@@ -734,7 +1101,7 @@ local function CreateUI()
     sellerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanSellers("") end)
     main.sellerFilter = sellerFilter
     local sellerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    sellerRefreshBtn:SetSize(80, 22); sellerRefreshBtn:SetPoint("TOPLEFT", 335, -64); sellerRefreshBtn:SetText("Refresh"); sellerRefreshBtn:Hide()
+    sellerRefreshBtn:SetSize(80, 22); sellerRefreshBtn:SetPoint("TOPLEFT", 410, -64); sellerRefreshBtn:SetText("Refresh"); sellerRefreshBtn:Hide()
     sellerRefreshBtn:SetScript("OnClick", function()
         local t = sellerFilterText(); ns.ScanSellers((#t >= ns.FILTER_MIN) and t or "")
     end)
@@ -801,10 +1168,10 @@ local function CreateUI()
         local maxScroll = self:GetVerticalScrollRange()
         self:SetVerticalScroll(math.min(maxScroll, math.max(0, self:GetVerticalScroll() - delta * 30)))
     end)
-    local helpContent = CreateFrame("Frame", nil, helpScroll); helpContent:SetSize(500, 1)
+    local helpContent = CreateFrame("Frame", nil, helpScroll); helpContent:SetSize(700, 1)
     helpScroll:SetScrollChild(helpContent)
     local helpText = helpContent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    helpText:SetPoint("TOPLEFT"); helpText:SetWidth(500)
+    helpText:SetPoint("TOPLEFT"); helpText:SetWidth(700)
     helpText:SetJustifyH("LEFT"); helpText:SetJustifyV("TOP"); helpText:SetSpacing(2)
     helpText:SetText(table.concat({
         "|cffff4040» FIRST TIME — open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
@@ -917,6 +1284,15 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
         main.sortName:Hide(); main.sortCount:Hide()
     end
+    main.modeToggle:SetShown(buy)
+    if not buy then   -- leaving the Buy tab: hide all Browse widgets, restore the shared headers
+        main.sidebar:Hide(); main.browseScroll:Hide(); main.browseFilter:Hide(); main.browseFilterLabel:Hide()
+        main.bLvlLabel:Hide(); main.bLvlMin:Hide(); main.bLvlTo:Hide(); main.bLvlMax:Hide()
+        main.bhItem:Hide(); main.bhLvl:Hide(); main.bhQty:Hide(); main.bhPrice:Hide(); main.bhSeller:Hide()
+        main.bSortItem:Hide(); main.bSortLvl:Hide(); main.bSortPrice:Hide()
+        for i = 1, ROWS do browseRows[i]:Hide() end
+        main.h1:Show(); main.h2:Show(); main.h3:Show(); main.h4:Show()
+    end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
     main.announceBtn:SetShown(mine)
     main.helpPanel:SetShown(help)
@@ -931,7 +1307,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.status:SetText("")
     if buy then
         main.h1:SetText("Seller"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("Location")
-        ns.RefreshBuy()
+        setBuyMode(buyMode)   -- apply Search vs Browse sub-mode (handles visibility + refresh)
     elseif sellers then
         main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then
