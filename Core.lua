@@ -38,7 +38,15 @@ local activeLid  = nil  -- id of the active per-seller catalog fetch
 local sellerSeq  = 0
 
 function ns.Feedback(msg, isError)
-    if msg and msg ~= "" then print("|cff00ff96GFM|r: " .. msg) end
+    if msg and msg ~= "" then
+        print("|cff00ff96GFM|r: " .. msg)
+        if ns.dev and ns.Log then ns.Log("feedback: " .. msg) end   -- mirror into the Debug sidebar in dev mode
+    end
+end
+
+-- Dev one-off output goes to the Debug sidebar only (copy-pasteable), not chat.
+local function devEcho(msg)
+    if ns.Log then ns.Log(msg) end
 end
 
 local function offers() return GuildFoundMarketCharDB.offers end
@@ -137,16 +145,44 @@ local function ensureChannel()
 end
 
 --========================================================================
--- My Items (offers). Per-character; the source we auto-respond from.
+-- My Items (offers). Per-character; the source we auto-respond from. Keyed by variant
+-- "itemID:suffixID", so random-enchant variants of one base item ("... of the Bear" vs
+-- "... of the Eagle") list separately. suffixID 0 = a plain item, keyed "itemID:0".
 --========================================================================
-function ns.AddOffer(itemID, qty, price)
+local function vkey(id, suffix) return id .. ":" .. (suffix or 0) end
+ns.vkey = vkey
+
+-- Scan the player's bags for an item's bound state. Returns (sawCopy, sawTradeable):
+-- sawTradeable is true if at least one UNbound copy exists. We block a listing only
+-- when we saw copies and every one was bound (soulbound or quest-bound = untradeable);
+-- if we saw none (e.g. it's only in the bank), we fail open and allow it.
+local function bagBoundState(itemID)
+    local sawCopy, sawTradeable = false, false
+    for bag = 0, 4 do
+        for s = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
+            local info = C_Container.GetContainerItemInfo(bag, s)
+            if info and info.itemID == itemID then
+                sawCopy = true
+                if not info.isBound then sawTradeable = true end
+            end
+        end
+    end
+    return sawCopy, sawTradeable
+end
+
+function ns.AddOffer(itemID, suffix, qty, price)
     if not ns.channelName then ns.Feedback("No confederation config in your guild info — can't offer.", true); return end
     if not itemID then ns.Feedback("Pick an item first.", true); return end
+    suffix = suffix or 0
     price = math.max(0, price or 0)   -- 0 = no fixed price; the seller takes bids
     qty = math.max(1, qty or 1)
     local has = GetItemCount(itemID, true)
     if has < qty then ns.Feedback(("You only have %d (tried to offer %d)."):format(has, qty), true); return end
-    offers()[itemID] = { qty = qty, price = price }
+    local sawCopy, sawTradeable = bagBoundState(itemID)
+    if sawCopy and not sawTradeable then
+        ns.Feedback("That item is soulbound, so it can't be traded or listed.", true); return
+    end
+    offers()[vkey(itemID, suffix)] = { id = itemID, suffix = suffix, qty = qty, price = price }
     ns.ItemDB.Learn(itemID)
     if ns.RefreshMine then ns.RefreshMine() end
     ns.Feedback(("Offering %s x%d%s."):format(GetItemInfo(itemID) or ("item:" .. itemID), qty, price == 0 and " (bids)" or ""), false)
@@ -154,9 +190,11 @@ function ns.AddOffer(itemID, qty, price)
     return true
 end
 
-function ns.RemoveOffer(itemID)
-    offers()[itemID] = nil
-    ns.Log("OFFER removed: " .. (GetItemInfo(itemID) or ("item:" .. itemID)))
+function ns.RemoveOffer(key)
+    local o = offers()[key]
+    offers()[key] = nil
+    local id = (o and o.id) or tonumber(key)
+    ns.Log("OFFER removed: " .. (id and (GetItemInfo(id) or ("item:" .. id)) or tostring(key)))
     if ns.RefreshMine then ns.RefreshMine() end
 end
 
@@ -164,11 +202,12 @@ end
 -- never verify it against bags/bank: sellers may keep stock on a bank alt, items go
 -- in and out during play, and every trade is arranged face to face in whispers anyway.
 -- So we never auto-edit or auto-remove offers; the seller owns their listings (and the
--- pause toggle hides them all at once). Return the offers as an array of { id, qty, price }.
+-- pause toggle hides them all at once). Returns an array of { id, suffix, qty, price }.
+-- Tolerates legacy offers keyed by a bare numeric itemID (no stored id/suffix).
 local function offerList()
     local list = {}
-    for itemID, o in pairs(offers()) do
-        list[#list + 1] = { id = itemID, qty = o.qty, price = o.price }
+    for key, o in pairs(offers()) do
+        list[#list + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price }
     end
     return list
 end
@@ -196,13 +235,18 @@ function ns.Search(itemID)
         ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
         ns.Log(("SEARCH (id %d) FAILED — channel not ready"):format(itemID))
     end
-    -- Always show our own offer for this item among the results, so we can see where our
-    -- price sits and adjust to compete. Local-only injection (we never whisper ourselves),
-    -- and shown even while paused since it's purely our own comparison view.
-    local mine = offers()[itemID]
-    if mine then
-        ns.results[playerName] = { qty = mine.qty, price = mine.price, loc = liveLoc(), self = true }
-    elseif ns.selfTest then
+    -- Always show our own offers for this base item among the results (every variant we
+    -- list), so we can see where our price sits and adjust to compete. Local-only injection
+    -- (we never whisper ourselves), shown even while paused since it's our own view.
+    local mineCount = 0
+    for _, it in ipairs(offerList()) do
+        if it.id == itemID then
+            mineCount = mineCount + 1
+            ns.results[playerName .. "#" .. it.suffix] =
+                { seller = playerName, suffix = it.suffix, qty = it.qty, price = it.price, loc = liveLoc(), self = true }
+        end
+    end
+    if mineCount == 0 and ns.selfTest then
         ns.Feedback(("self-test: you have no offer for itemID %d (%s)."):format(itemID, GetItemInfo(itemID) or "?"), true)
     end
     if ns.RefreshBuy then ns.RefreshBuy() end
@@ -289,11 +333,11 @@ function ns.OpenSeller(seller, loc)
     ns.sellerCatalog = { seller = seller, loc = loc, items = {}, loading = true }
     if ns._fakeCat and ns._fakeCat[seller] then          -- dev: /gfm fakesellers
         for _, id in ipairs(ns._fakeCat[seller]) do
-            ns.sellerCatalog.items[id] = { id = id, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
+            ns.sellerCatalog.items[vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
         end
         ns.sellerCatalog.loading = false
     elseif ns.selfTest and seller == playerName and not isPaused() then  -- can't whisper yourself
-        for _, it in ipairs(offerList()) do ns.sellerCatalog.items[it.id] = it end
+        for _, it in ipairs(offerList()) do ns.sellerCatalog.items[vkey(it.id, it.suffix)] = it end
         ns.sellerCatalog.loading = false
     else
         enqueueWhisper(("L~%s"):format(activeLid), seller)
@@ -312,32 +356,32 @@ end
 -- Incoming messages
 --========================================================================
 local function handleMsg(text, sender)
-    local cmd, a, b, c, d, e = strsplit("~", text)
+    local cmd, a, b, c, d, e, f = strsplit("~", text)
     if cmd == "Q" then
         ns.ItemDB.Learn(tonumber(b))   -- learn the searched item (vocabulary)
-        local isSelf = Ambiguate(sender, "short") == playerName
-        if isSelf and not ns.selfTest then return end   -- normally ignore my own query
+        if Ambiguate(sender, "short") == playerName then return end   -- ignore my own query (own offers are injected locally)
+        if isPaused() then return end                                 -- paused: stay invisible
         local itemID = tonumber(b)
-        local o = itemID and offers()[itemID]
-        if o then
-            -- an offer is the seller's claim: answer with exactly what they posted, no
-            -- inventory check (reality gets sorted out between buyer and seller in whispers)
-            if isSelf then
-                -- self-test only: deliver our own offer locally (can't whisper yourself)
-                if a == activeQid and itemID == ns.searchItemID and not isPaused() then
-                    ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc(), self = true }
-                    if ns.RefreshBuy then ns.RefreshBuy() end
-                end
-            elseif not isPaused() then
-                enqueueWhisper(("R~%s~%d~%d~%d~%s"):format(a, itemID, o.qty, o.price, liveLoc()), sender)
-                ns.Log("answered " .. Ambiguate(sender, "short") .. "'s search for " .. (GetItemInfo(itemID) or ("item:" .. itemID)))
+        -- an offer is the seller's claim: answer every variant we list for this base item,
+        -- exactly as posted, no inventory check (settled buyer<->seller in whispers)
+        local answered = 0
+        for _, it in ipairs(offerList()) do
+            if it.id == itemID then
+                enqueueWhisper(("R~%s~%d~%d~%d~%d~%s"):format(a, it.id, it.suffix, it.qty, it.price, liveLoc()), sender)
+                answered = answered + 1
             end
         end
+        if answered > 0 then
+            ns.Log(("answered %s's search for %s (%d variant(s))"):format(Ambiguate(sender, "short"), GetItemInfo(itemID) or ("item:" .. itemID), answered))
+        end
     elseif cmd == "R" then
+        -- R~qid~itemID~suffixID~qty~price~loc
         if a == activeQid and tonumber(b) == ns.searchItemID then
-            ns.results[Ambiguate(sender, "short")] = { qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
+            local suffix = tonumber(c) or 0
+            local s = Ambiguate(sender, "short")
+            ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(d) or 0, price = tonumber(e) or 0, loc = f or "" }
             ns.ItemDB.Learn(tonumber(b))
-            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(Ambiguate(sender, "short"), tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
+            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(d), tostring(e), GetTime() - (ns.searchStart or GetTime())))
             if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         end
     elseif cmd == "S" then
@@ -381,7 +425,7 @@ local function handleMsg(text, sender)
         local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
         for i = 1, #list do
             local it = list[i]
-            local p = ("%d:%d:%d"):format(it.id, it.qty, it.price)
+            local p = ("%d:%d:%d:%d"):format(it.id, it.suffix, it.qty, it.price)
             if #buf + #p + 1 > 180 then flush(1) end
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
@@ -390,10 +434,11 @@ local function handleMsg(text, sender)
     elseif cmd == "K" then
         if a == activeLid and ns.sellerCatalog then
             for chunk in (c or ""):gmatch("[^;]+") do
-                local id, qty, price = strsplit(":", chunk)
+                local id, suffix, qty, price = strsplit(":", chunk)
                 id = tonumber(id)
                 if id then
-                    ns.sellerCatalog.items[id] = { id = id, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+                    local sfx = tonumber(suffix) or 0
+                    ns.sellerCatalog.items[vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
                     ns.ItemDB.Learn(id)
                 end
             end
@@ -516,6 +561,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketDB.quals = GuildFoundMarketDB.quals or {}
         GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
+        -- migrate legacy offers keyed by a bare numeric itemID to the "itemID:suffix" form
+        do
+            local off, legacy = GuildFoundMarketCharDB.offers, {}
+            for k, o in pairs(off) do if type(k) == "number" then legacy[k] = o end end
+            for k, o in pairs(legacy) do
+                off[k] = nil
+                o.id = o.id or k; o.suffix = o.suffix or 0
+                off[vkey(o.id, o.suffix)] = o
+            end
+        end
 
         C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
         -- hide our hidden-channel protocol chatter from every chat frame
@@ -574,7 +629,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "CHAT_MSG_CHANNEL" then
         local text, sender = ...
         if text and text:sub(1, #CHAT_TAG) == CHAT_TAG then
-            if ns.dev then print("|cff00ff96GFM|r ← channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
+            if ns.dev then devEcho("|cff00ff96GFM|r ← channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
             handleMsg(text:sub(#CHAT_TAG + 1), sender)
         end
 
@@ -604,19 +659,21 @@ SlashCmdList.GFMARKET = function(msg)
     if msg == "dev" then
         ns.dev = not ns.dev
         print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off"))
+        if ns.UpdateDebugTitle then ns.UpdateDebugTitle() end
     elseif msg == "debug" then
         refreshConfig()
         local t = GetGuildInfoText() or ""
         local cur, max = ns.ItemDB.HarvestProgress()
-        print("|cff00ff96GFM debug|r")
-        print("  guild: " .. tostring(GetGuildInfo("player")))
-        print("  guildInfoText length: " .. #t)
-        print("  channelName: " .. tostring(ns.channelName) .. " | joined: " .. tostring(ns.channelIndex ~= nil))
-        print(("  item DB size: %d | harvest %d/%d (%s) | auxSeeded=%s | disableAux=%s"):format(
+        devEcho("|cff00ff96GFM debug|r")
+        devEcho("  guild: " .. tostring(GetGuildInfo("player")))
+        devEcho("  guildInfoText length: " .. #t)
+        devEcho("  channelName: " .. tostring(ns.channelName) .. " | joined: " .. tostring(ns.channelIndex ~= nil))
+        devEcho(("  item DB size: %d | harvest %d/%d (%s) | auxSeeded=%s | disableAux=%s"):format(
             ns.ItemDB.Count(), cur, max, ns.ItemDB.IsHarvesting() and "running" or "idle",
             tostring(GuildFoundMarketDB.auxSeeded), tostring(GuildFoundMarketDB.disableAux)))
         local n = 0; for _ in pairs(offers()) do n = n + 1 end
-        print("  my offers: " .. n)
+        devEcho("  my offers: " .. n)
+        if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
     elseif msg == "harvest" then
         ns.ItemDB.StartHarvest()
         local cur, max = ns.ItemDB.HarvestProgress()
@@ -658,9 +715,9 @@ SlashCmdList.GFMARKET = function(msg)
         if not ns.searchItemID then
             ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)
         else
-            ns.results["Testseller1"]  = { qty = 5,  price = 150000, loc = "Bank, Orgrimmar" }
-            ns.results["Cheapcharlie"] = { qty = 20, price = 95000,  loc = "Auction House, Orgrimmar" }
-            ns.results["Bidderbob"]    = { qty = 1,  price = 0,      loc = "The Crossroads" }
+            ns.results["Testseller1#0"]  = { seller = "Testseller1",  suffix = 0, qty = 5,  price = 150000, loc = "Bank, Orgrimmar" }
+            ns.results["Cheapcharlie#0"] = { seller = "Cheapcharlie", suffix = 0, qty = 20, price = 95000,  loc = "Auction House, Orgrimmar" }
+            ns.results["Bidderbob#0"]    = { seller = "Bidderbob",    suffix = 0, qty = 1,  price = 0,      loc = "The Crossroads" }
             if ns.RefreshBuy then ns.RefreshBuy() end
             ns.Feedback("Injected 3 fake offers into the current search.", false)
         end

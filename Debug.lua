@@ -8,7 +8,14 @@ local ADDON, ns = ...
 local LOG_MAX = 400
 ns.debugLog = ns.debugLog or {}
 local log = ns.debugLog
-local panel, editBox, scroll, statusFS
+local panel, editBox, scroll, statusFS, titleFS
+
+-- Title reflects dev mode so it's obvious when the extra dev output is flowing in.
+function ns.UpdateDebugTitle()
+    if titleFS then
+        titleFS:SetText(ns.dev and "GFM |cff00ff96Debug|r  |cffffd100dev mode|r" or "GFM |cff00ff96Debug|r")
+    end
+end
 
 -- Append a timestamped line. Safe to call from anywhere, any time.
 function ns.Log(msg)
@@ -24,6 +31,7 @@ end
 
 function ns.RefreshDebug()
     if not panel or not panel:IsShown() then return end
+    ns.UpdateDebugTitle()
     -- While the box has focus (you're selecting/copying) we don't rewrite the text,
     -- or it would wipe your selection — so the view "freezes". Tell the user how to resume.
     if editBox:HasFocus() then
@@ -58,8 +66,8 @@ local function createSidebar()
     panel:EnableMouse(true)
     panel:SetScript("OnMouseDown", function() if editBox then editBox:ClearFocus() end end)
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOP", 0, -16); title:SetText("GFM |cff00ff96Debug|r")
+    titleFS = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFS:SetPoint("TOP", 0, -16); ns.UpdateDebugTitle()
 
     local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -4, -4)

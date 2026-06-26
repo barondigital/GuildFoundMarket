@@ -35,6 +35,30 @@ local function itemLink(id)
     return (select(2, GetItemInfo(id)))
 end
 
+-- Variant-aware item display (#7). A random-enchant item's suffix ("of the Bear") and
+-- stats are fully determined by itemID + suffixID, so we reconstruct a display link from
+-- them. suffix 0 = a plain item, so we fall through to the base itemID helpers.
+local function variantString(id, suffix)
+    if suffix and suffix ~= 0 then return ("item:%d:0:0:0:0:0:%d:0"):format(id, suffix) end
+    return "item:" .. id
+end
+local function vName(id, suffix)
+    if not suffix or suffix == 0 then return itemName(id) end
+    return (GetItemInfo(variantString(id, suffix))) or itemName(id)
+end
+local function vLink(id, suffix)
+    if not suffix or suffix == 0 then return itemLink(id) end
+    return (select(2, GetItemInfo(variantString(id, suffix)))) or variantString(id, suffix)
+end
+-- The " of the Bear" remainder after the base name, for tagging Buy rows where the item
+-- column is implied by the search. Empty when not a (yet-known) suffix variant.
+local function suffixTag(id, suffix)
+    if not suffix or suffix == 0 then return "" end
+    local full, base = vName(id, suffix), itemName(id)
+    if full and base and full ~= base and full:sub(1, #base) == base then return full:sub(#base + 1) end
+    return ""
+end
+
 -- Copper -> short "1g2s45c" string (zero parts dropped), mirroring the price input.
 local function coinShort(c)
     c = math.floor((c or 0) + 0.5)
@@ -49,8 +73,8 @@ end
 
 -- Open a whisper to `name`, pre-filled with the item link + price and a trailing
 -- space so the buyer can append a question: "/w Name [Item]@1g2s45c "
-local function whisperItem(name, itemID, price)
-    local link = (itemID and itemLink(itemID)) or ("[" .. itemName(itemID) .. "]")
+local function whisperItem(name, itemID, suffix, price)
+    local link = (itemID and vLink(itemID, suffix)) or ("[" .. itemName(itemID) .. "]")
     local body = (price and price > 0) and (link .. "@" .. coinShort(price) .. " ") or (link .. " ")
     ChatFrame_OpenChat("/w " .. name .. " " .. body)
 end
@@ -123,21 +147,24 @@ local function formatBuyRow(r, d)
     -- every result is from an online seller (offline sellers can't respond)
     r.icon:Hide()
     r.c1:EnableMouse(true)
+    -- the item is implied by the search; tag the row with the random-enchant suffix (if any)
+    local tag = suffixTag(ns.searchItemID, d.suffix)
+    tag = tag ~= "" and (" |cff888888" .. tag .. "|r") or ""
     if d.self then
         -- our own offer, injected locally so we can see our price rank (#6): no point
         -- whispering or browsing ourselves, so left-click jumps to My Items to adjust.
-        r.c1.fs:SetText(ns.IsPaused() and (d.seller .. " (you, paused)") or (d.seller .. " (you)"))
+        r.c1.fs:SetText((ns.IsPaused() and (d.seller .. " (you, paused)") or (d.seller .. " (you)")) .. tag)
         r.c1.fs:SetTextColor(1, 0.82, 0)   -- gold: stands out as your own row
         r.c1.tip = "Your offer — click to open My Items and adjust your price"
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then ns.SelectTab("MINE") end
         end)
     else
-        r.c1.fs:SetText(d.seller)
+        r.c1.fs:SetText(d.seller .. tag)
         r.c1.fs:SetTextColor(1, 1, 1)
         r.c1.tip = "Click for items · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.price)
+            if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.suffix, d.price)
             else ns.SelectTab("SELLERS", d.seller, d.loc) end
         end)
     end
@@ -145,18 +172,19 @@ local function formatBuyRow(r, d)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(d.loc or ""); r.c4:Show()
     r.x:Hide()
-    r.itemID = nil; r.c1.itemID = ns.searchItemID   -- every Buy row is the searched item
+    -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
+    r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(ns.searchItemID, d.suffix)
 end
 
 local function formatMineRow(r, d)
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
-    r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
+    r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
     r.c1:EnableMouse(true)
     r.c1.tip = "Shift-click to drop this item into your open chat message (e.g. an announce)"
-    r.c1.itemID = d.id
+    r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1:SetScript("OnClick", function()
         if IsModifiedClick("CHATLINK") then
-            local link = itemLink(d.id)
+            local link = vLink(d.id, d.suffix)
             if link then ChatEdit_InsertLink(link) end
         end
     end)
@@ -164,7 +192,7 @@ local function formatMineRow(r, d)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(""); r.c4:Hide()
     r.x:Show()
-    r.x:SetScript("OnClick", function() ns.RemoveOffer(d.id) end)
+    r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
     r.itemID = d.id
 end
 
@@ -182,21 +210,21 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.count or 0)
         r.c3:SetText("")
         r.c4:SetText(d.loc or ""); r.c4:Show()
-        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil
+        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = nil
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
-        r.c1.fs:SetText(itemLink(d.id) or itemName(d.id))
+        r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
         r.c1.fs:SetTextColor(1, 1, 1)
         r.c1:EnableMouse(true)
         r.c1.tip = "Ctrl-click to compare · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, d.id, d.price)
+            if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
         r.c4:SetText(""); r.c4:Hide()
-        r.x:Hide(); r.itemID = nil; r.c1.itemID = d.id
+        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
     end
 end
 
@@ -223,15 +251,17 @@ end
 function ns.RefreshBuy()
     if not main or not main:IsShown() or currentTab ~= "BUY" then return end
     wipe(view)
-    for seller, o in pairs(ns.results) do
-        view[#view + 1] = { seller = seller, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
+    -- results are keyed by seller+variant; a seller can return several random-enchant variants
+    for _, o in pairs(ns.results) do
+        view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
     end
     table.sort(view, function(a, b)
         -- real prices ascending; "bid" offers (price 0) sink to the bottom
         local pa = (a.price or 0) > 0 and a.price or math.huge
         local pb = (b.price or 0) > 0 and b.price or math.huge
         if pa ~= pb then return pa < pb end
-        return a.seller < b.seller
+        if a.seller ~= b.seller then return a.seller < b.seller end
+        return (a.suffix or 0) < (b.suffix or 0)
     end)
     renderRows()
     if not ns.searchItemID then
@@ -251,10 +281,10 @@ end
 function ns.RefreshMine()
     if not main or not main:IsShown() or currentTab ~= "MINE" then return end
     wipe(view)
-    for id, o in pairs(GuildFoundMarketCharDB.offers) do
-        view[#view + 1] = { id = id, qty = o.qty, price = o.price }
+    for key, o in pairs(GuildFoundMarketCharDB.offers) do
+        view[#view + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price, key = key }
     end
-    table.sort(view, function(a, b) return itemName(a.id) < itemName(b.id) end)
+    table.sort(view, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
     renderRows()
     if GuildFoundMarketCharDB.paused then
         main.status:SetTextColor(1, 0.6, 0.2)
@@ -326,9 +356,9 @@ function ns.RefreshSellerCatalog()
         main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
         local items = {}
         for _, it in pairs(cat.items) do items[#items + 1] = it end
-        table.sort(items, function(a, b) return itemName(a.id) < itemName(b.id) end)
+        table.sort(items, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
         for _, it in ipairs(items) do
-            view[#view + 1] = { kind = "item", id = it.id, qty = it.qty, price = it.price, seller = cat.seller }
+            view[#view + 1] = { kind = "item", id = it.id, suffix = it.suffix or 0, qty = it.qty, price = it.price, seller = cat.seller }
         end
     end
     renderRows()
@@ -579,9 +609,12 @@ local function CreateUI()
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
         local c1hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); c1hl:SetAllPoints(); c1hl:SetColorTexture(1, 1, 1, 0.12)
         r.c1:SetScript("OnEnter", function(self)
-            if self.itemID then
+            if self.itemLink or self.itemID then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetItemByID(self.itemID)
+                -- a reconstructed variant link carries the real suffix stats; the bare
+                -- itemID does not, so prefer the link when we have one
+                if self.itemLink then GameTooltip:SetHyperlink(self.itemLink)
+                else GameTooltip:SetItemByID(self.itemID) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 GameTooltip:Show()
             elseif self.tip then
@@ -611,16 +644,26 @@ local function CreateUI()
     local slot = CreateFrame("Button", "GuildFoundMarketSlot", panel, "ItemButtonTemplate")
     slot:SetPoint("LEFT", 4, 0); slot:SetSize(36, 36)
     local function setDraft()
-        local t, id = GetCursorInfo()
+        local t, id, link = GetCursorInfo()
         if t == "item" and id then
-            ClearCursor(); draft.itemID = id; ns.ItemDB.Learn(id)
+            ClearCursor()
+            draft.itemID = id
+            draft.link = link
+            draft.suffix = 0   -- carry the random-enchant suffix so we list the right variant
+            if link then
+                local str = link:match("(item:[%-%d:]+)")
+                if str then local p = { strsplit(":", str) }; draft.suffix = tonumber(p[8]) or 0 end
+            end
+            ns.ItemDB.Learn(id)
             SetItemButtonTexture(slot, GetItemIcon(id)); SetItemButtonCount(slot, GetItemCount(id, true))
         end
     end
     slot:SetScript("OnClick", setDraft); slot:SetScript("OnReceiveDrag", setDraft)
     slot:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        if draft.itemID then GameTooltip:SetItemByID(draft.itemID) else GameTooltip:SetText("Pick up an item and click here") end
+        if draft.link then GameTooltip:SetHyperlink(draft.link)
+        elseif draft.itemID then GameTooltip:SetItemByID(draft.itemID)
+        else GameTooltip:SetText("Pick up an item and click here") end
         GameTooltip:Show()
     end)
     slot:SetScript("OnLeave", GameTooltip_Hide)
@@ -638,8 +681,9 @@ local function CreateUI()
     local offerBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
     offerBtn:SetScript("OnClick", function()
-        if ns.AddOffer(draft.itemID, tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())) then
-            draft.itemID = nil; SetItemButtonTexture(slot, nil); SetItemButtonCount(slot, 0)
+        if ns.AddOffer(draft.itemID, draft.suffix or 0, tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())) then
+            draft.itemID = nil; draft.suffix = 0; draft.link = nil
+            SetItemButtonTexture(slot, nil); SetItemButtonCount(slot, 0)
             qtyBox:SetText("1"); priceBox:SetText("")
         end
     end)
