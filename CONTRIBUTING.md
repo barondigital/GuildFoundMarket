@@ -65,6 +65,10 @@ and the second is vendored from upstream projects.
   (`GuildFoundMarketDB`, `GuildFoundMarketCharDB`) unless that is the point of the change.
 - If your change affects user-facing behaviour, add a short note to `CHANGELOG.md` under
   an "Unreleased" heading. Leave version bumps and tagging to the maintainer.
+- `CHANGELOG.md` stays concise (it is also used as the CurseForge release notes). Longer,
+  player-facing release notes live per version in `changelogs/<version>.md` (for example
+  `changelogs/0.7.0.md`); these are not bundled into the addon. Adding to the detailed
+  notes is optional for a PR and is usually written by the maintainer at release time.
 
 ## Commit messages
 
