@@ -471,22 +471,35 @@ local SHARE_EVENTS = {
     "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
 }
 
--- Open a clicked shop link via a taint-free securehook on SetItemRef. We must NOT
--- replace the chat frame's OnHyperlinkClick script instead: doing so taints the chat
--- frames, which then intermittently blocks our SendChatMessage channel broadcasts
--- (ADDON_ACTION_BLOCKED) and breaks search/scan. The trade-off: addons that
--- securehook SetItemRef and call SetHyperlink unconditionally (NovaWorldBuffs,
--- Questie) log a harmless "Unknown link type" on click. Secure hooks are dispatched
--- independently, so the link still works; we accept that over breaking search.
+-- Open a clicked shop link. We REPLACE SetItemRef (capturing the existing chain) and
+-- short-circuit our custom gfmshop: link here, so it reaches neither Blizzard's
+-- SetItemRef nor any other addon's SetItemRef hook. This is deliberate over two
+-- alternatives that each break:
+--   * A plain hooksecurefunc on SetItemRef lets the link reach NovaWorldBuffs/Questie,
+--     which securehook SetItemRef and call SetHyperlink(link) unconditionally. Our
+--     unknown type raises "Unknown link type", and that error aborts the rest of the
+--     secure-hook chain, so our own handler never runs and the link does nothing.
+--   * Replacing the chat frame's OnHyperlinkClick script taints the chat frames, which
+--     then intermittently blocks our SendChatMessage channel broadcasts
+--     (ADDON_ACTION_BLOCKED), breaking search and the Sellers scan.
+-- Replacing the global SetItemRef touches no chat-frame widget (so search/scan stay
+-- untainted) and our link never reaches the unconditional SetHyperlink (so no error).
+-- Real links fall through to the original chain unchanged. We install at PLAYER_LOGIN,
+-- after other addons have hooked, so our replacement wraps their chain (not vice versa).
 local shareInstalled = false
 local function installShareLinks()
     if shareInstalled then return end
     shareInstalled = true
     for _, e in ipairs(SHARE_EVENTS) do ChatFrame_AddMessageEventFilter(e, shareFilter) end
-    hooksecurefunc("SetItemRef", function(link)
+    local origSetItemRef = SetItemRef
+    SetItemRef = function(link, ...)
         local name = type(link) == "string" and link:match("^gfmshop:(.+)$")
-        if name and ns.OpenShopLink then ns.OpenShopLink(name) end
-    end)
+        if name then
+            if ns.OpenShopLink then ns.OpenShopLink(name) end
+            return
+        end
+        return origSetItemRef(link, ...)
+    end
 end
 
 --========================================================================
