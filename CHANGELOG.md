@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0
+
+- **Browse by category.** A new Browse toggle on the Buy tab, with a Category to
+  Subclass sidebar in Auction House order, lets you see every offer in a
+  subcategory at once (for example Weapons then Daggers) instead of only
+  searching one item by name. Results show the item (quality coloured), required
+  level, quantity, price and the seller, sortable by quality, level or price,
+  with a level-range and text filter. Click a seller to open their full list.
+- **Version display and update notice.** Your installed version shows in the top
+  right. When someone in your confederation runs a newer version, the addon tells
+  you to update.
+- **Fix: prices and locations no longer garble across versions.** 0.7.0 added the
+  random-enchant variant by inserting a field in the middle of the search and
+  catalog replies, which shifted the price and location columns for anyone still
+  on 0.6.0 (prices showed "1c", locations showed a number). The field is now
+  appended at the end, so 0.6.0 and 0.8.0 read each other correctly again.
+- **Players on 0.7.0 must update to 0.8.0.** The 0.7.0 wire format is not
+  compatible with 0.6.0 or 0.8.0; updating to 0.8.0 resolves it.
+
 ## 0.7.0
 
 - **Random-enchant items show what you're actually buying.** A listing now
