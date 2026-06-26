@@ -14,7 +14,7 @@ local draft = { itemID = nil }     -- item being composed in the My Items post p
 local selectedSearchID = nil
 
 -- Buy tab has two sub-modes: item Search (existing) and category Browse (#3).
-local buyMode = "SEARCH"   -- "SEARCH" | "BROWSE"
+local buyMode = "BROWSE"   -- "SEARCH" | "BROWSE" (Browse is the default view)
 local BROWSE_CAP = 150     -- max Browse rows shown; beyond it the user narrows by level range / filter
 local browseSort = { col = "lvl", asc = false }   -- Browse results sort: "qual"|"lvl"|"price"; default level desc
 local browseSel = { class = nil, sub = nil }      -- selected category (nil = none picked yet)
@@ -136,6 +136,7 @@ end
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
 local function selectSearchItem(id, name)
     if not main then return end
+    if setBuyMode and buyMode ~= "SEARCH" then setBuyMode("SEARCH") end   -- a picked search item always lands in the Search view
     selectedSearchID = id
     main.searchBox:SetText(name or itemName(id)); main.searchBox:SetCursorPosition(0); main.searchBox:ClearFocus()
     main.ac:Hide()
