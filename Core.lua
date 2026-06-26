@@ -9,7 +9,6 @@ local CHAT_TAG      = "GFMqp1:"   -- marks our hidden chat-channel protocol mess
                                   --  channels are dropped in Classic Era, so we ride the
                                   --  chat layer like GreenWall does and filter it from view)
 local SEND_TICK     = 0.30            -- min seconds between outgoing messages (throttle)
-local SCAN_INTERVAL = 10             -- how often offers are reconciled with inventory
 local QUERY_SETTLE  = 5             -- seconds we collect responses for a search
 local SELLER_CAP    = 150           -- max distinct sellers a scan collects (protects the scanner)
 local SCAN_JITTER   = 2.0           -- seconds sellers spread scan replies over (unfiltered scan)
@@ -161,24 +160,15 @@ function ns.RemoveOffer(itemID)
     if ns.RefreshMine then ns.RefreshMine() end
 end
 
-local function reconcileOffers()
-    local changed = false
-    for itemID, o in pairs(offers()) do
-        local has = GetItemCount(itemID, true)
-        if has <= 0 then offers()[itemID] = nil; changed = true
-        elseif has < o.qty then o.qty = has; changed = true end
-    end
-    if changed and ns.RefreshMine then ns.RefreshMine() end
-end
-
--- Reconcile my offers against current inventory and return only the in-stock ones
--- as an array of { id, qty, price }. Used to answer seller-browse requests.
-local function inStockOffers()
+-- An offer is the seller's claim, not a mirror of their inventory. We deliberately
+-- never verify it against bags/bank: sellers may keep stock on a bank alt, items go
+-- in and out during play, and every trade is arranged face to face in whispers anyway.
+-- So we never auto-edit or auto-remove offers; the seller owns their listings (and the
+-- pause toggle hides them all at once). Return the offers as an array of { id, qty, price }.
+local function offerList()
     local list = {}
     for itemID, o in pairs(offers()) do
-        local has = GetItemCount(itemID, true)
-        if has <= 0 then offers()[itemID] = nil
-        else list[#list + 1] = { id = itemID, qty = math.min(o.qty, has), price = o.price } end
+        list[#list + 1] = { id = itemID, qty = o.qty, price = o.price }
     end
     return list
 end
@@ -210,8 +200,7 @@ function ns.Search(itemID)
         -- deliver our own offer directly (don't rely on the channel echo)
         local o = offers()[itemID]
         if o then
-            local has = GetItemCount(itemID, true)
-            if has > 0 then ns.results[playerName] = { qty = math.min(o.qty, has), price = o.price, loc = liveLoc() } end
+            ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc() }
         else
             ns.Feedback(("self-test: you have no offer for itemID %d (%s)."):format(itemID, GetItemInfo(itemID) or "?"), true)
         end
@@ -256,7 +245,7 @@ function ns.ScanSellers(filter)
         ns.Log("SELLERS scan FAILED — channel not ready")
     end
     if ns.selfTest and not isPaused() and (filter == "" or playerName:lower():find(filter, 1, true)) then
-        local list = inStockOffers()
+        local list = offerList()
         if #list > 0 then
             -- mimic our own reply arriving over the channel a moment later, so the
             -- same index + pending-open path a real seller would drive is exercised
@@ -304,7 +293,7 @@ function ns.OpenSeller(seller, loc)
         end
         ns.sellerCatalog.loading = false
     elseif ns.selfTest and seller == playerName and not isPaused() then  -- can't whisper yourself
-        for _, it in ipairs(inStockOffers()) do ns.sellerCatalog.items[it.id] = it end
+        for _, it in ipairs(offerList()) do ns.sellerCatalog.items[it.id] = it end
         ns.sellerCatalog.loading = false
     else
         enqueueWhisper(("L~%s"):format(activeLid), seller)
@@ -331,17 +320,16 @@ local function handleMsg(text, sender)
         local itemID = tonumber(b)
         local o = itemID and offers()[itemID]
         if o then
-            local has = GetItemCount(itemID, true)
-            if has <= 0 then
-                offers()[itemID] = nil
-            elseif isSelf then
+            -- an offer is the seller's claim: answer with exactly what they posted, no
+            -- inventory check (reality gets sorted out between buyer and seller in whispers)
+            if isSelf then
                 -- self-test only: deliver our own offer locally (can't whisper yourself)
                 if a == activeQid and itemID == ns.searchItemID and not isPaused() then
-                    ns.results[playerName] = { qty = math.min(o.qty, has), price = o.price, loc = liveLoc() }
+                    ns.results[playerName] = { qty = o.qty, price = o.price, loc = liveLoc() }
                     if ns.RefreshBuy then ns.RefreshBuy() end
                 end
             elseif not isPaused() then
-                enqueueWhisper(("R~%s~%d~%d~%d~%s"):format(a, itemID, math.min(o.qty, has), o.price, liveLoc()), sender)
+                enqueueWhisper(("R~%s~%d~%d~%d~%s"):format(a, itemID, o.qty, o.price, liveLoc()), sender)
                 ns.Log("answered " .. Ambiguate(sender, "short") .. "'s search for " .. (GetItemInfo(itemID) or ("item:" .. itemID)))
             end
         end
@@ -359,7 +347,7 @@ local function handleMsg(text, sender)
         if isPaused() then return end                                 -- paused: stay invisible
         local filter = b
         if filter and filter ~= "" and not playerName:lower():find(filter, 1, true) then return end
-        local list = inStockOffers()
+        local list = offerList()
         if #list > 0 then
             -- spread replies over time so the scanner isn't hit by a burst; filtered
             -- scans match few people, so answer those almost immediately.
@@ -389,7 +377,7 @@ local function handleMsg(text, sender)
     elseif cmd == "L" then
         -- a directed request for my full catalog; reply in <=180-char chunks
         if isPaused() then return end                                 -- paused: don't answer
-        local lid, list, buf = a, inStockOffers(), ""
+        local lid, list, buf = a, offerList(), ""
         local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
         for i = 1, #list do
             local it = list[i]
@@ -571,7 +559,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 ns.Log("SEND backlog cleared")
             end
         end)
-        C_Timer.NewTicker(SCAN_INTERVAL, reconcileOffers)
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         refreshConfig()
@@ -598,7 +585,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
     elseif event == "BAG_UPDATE_DELAYED" then
-        reconcileOffers()
         ns.ItemDB.LearnFromBags()
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
