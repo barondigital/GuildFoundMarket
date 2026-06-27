@@ -12,6 +12,9 @@ Libs\Libs.xml
 Debug.lua
 Events.lua
 Settings.lua
+Config.lua
+Transport.lua
+Protocol.lua
 SoDItems.lua
 ItemDB.lua
 Core.lua

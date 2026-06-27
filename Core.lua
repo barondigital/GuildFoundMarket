@@ -3,12 +3,11 @@ local ADDON, ns = ...
 --========================================================================
 -- Config
 --========================================================================
-local PREFIX        = "GFMarket"  -- addon-message prefix for whispered replies (<=16 chars)
 local CHAT_TAG      = "GFMqp1:"   -- marks our hidden chat-channel protocol messages
                                   -- (broadcast queries; addon messages over custom
                                   --  channels are dropped in Classic Era, so we ride the
                                   --  chat layer like GreenWall does and filter it from view)
-local SEND_TICK     = 0.30            -- min seconds between outgoing messages (throttle)
+                                  -- (the whisper send queue + channel join live in Transport.lua)
 local QUERY_SETTLE  = 5             -- seconds we collect responses for a search
 local SELLER_CAP    = 150           -- max distinct sellers a scan collects (protects the scanner)
 local SCAN_JITTER   = 2.0           -- seconds sellers spread scan replies over (unfiltered scan)
@@ -102,114 +101,6 @@ local function liveLoc()
     local s = GetSubZoneText()
     if not s or s == "" then s = GetZoneText() or "" end
     return s:gsub("~", " ")
-end
-
---========================================================================
--- Guild-info marketplace config: a single channel line, GFMc (preferred) or
--- GreenWall's GWc as fallback. The marketplace is gated purely by who can read
--- that secret, so peer-guild lines (GFMp/GWp) are not needed and are ignored.
---========================================================================
-local function simpleHash(s)
-    local h = 5381
-    for i = 1, #s do h = (h * 33 + s:byte(i)) % 0x7FFFFFFF end
-    return h
-end
-
-local function parseGuildConfig()
-    local text = GetGuildInfoText()
-    if not text or text == "" then return nil end
-    local vars, picked = {}, {}
-    local function applyVars(s) return (s:gsub("%$(.)", function(n) return vars[n] or ("$" .. n) end)) end
-    for line in text:gmatch("[^\r\n]+") do
-        local src, op, args
-        op, args = line:match("^GFM(%a):(.*)$"); if op then src = "GFM" end
-        if not op then op, args = line:match("^GW(%a):(.*)$");  if op then src = "GW" end end
-        if not op then op, args = line:match("^GW:(%a):(.*)$"); if op then src = "GW" end end
-        if op then
-            if op == "s" then
-                local value, name = strsplit(":", args)
-                if name and name ~= "" then vars[name] = value end
-            elseif op == "c" then
-                local chan, pass = strsplit(":", args)
-                picked[src] = { channel = applyVars(chan or ""), password = pass or "" }
-            end
-            -- "p" (peer-guild) lines belong to GreenWall's chat bridge; GFM gates on the
-            -- channel secret alone, so they are intentionally not parsed.
-        end
-    end
-    local chosen = picked.GFM or picked.GW
-    if not chosen or not chosen.channel or chosen.channel == "" then return nil end
-    return { channel = chosen.channel, password = chosen.password, source = picked.GFM and "GFM" or "GW" }
-end
-
-local function refreshConfig()
-    local cfg = parseGuildConfig()
-    ns.config = cfg
-    local newName = cfg and ("GFM" .. string.format("%x", simpleHash(cfg.channel .. ":" .. (cfg.password or "")))) or nil
-    if newName ~= ns.channelName then
-        if ns.channelName then LeaveChannelByName(ns.channelName) end
-        ns.channelName  = newName
-        ns.channelIndex = nil
-        if newName then
-            ns.Feedback(("Connected to your marketplace channel (using %s config)."):format(
-                cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall"), false)
-            if ns.Log then ns.Log(("CONFIG connected: %s channel (%s)"):format(cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall", newName)) end
-        elseif ns.Log then
-            ns.Log("CONFIG disconnected: no marketplace config in guild info")
-        end
-        if ns.RefreshBuy then ns.RefreshBuy() end
-    end
-end
-ns.RefreshConfig = refreshConfig
-
---========================================================================
--- Outgoing message queue (throttle). Items: {msg, to=whisperTarget or nil=channel}
---========================================================================
-local sendQ = {}
-local sendBacklogWarned = false
-local SEND_QUEUE_MAX = 50   -- under sustained server throttling, drop the oldest (already-stale)
-                            -- reply instead of growing unbounded: a >5s-old search answer is useless
-local function enqueueWhisper(msg, to)
-    if #sendQ >= SEND_QUEUE_MAX then table.remove(sendQ, 1) end
-    sendQ[#sendQ + 1] = { msg = msg, to = to }
-end
-
--- Hold off the first join until the default chat channels (General, Trade, LocalDefense...)
--- have settled, so we don't grab a low slot like /1 or /2 and push everyone's channels up.
--- Channels are numbered by join order, and the defaults trickle in over the first seconds,
--- so we wait until the channel list stops growing, then join. Re-joins after a zone are
--- immediate (the defaults are present by then).
-local channelJoinReady = false
-local joinScheduled = false
-local function ensureChannel()
-    local name = ns.channelName
-    if not name then ns.channelIndex = nil; return nil end
-    local idx = GetChannelName(name)
-    if (not idx or idx == 0) and channelJoinReady then
-        JoinTemporaryChannel(name)
-        idx = GetChannelName(name)
-        ns.Log(("CHANNEL joined %s on slot %s"):format(name, tostring(idx)))
-    end
-    ns.channelIndex = (idx and idx > 0) and idx or nil
-    return ns.channelIndex
-end
-
--- Hold the first join until the channel list settles (unchanged for ~4s), then join, so we
--- land after the default channels instead of grabbing /1. A 20s cap joins anyway. Runs once.
-local function waitThenJoin()
-    if joinScheduled then return end
-    joinScheduled = true
-    local last, stable, waited, ticker = -1, 0, 0
-    ticker = C_Timer.NewTicker(2, function()
-        waited = waited + 2
-        local n = select("#", GetChannelList())
-        if n == last then stable = stable + 1 else stable, last = 0, n end
-        if stable >= 2 or waited >= 20 then
-            ticker:Cancel()
-            channelJoinReady = true
-            ensureChannel()
-        end
-    end)
 end
 
 --========================================================================
@@ -310,7 +201,7 @@ function ns.Search(itemID)
     -- to a channel is only allowed from a hardware event (never a timer), and addon
     -- messages over custom channels are disabled in Classic Era, so this is the only path.
     ns.search.start = GetTime()
-    local idx = ensureChannel()
+    local idx = ns.EnsureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("Q~%s~%d~%s"):format(activeQid, itemID, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SEARCH \"%s\" (id %d) sent"):format(GetItemInfo(itemID) or ("item:" .. itemID), itemID))
@@ -363,7 +254,7 @@ function ns.ScanSellers(filter)
     ns.sellers.capped = false
     ns.sellers.scanning = true
     ns.sellers.scanStart = GetTime()
-    local idx = ensureChannel()
+    local idx = ns.EnsureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("S~%s~%s~%s"):format(activeSid, filter, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SELLERS scan sent%s"):format(filter ~= "" and (" (filter \"" .. filter .. "\")") or ""))
@@ -423,7 +314,7 @@ function ns.OpenSeller(seller, loc)
         for _, it in ipairs(offerList()) do ns.sellers.catalog.items[vkey(it.id, it.suffix)] = it end
         ns.sellers.catalog.loading = false
     else
-        enqueueWhisper(("L~%s"):format(activeLid), seller)
+        ns.EnqueueWhisper(("L~%s"):format(activeLid), seller)
         local thisLid = activeLid
         C_Timer.After(QUERY_SETTLE, function()
             if activeLid == thisLid and ns.sellers.catalog and ns.sellers.catalog.loading then
@@ -459,7 +350,7 @@ function ns.BrowseCategory(classID, subClassID)
     ns.browseClass, ns.browseSub = classID, subClassID
     ns.browsing = true
     ns.browseStart = GetTime()
-    local idx = ensureChannel()
+    local idx = ns.EnsureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("QC~%s~%d~%d~%s"):format(activeQCid, classID, subClassID, ns.version), "CHANNEL", nil, idx)
         ns.Log(("BROWSE category %d/%d sent"):format(classID, subClassID))
@@ -490,10 +381,9 @@ end
 --========================================================================
 -- Incoming messages
 --========================================================================
--- One small handler per wire command; handleMsg just splits and dispatches. Each handler
--- takes the tilde-split fields a..f (meaning differs per command) plus the sender, and
--- bails early with guard clauses. Splitting per command into its own feature file is a
--- later step (issue #1 item 7); this table is the seam for it.
+-- One small handler per wire command, each taking the tilde-split fields a..f (meaning
+-- differs per command) plus the sender, bailing early with guard clauses. They are
+-- registered with the Protocol router below; routing itself lives in Protocol.lua.
 local msgHandlers = {}
 
 -- Q~qid~itemID~ver: someone searched an item. Answer every variant we list for it.
@@ -508,7 +398,7 @@ function msgHandlers.Q(a, b, c, _, _, _, sender)
     local answered = 0
     for _, it in ipairs(offerList()) do
         if it.id == itemID then
-            enqueueWhisper(("R~%s~%d~%d~%d~%s~%d"):format(a, it.id, it.qty, it.price, liveLoc(), it.suffix), sender)
+            ns.EnqueueWhisper(("R~%s~%d~%d~%d~%s~%d"):format(a, it.id, it.qty, it.price, liveLoc(), it.suffix), sender)
             answered = answered + 1
         end
     end
@@ -544,7 +434,7 @@ function msgHandlers.S(a, b, c, _, _, _, sender)
     local sid, n, loc = a, #list, liveLoc()
     local jitter = (filter and filter ~= "") and 0.3 or SCAN_JITTER
     C_Timer.After(math.random() * jitter, function()
-        enqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
+        ns.EnqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
     end)
 end
 
@@ -571,7 +461,7 @@ end
 function msgHandlers.L(a, _, _, _, _, _, sender)
     if isPaused() then return end                                 -- paused: don't answer
     local lid, list, buf = a, offerList(), ""
-    local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
+    local function flush(more) ns.EnqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
     for i = 1, #list do
         local it = list[i]
         local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
@@ -622,7 +512,7 @@ function msgHandlers.QC(a, b, c, d, _, _, sender)
     local qid = a
     C_Timer.After(math.random() * SCAN_JITTER, function()
         local buf = ""
-        local function flush(more) enqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
+        local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
         for i = 1, #matches do
             local it = matches[i]
             local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
@@ -651,11 +541,8 @@ function msgHandlers.QR(a, _, c, _, _, _, sender)
     if ns.RefreshBrowseSoon then ns.RefreshBrowseSoon() end
 end
 
-local function handleMsg(text, sender)
-    local cmd, a, b, c, d, e, f = strsplit("~", text)
-    local h = msgHandlers[cmd]
-    if h then h(a, b, c, d, e, f, sender) end
-end
+-- hand every command handler to the Protocol router (it owns the split + dispatch)
+for cmd, fn in pairs(msgHandlers) do ns.OnMessage(cmd, fn) end
 
 --========================================================================
 -- "Shop is open" announce + clickable shop links.
@@ -817,7 +704,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             end
         end
 
-        C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
+        ns.StartTransport()   -- register the addon prefix and start the whisper send queue
         -- hide our hidden-channel protocol chatter from every chat frame
         ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", function(_, _, msg)
             if msg and msg:sub(1, #CHAT_TAG) == CHAT_TAG then return true end
@@ -833,52 +720,27 @@ frame:SetScript("OnEvent", function(_, event, ...)
         ns.ItemDB.SeedFromAux()
 
         requestGuildData()
-        refreshConfig()
+        ns.RefreshConfig()
         for _, d in ipairs({ 2, 5, 10, 20 }) do
-            C_Timer.After(d, function() requestGuildData(); refreshConfig() end)
+            C_Timer.After(d, function() requestGuildData(); ns.RefreshConfig() end)
         end
 
-        C_Timer.NewTicker(SEND_TICK, function()
-            ensureChannel()   -- keep the marketplace channel joined (to send/receive queries)
-            -- only whispered replies go through the queue; addon whispers are allowed from
-            -- any context, unlike the channel broadcast which must ride a hardware event
-            local item = sendQ[1]
-            if item and item.to then
-                local res = C_ChatInfo.SendAddonMessage(PREFIX, item.msg, "WHISPER", item.to)
-                local throttled = Enum and Enum.SendAddonMessageResult
-                    and res == Enum.SendAddonMessageResult.AddonMessageThrottle
-                if throttled then
-                    ns.Log("THROTTLE: addon whisper to " .. item.to .. " throttled by server; will retry")
-                else
-                    table.remove(sendQ, 1)
-                end
-            end
-            -- surface a growing backlog (latency / throttling symptom), edge-triggered
-            if #sendQ >= 20 and not sendBacklogWarned then
-                sendBacklogWarned = true
-                ns.Log("SEND backlog: " .. #sendQ .. " replies queued (throttle/latency?)")
-            elseif #sendQ == 0 and sendBacklogWarned then
-                sendBacklogWarned = false
-                ns.Log("SEND backlog cleared")
-            end
-        end)
-
     elseif event == "PLAYER_ENTERING_WORLD" then
-        refreshConfig()
-        if channelJoinReady then ensureChannel() else waitThenJoin() end
+        ns.RefreshConfig()
+        ns.RejoinChannel()
 
     elseif event == "GUILD_ROSTER_UPDATE" or event == "PLAYER_GUILD_UPDATE" then
-        refreshConfig()
+        ns.RefreshConfig()
 
     elseif event == "CHAT_MSG_ADDON" then
         local prefix, text, _, sender = ...
-        if prefix == PREFIX then handleMsg(text, sender) end
+        if prefix == ns.PREFIX then ns.DispatchMessage(text, sender) end
 
     elseif event == "CHAT_MSG_CHANNEL" then
         local text, sender = ...
         if text and text:sub(1, #CHAT_TAG) == CHAT_TAG then
-            if ns.dev then devEcho("|cff00ff96GFM|r ← channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
-            handleMsg(text:sub(#CHAT_TAG + 1), sender)
+            if ns.dev then devEcho("|cff00ff96GFM|r received channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
+            ns.DispatchMessage(text:sub(#CHAT_TAG + 1), sender)
         end
 
     elseif event == "CHAT_MSG_SYSTEM" then
@@ -920,7 +782,7 @@ SlashCmdList.GFMARKET = function(msg)
         devEcho("  Alt + left-click an item now; watch for an \"ALT-SEARCH: item click id\" line below.")
         if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
     elseif msg == "debug" then
-        refreshConfig()
+        ns.RefreshConfig()
         local t = GetGuildInfoText() or ""
         local cur, max = ns.ItemDB.HarvestProgress()
         devEcho("|cff00ff96GFM debug|r")
