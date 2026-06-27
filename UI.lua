@@ -719,7 +719,7 @@ end
 --========================================================================
 -- build the window
 --========================================================================
-local function CreateUI()
+local function buildWindow()
     main = CreateFrame("Frame", "GuildFoundMarketFrame", UIParent, "BackdropTemplate")
     main:SetSize(760, 470)
     main:SetPoint("CENTER")
@@ -750,7 +750,9 @@ local function CreateUI()
     end)
     debugBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.debugBtn = debugBtn
+end
 
+local function buildTabs()
     -- tabs. Right-aligned tabs stack leftward in array order, so Help stays rightmost and
     -- the gear sits just left of it. A tab with an `icon` renders that texture instead of a label.
     local TABS = {
@@ -778,7 +780,9 @@ local function CreateUI()
         b:SetScript("OnClick", function(self) ns.SelectTab(self.tab) end)
         tabButtons[i] = b
     end
+end
 
+local function buildSearchBox()
     -- search box (Buy)
     local searchLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     searchLabel:SetPoint("TOPLEFT", 16, -68); searchLabel:SetText("Search item:")
@@ -786,12 +790,14 @@ local function CreateUI()
     local searchBox = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
     searchBox:SetPoint("TOPLEFT", 100, -64); searchBox:SetSize(460, 22); searchBox:SetAutoFocus(false)
     main.searchBox = searchBox
+end
 
+local function buildAutocomplete()
     -- autocomplete dropdown
     local ac = CreateFrame("Frame", nil, main, "BackdropTemplate")
     ac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
     ac:SetBackdropColor(0, 0, 0, 0.92); ac:SetBackdropBorderColor(0.4, 0.4, 0.4)
-    ac:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(464); ac:SetFrameStrata("DIALOG"); ac:Hide()
+    ac:SetPoint("TOPLEFT", main.searchBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(464); ac:SetFrameStrata("DIALOG"); ac:Hide()
     ac.rows = {}
     for i = 1, 12 do
         local row = CreateFrame("Button", nil, ac)
@@ -811,7 +817,7 @@ local function CreateUI()
     end
 
     local function updateAutocomplete()
-        local matches = ns.ItemDB.Match(searchBox:GetText())
+        local matches = ns.ItemDB.Match(main.searchBox:GetText())
         ac.matches = matches; ac.sel = 0
         if #matches == 0 then ac:Hide(); return end
         for i, row in ipairs(ac.rows) do
@@ -848,7 +854,7 @@ local function CreateUI()
             if id then ns.ItemDB.Learn(id); selectSearchItem(id) end
         end)
     end
-    searchBox:SetScript("OnTextChanged", function(self, user)
+    main.searchBox:SetScript("OnTextChanged", function(self, user)
         if not user then return end
         local linkID = self:GetText():match("|Hitem:(%d+)")   -- shift-clicked item link
         if linkID then
@@ -857,8 +863,8 @@ local function CreateUI()
         end
         selectedSearchID = nil; updateAutocomplete()
     end)
-    searchBox:SetScript("OnEscapePressed", function(self) ac:Hide(); self:ClearFocus() end)
-    searchBox:SetScript("OnArrowPressed", function(self, key)
+    main.searchBox:SetScript("OnEscapePressed", function(self) ac:Hide(); self:ClearFocus() end)
+    main.searchBox:SetScript("OnArrowPressed", function(self, key)
         if not ac:IsShown() or not ac.matches then return end
         local n = #ac.matches
         if n == 0 then return end
@@ -868,7 +874,7 @@ local function CreateUI()
             ac.sel = (ac.sel <= 1) and n or ac.sel - 1; highlightAC()
         end
     end)
-    searchBox:SetScript("OnEnterPressed", function(self)
+    main.searchBox:SetScript("OnEnterPressed", function(self)
         if ac:IsShown() and ac.sel and ac.sel > 0 and ac.matches and ac.matches[ac.sel] then
             local m = ac.matches[ac.sel]; selectItem(m.id, m.name); return
         end
@@ -877,11 +883,13 @@ local function CreateUI()
         elseif matches[1] then selectItem(matches[1].id, matches[1].name) end
     end)
     -- shift-click an item link/bag item into the search box
-    searchBox:SetScript("OnReceiveDrag", function(self)
+    main.searchBox:SetScript("OnReceiveDrag", function(self)
         local t, id = GetCursorInfo()
         if t == "item" and id then ClearCursor(); ns.ItemDB.Learn(id); selectItem(id, itemName(id)) end
     end)
+end
 
+local function buildHeaders()
     -- column headers
     local function header(x) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); return fs end
     main.h1 = header(28); main.h2 = header(322); main.h3 = header(384); main.h4 = header(524)
@@ -902,7 +910,9 @@ local function CreateUI()
     end
     main.sortName  = sortHeaderBtn(main.h1, "name", 150)
     main.sortCount = sortHeaderBtn(main.h2, "count", 48)
+end
 
+local function buildRows()
     -- scroll + rows
     local scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScroll", main, "FauxScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -112); scroll:SetSize(720, ROWS * ROW_H)
@@ -946,7 +956,9 @@ local function CreateUI()
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
         r:Hide(); rows[i] = r
     end
+end
 
+local function buildStatusVersion()
     -- status line
     local status = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     status:SetPoint("BOTTOMLEFT", 18, 96); status:SetPoint("BOTTOMRIGHT", -18, 96); status:SetJustifyH("CENTER"); status:SetText("")
@@ -958,7 +970,9 @@ local function CreateUI()
     versionFS:SetPoint("TOPRIGHT", -44, -16); versionFS:SetJustifyH("RIGHT")
     main.versionFS = versionFS
     ns.UpdateVersionDisplay()
+end
 
+local function buildBrowse()
     --==================== Browse (category) sub-view (#3) ====================
     -- toggle between item Search and category Browse on the Buy tab
     local modeToggle = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
@@ -1082,7 +1096,9 @@ local function CreateUI()
         local shl = r.seller:CreateTexture(nil, "HIGHLIGHT"); shl:SetAllPoints(); shl:SetColorTexture(1, 1, 1, 0.12)
         r:Hide(); browseRows[i] = r
     end
+end
 
+local function buildPostPanel()
     --==================== My Items post panel ====================
     local panel = CreateFrame("Frame", nil, main)
     panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74)
@@ -1169,7 +1185,9 @@ local function CreateUI()
         offerBtn:SetText("Update")
         qtyBox:SetFocus(); qtyBox:HighlightText()
     end
+end
 
+local function buildDbPanel()
     --==================== item database / harvest panel (Buy tab) ====================
     local dbPanel = CreateFrame("Frame", nil, main)
     dbPanel:SetPoint("BOTTOMLEFT", 16, 14); dbPanel:SetPoint("BOTTOMRIGHT", -16, 14); dbPanel:SetHeight(26)
@@ -1195,7 +1213,9 @@ local function CreateUI()
     C_Timer.NewTicker(1, function()
         if main:IsShown() and currentTab == "BUY" then ns.UpdateDBPanel() end
     end)
+end
 
+local function buildSellerWidgets()
     --==================== Sellers tab widgets (index + show) ====================
     local sellerFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     sellerFilterLabel:SetPoint("TOPLEFT", 16, -68); sellerFilterLabel:SetText("Find seller:"); sellerFilterLabel:Hide()
@@ -1229,7 +1249,9 @@ local function CreateUI()
     local sellerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sellerHeader:SetPoint("LEFT", sellerBackBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
     main.sellerHeader = sellerHeader
+end
 
+local function buildPauseAnnounce()
     --==================== My Items: online/offline toggle ====================
     local pauseLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     pauseLabel:SetPoint("TOPLEFT", 16, -70); pauseLabel:SetText("Listings:"); pauseLabel:Hide()
@@ -1274,7 +1296,9 @@ local function CreateUI()
     end)
     announceBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.announceBtn = announceBtn
+end
 
+local function buildHelpPanel()
     --==================== Help tab (scrollable) ====================
     local helpScroll = CreateFrame("ScrollFrame", "GuildFoundMarketHelpScroll", main, "UIPanelScrollFrameTemplate")
     helpScroll:SetPoint("TOPLEFT", 24, -92); helpScroll:SetPoint("BOTTOMRIGHT", -30, 16); helpScroll:Hide()
@@ -1330,7 +1354,9 @@ local function CreateUI()
     main.helpPanel = helpScroll
     main.helpContent = helpContent
     main.helpText = helpText
+end
 
+local function buildOptionsPanel()
     --==================== Options panel ====================
     -- Built entirely from ns.SettingsSchema: one checkbox per entry, no per-feature code.
     -- A checkbox only ever calls ns.SetSetting; the matching reactor does the actual work.
@@ -1377,7 +1403,23 @@ local function CreateUI()
     ns.On("setting", function()
         if main and main.optionsPanel and main.optionsPanel:IsShown() then ns.RefreshOptions() end
     end)
+end
 
+local function CreateUI()
+    buildWindow()
+    buildTabs()
+    buildSearchBox()
+    buildAutocomplete()
+    buildHeaders()
+    buildRows()
+    buildStatusVersion()
+    buildBrowse()
+    buildPostPanel()
+    buildDbPanel()
+    buildSellerWidgets()
+    buildPauseAnnounce()
+    buildHelpPanel()
+    buildOptionsPanel()
     ns.SelectTab("BUY")
     main:Hide()
 end
