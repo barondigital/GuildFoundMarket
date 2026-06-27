@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a problem with Guild Found Market
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much as you can so it can be reproduced.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected to happen instead.
+      placeholder: When I... I expected... but instead...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can this be reproduced?
+      placeholder: |
+        1. Open the addon with...
+        2. Click on...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: addon-version
+    attributes:
+      label: Addon version
+      description: Shown in the addon list, or the "## Version" line in the .toc.
+      placeholder: e.g. 0.8.2
+    validations:
+      required: true
+  - type: dropdown
+    id: game-version
+    attributes:
+      label: Game version
+      options:
+        - Classic Era
+        - Season of Discovery (SoD)
+        - Hardcore
+        - Other (mention in description)
+    validations:
+      required: true
+  - type: textarea
+    id: lua-error
+    attributes:
+      label: Lua error (if any)
+      description: Paste the full error text. Enable Lua errors with /console scriptErrors 1 or use BugSack/BugGrabbe.
+      render: text
+  - type: textarea
+    id: other-addons
+    attributes:
+      label: Other addons
+      description: Does it still happen with only Guild Found Market enabled? List other addons if relevant.
