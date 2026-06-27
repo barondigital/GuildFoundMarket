@@ -49,6 +49,7 @@ end
 -- refreshes the Buy view when the channel changes. Called from the bootstrap and guild events.
 function ns.RefreshConfig()
     local cfg = parseGuildConfig()
+    if cfg and ns._testTradeChannel and not cfg.tradeChannel then cfg.tradeChannel = ns._testTradeChannel end   -- /gfm tradechannel test override
     ns.config = cfg
     local newName = cfg and ("GFM" .. string.format("%x", simpleHash(cfg.channel .. ":" .. (cfg.password or "")))) or nil
     if newName ~= ns.channelName then

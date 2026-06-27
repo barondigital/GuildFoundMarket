@@ -1347,9 +1347,8 @@ local function buildPauseAnnounce()
     local announceDest = GuildFoundMarketCharDB.announceDest or "guild"
     -- the fixed destinations; the configured trade channel is appended dynamically
     local DESTS = {
-        { key = "guild",   label = "Guild",   avail = function() return IsInGuild() end,                    why = "Join a guild to use guild chat." },
-        { key = "party",   label = "Party",   avail = function() return IsInGroup() and not IsInRaid() end, why = "Join a party (not a raid) for party chat." },
-        { key = "raid",    label = "Raid",    avail = function() return IsInRaid() end,                      why = "Join a raid for raid chat." },
+        { key = "guild",   label = "Guild",   avail = function() return IsInGuild() end, why = "Join a guild to use guild chat." },
+        { key = "party",   label = "Party",   avail = function() return IsInGroup() end, why = "Join a party for party chat." },
         { key = "whisper", label = "Whisper", avail = function() return true end },
     }
     local function tradeChan() return ns.config and ns.config.tradeChannel end
@@ -1394,12 +1393,15 @@ local function buildPauseAnnounce()
     local function entries()
         local list = {}
         for _, d in ipairs(DESTS) do list[#list + 1] = d end
+        -- the trade channel is always listed, greyed when the guild has not configured one
         local tc = tradeChan()
-        if tc then
-            list[#list + 1] = { key = "channel", label = tc.name,
-                avail = function() return (GetChannelName(tc.name) or 0) > 0 end,
-                join  = function() JoinPermanentChannel(tc.name, tc.password) end }
-        end
+        list[#list + 1] = {
+            key = "channel", configured = tc ~= nil,
+            label = tc and tc.name or "Trade channel",
+            avail = function() return tc ~= nil and (GetChannelName(tc.name) or 0) > 0 end,
+            join  = function() if tc then JoinPermanentChannel(tc.name, tc.password) end end,
+            why   = "No trade channel set in your guild info (a GFMtc line).",
+        }
         return list
     end
     local function refreshPopup()
@@ -1407,11 +1409,22 @@ local function buildPauseAnnounce()
         for i, d in ipairs(list) do
             local r = popupRow(i)
             local ok = d.avail()
-            local joinable = (d.key == "channel" and not ok)
+            local joinable = (d.key == "channel" and d.configured and not ok)
             r.fs:SetText(joinable and ("Join " .. d.label) or d.label)
             r.fs:SetTextColor(ok and 1 or (joinable and 1 or 0.5), ok and 1 or (joinable and 0.82 or 0.5), ok and 1 or (joinable and 0 or 0.5))
             r:SetScript("OnClick", function()
-                if joinable then d.join(); popup:Hide(); ns.Feedback("Joining " .. d.label .. " ...", false)
+                if joinable then
+                    popup:Hide(); ns.Feedback("Joining " .. d.label .. " ...", false); d.join()
+                    -- the join is async; poll briefly, then auto-select the channel and confirm
+                    local name, tries, ticker = d.label, 0
+                    ticker = C_Timer.NewTicker(0.3, function()
+                        tries = tries + 1
+                        if (GetChannelName(name) or 0) > 0 then
+                            ticker:Cancel(); applyDest("channel"); ns.Feedback("Joined " .. name .. ".", false)
+                        elseif tries >= 10 then
+                            ticker:Cancel(); ns.Feedback("Could not join " .. name .. " (wrong password?).", true)
+                        end
+                    end)
                 elseif ok then applyDest(d.key); popup:Hide() end
             end)
             r:SetScript("OnEnter", function(self)

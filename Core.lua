@@ -175,6 +175,21 @@ end)
 SLASH_GFMARKET1 = "/gfm"
 SLASH_GFMARKET2 = "/market"
 SlashCmdList.GFMARKET = function(msg)
+    -- test helper: force a local trade channel without editing guild info
+    -- usage: /gfm tradechannel <name> [password]   (no args clears it)
+    local tcArgs = (msg or ""):match("^%s*[Tt][Rr][Aa][Dd][Ee][Cc][Hh][Aa][Nn][Nn][Ee][Ll]%s*(.-)%s*$")
+    if tcArgs ~= nil then
+        if tcArgs == "" then
+            ns._testTradeChannel = nil
+            ns.Feedback("Test trade channel cleared.", false)
+        else
+            local name, pass = tcArgs:match("^(%S+)%s*(%S*)$")
+            ns._testTradeChannel = { name = name, password = (pass ~= "" and pass) or nil }
+            ns.Feedback(("Test trade channel set to %s%s. Open My Items to test."):format(name, pass ~= "" and " (pw: " .. pass .. ")" or ""), false)
+        end
+        if ns.RefreshConfig then ns.RefreshConfig() end   -- re-applies the override onto ns.config
+        return
+    end
     msg = (msg or ""):lower():gsub("%s+", "")
     if msg == "dev" then
         ns.dev = not ns.dev
