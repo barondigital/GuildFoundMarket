@@ -60,6 +60,30 @@ ns.SettingsSchema = {
             { value = "currency", label = "3.50 (decimal gold)" },
         },
     },
+    {
+        key = "hideShopGuild",
+        label = "Hide shop links in guild chat",
+        tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",
+        default = false,
+    },
+    {
+        key = "hideShopParty",
+        label = "Hide shop links in party chat",
+        tip = "Suppress incoming shop-link lines in party chat. Local to you only.",
+        default = false,
+    },
+    {
+        key = "hideShopWhisper",
+        label = "Hide shop links in whispers",
+        tip = "Suppress incoming shop-link lines in whispers. Local to you only.",
+        default = false,
+    },
+    {
+        key = "hideShopChannels",
+        label = "Hide shop links in channels",
+        tip = "Suppress incoming shop-link lines in chat channels (e.g. the trade channel). Local to you only.",
+        default = false,
+    },
 }
 
 local byKey = {}

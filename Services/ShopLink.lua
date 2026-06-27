@@ -35,15 +35,27 @@ end
 -- seller name rides in the visible text and we recover it in the SetItemRef hook below.
 -- The capture excludes braces and pipes, so a crafted message can't inject escape codes.
 local SHOP_LINK_ITEM = "item:6948"   -- Hearthstone: universally valid, shown briefly then hidden
-local function shareFilter(_, _, msg, ...)
-    if msg and msg:find("{{GFM:", 1, true) then
-        local changed = false
-        local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
-            changed = true
-            return ("|cff00ff96|H%s|h[GFM: browse %s's shop]|h|r"):format(SHOP_LINK_ITEM, name)
-        end)
-        if changed then return false, out, ... end
-    end
+
+-- Per-surface spam filter: each chat event maps to a "hide" setting. When that setting is on
+-- the whole shop-link line is suppressed for this player only (local, changes nothing for
+-- anyone else). Surfaces not listed here (e.g. raid) are never hidden, by design.
+local HIDE_KEY_BY_EVENT = {
+    CHAT_MSG_GUILD = "hideShopGuild", CHAT_MSG_OFFICER = "hideShopGuild",
+    CHAT_MSG_PARTY = "hideShopParty", CHAT_MSG_PARTY_LEADER = "hideShopParty",
+    CHAT_MSG_WHISPER = "hideShopWhisper", CHAT_MSG_WHISPER_INFORM = "hideShopWhisper",
+    CHAT_MSG_CHANNEL = "hideShopChannels",
+}
+
+local function shareFilter(_, event, msg, ...)
+    if not (msg and msg:find("{{GFM:", 1, true)) then return end
+    local hideKey = HIDE_KEY_BY_EVENT[event]
+    if hideKey and ns.GetSetting(hideKey) then return true end   -- spam-filtered: drop the line
+    local changed = false
+    local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
+        changed = true
+        return ("|cff00ff96|H%s|h[GFM: browse %s's shop]|h|r"):format(SHOP_LINK_ITEM, name)
+    end)
+    if changed then return false, out, ... end
 end
 
 -- The Announce button only posts to guild, but rewrite the marker wherever it can
@@ -54,6 +66,7 @@ local SHARE_EVENTS = {
     "CHAT_MSG_WHISPER", "CHAT_MSG_WHISPER_INFORM",
     "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER",
     "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
+    "CHAT_MSG_CHANNEL",
 }
 
 -- Open a clicked shop link. Taint-safe: a post-hook on SetItemRef, never writing the global
