@@ -1483,8 +1483,57 @@ local function buildPauseAnnounce()
     applyDest(announceDest)
 end
 
+local HELP_USAGE = table.concat({
+    "|cffff4040» FIRST TIME: open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
+    "|cffffffffRequired before you can search:|r until the database is built, autocomplete can't find items you don't already own. It's a safe one-time background scan that resumes if you stop.",
+    "|cffffffffFaster with the |r|cffffd100aux|r|cffffffff addon:|r if you have aux installed, GFM seeds the classic item names from it instantly on login, so the scan only has to fetch the newer Season of Discovery items.",
+    " ",
+    "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation: only sellers who are |cffffffffonline right now|r answer.",
+    " ",
+    "|cffffd100Buy|r: find an item",
+    "Type a name (or shift-click an item link) and pick it. Online sellers are listed cheapest first.",
+    "• |cffffffffLeft-click|r a seller: open their full list of items.",
+    "• |cffffffffRight-click|r a seller: whisper them about this item.",
+    " ",
+    "|cffffd100Sellers|r: browse who's online",
+    "Click a seller to see everything they sell. On one of their items:",
+    "• |cffffffffCtrl-click|r: search that item to find who else is selling it.",
+    "• |cffffffffRight-click|r: whisper the seller, pre-filled with the item and price.",
+    " ",
+    "|cffffd100My Items|r: what you sell",
+    "Add your items; your client answers searches automatically, no pop-ups.",
+    "• |cffffffffOnline / Offline|r: pause answering while you raid or PvP. Your items are kept.",
+    "• |cffffffffAnnounce|r: drop a \"shop is open\" line into the chat you pick (guild, party, raid, whisper, or your guild's trade channel). You send it yourself; GFM users who click it browse your shop live.",
+    " ",
+    "|cffffd100Spam filter|r",
+    "In Options you can hide incoming shop links per surface (guild, party, whispers, channels). It only changes what you see, nothing for anyone else.",
+    " ",
+    "|cffffd100Opening & minimap|r",
+    "Open with |cffffffff/gfm|r or |cffffffff/market|r, or the minimap button. Toggle the minimap icon with |cffffffff/gfm minimap|r.",
+    " ",
+    "|cffffd100Options|r",
+    "The |cffffffffgear|r at the top right opens Options, where you can turn features on or off. Settings are saved per account.",
+}, "\n")
+
+local HELP_SETUP = table.concat({
+    "|cffffd100Marketplace channel (required)|r",
+    "The whole marketplace is one shared channel. Put this single line in a guild's Information text (Guild window > Information tab):",
+    "    |cff66ff66GFMc:MyMarket:somesharedsecret|r",
+    "Anyone whose guild information contains the identical line joins the same marketplace. If you run GreenWall, its GWc channel is reused automatically; when both are present, |cffffffffGFMc takes precedence|r. On login GFM prints which config it used.",
+    " ",
+    "|cffffd100Trade channel for announces (optional)|r",
+    "To give the Announce button a shared trade channel, add a line naming it (password optional):",
+    "    |cff66ff66GFMtc:FreshTrade|r   or   |cff66ff66GFMtc:FreshTrade:password|r",
+    "Members then get that channel as an Announce destination and can one-click join it from the dropdown (using the password, if set).",
+    " ",
+    "|cffffd100Sister guilds: trading outside GreenWall|r",
+    "To include guilds that are NOT in your GreenWall confederation, give them the |cffffffffsame GFMc line|r; that is all. (Peer-guild GFMp/GWp lines are not used.)",
+    "• |cffff5555Do not share your GWc line|r with them: that is your GreenWall chat-bridge secret, and a sister guild running GreenWall would land in your private guild chat. Keep GWc for the confederation and use a separate GFMc for the market.",
+    "• |cffffd100Consequence:|r the GFMc secret is the only gate. Everyone you hand it to can see and answer every search and browse all listed sellers. Share it only with guilds you trust to trade.",
+}, "\n")
+
 local function buildHelpPanel()
-    --==================== Help tab (scrollable) ====================
+    --==================== Help tab: Usage / Guild Setup sub-sections ====================
     local helpScroll = CreateFrame("ScrollFrame", "GuildFoundMarketHelpScroll", main, "UIPanelScrollFrameTemplate")
     helpScroll:SetPoint("TOPLEFT", 24, -92); helpScroll:SetPoint("BOTTOMRIGHT", -30, 16); helpScroll:Hide()
     helpScroll:EnableMouseWheel(true)
@@ -1497,48 +1546,33 @@ local function buildHelpPanel()
     local helpText = helpContent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     helpText:SetPoint("TOPLEFT"); helpText:SetWidth(700)
     helpText:SetJustifyH("LEFT"); helpText:SetJustifyV("TOP"); helpText:SetSpacing(2)
-    helpText:SetText(table.concat({
-        "|cffff4040» FIRST TIME: open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
-        "|cffffffffRequired before you can search:|r until the database is built, autocomplete can't find items you don't already own. It's a safe one-time background scan that resumes if you stop.",
-        "|cffffffffFaster with the |r|cffffd100aux|r|cffffffff addon:|r if you have aux installed, GFM seeds the classic item names from it instantly on login, so the scan only has to fetch the newer Season of Discovery items.",
-        " ",
-        "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation: only sellers who are |cffffffffonline right now|r answer.",
-        " ",
-        "|cffffd100Buy|r: find an item",
-        "Type a name (or shift-click an item link) and pick it. Online sellers are listed cheapest first.",
-        "• |cffffffffLeft-click|r a seller: open their full list of items.",
-        "• |cffffffffRight-click|r a seller: whisper them about this item.",
-        " ",
-        "|cffffd100Sellers|r: browse who's online",
-        "Click a seller to see everything they sell. On one of their items:",
-        "• |cffffffffCtrl-click|r: search that item to find who else is selling it.",
-        "• |cffffffffRight-click|r: whisper the seller, pre-filled with the item and price.",
-        " ",
-        "|cffffd100My Items|r: what you sell",
-        "Add your items; your client answers searches automatically, no pop-ups.",
-        "• |cffffffffOnline / Offline|r: pause answering while you raid or PvP. Your items are kept.",
-        "• |cffffffffAnnounce|r: drop a \"shop is open\" line, with a clickable shop link, into guild chat. You send it yourself, and guildies who click it browse your shop live.",
-        " ",
-        "|cffffd100Configuration (guild officers)|r",
-        "The whole marketplace is one shared channel. Put this single line in a guild's Information text (Guild window > Information tab):",
-        "    |cff66ff66GFMc:MyMarket:somesharedsecret|r",
-        "Anyone whose guild information contains the identical line joins the same marketplace. If you run GreenWall, its GWc channel is reused automatically; when both are present, |cffffffffGFMc takes precedence|r. On login GFM prints which config it used.",
-        " ",
-        "|cffffd100Sister guilds: trading outside GreenWall|r",
-        "To include guilds that are NOT in your GreenWall confederation, give them the |cffffffffsame GFMc line|r; that is all. (Peer-guild GFMp/GWp lines are not used.)",
-        "• |cffff5555Do not share your GWc line|r with them: that is your GreenWall chat-bridge secret, and a sister guild running GreenWall would land in your private guild chat. Keep GWc for the confederation and use a separate GFMc for the market.",
-        "• |cffffd100Consequence:|r the GFMc secret is the only gate. Everyone you hand it to can see and answer every search and browse all listed sellers. Share it only with guilds you trust to trade.",
-        " ",
-        "|cffffd100Opening & minimap|r",
-        "Open with |cffffffff/gfm|r or |cffffffff/market|r, or the minimap button. Toggle the minimap icon with |cffffffff/gfm minimap|r.",
-        " ",
-        "|cffffd100Options|r",
-        "The |cffffffffgear|r at the top right opens Options, where you can turn features on or off. Settings are saved per account.",
-    }, "\n"))
-    helpContent:SetHeight(helpText:GetStringHeight() + 8)
     main.helpPanel = helpScroll
     main.helpContent = helpContent
     main.helpText = helpText
+
+    -- two toggle buttons that swap the content (no nested-tab framework)
+    local function sectionBtn(x, text)
+        local b = CreateFrame("Button", nil, main); b:SetSize(96, 20); b:SetPoint("TOPLEFT", x, -66); b:Hide()
+        local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
+        local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
+        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
+        return b
+    end
+    local usageBtn = sectionBtn(24, "Usage")
+    local setupBtn = sectionBtn(124, "Guild Setup")
+    main.helpUsageBtn, main.helpSetupBtn = usageBtn, setupBtn
+
+    local function setHelp(which)
+        helpText:SetText(which == "setup" and HELP_SETUP or HELP_USAGE)
+        helpContent:SetHeight(helpText:GetStringHeight() + 8)
+        helpScroll:SetVerticalScroll(0)
+        usageBtn.sel:SetShown(which ~= "setup")
+        setupBtn.sel:SetShown(which == "setup")
+    end
+    usageBtn:SetScript("OnClick", function() setHelp("usage") end)
+    setupBtn:SetScript("OnClick", function() setHelp("setup") end)
+    main.helpShowUsage = function() setHelp("usage") end
+    setHelp("usage")
 end
 
 local function buildOptionsPanel()
@@ -1721,6 +1755,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if main.announceWAC then main.announceWAC:Hide() end
     main.helpPanel:SetShown(help)
     main.debugBtn:SetShown(help)
+    main.helpUsageBtn:SetShown(help); main.helpSetupBtn:SetShown(help)
     main.optionsPanel:SetShown(options)
     main.scroll:SetShown(not help and not options)
     if options then ns.RefreshOptions() end
@@ -1757,10 +1792,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     elseif help or options then
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
         wipe(view); renderRows()
-        if help then
-            main.helpContent:SetHeight(main.helpText:GetStringHeight() + 8)  -- size to text now it's laid out
-            main.helpPanel:SetVerticalScroll(0)                             -- start at the top
-        end
+        if help then main.helpShowUsage() end   -- default to Usage; sizes the text + scrolls to top
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
         ns.RefreshMine()
