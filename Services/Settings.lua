@@ -13,6 +13,8 @@ local ADDON, ns = ...
 -- tip    = wrapped description shown on mouseover (may contain colour codes).
 -- status = optional fn returning (text, r, g, b): a live status line appended to the
 --          tooltip, e.g. whether an optional dependency is actually installed.
+-- type   = "choice" for a multi-option setting (needs `options` = { {value, label}, ... });
+--          omitted means a boolean toggle.
 ns.SettingsSchema = {
     {
         key = "minimapButton",
@@ -44,6 +46,20 @@ ns.SettingsSchema = {
         end,
         default = true,
     },
+    {
+        key = "priceFormat",
+        type = "choice",
+        label = "Price input format",
+        tip = "How you type a price on the My Items tab.\n\n"
+            .. "|cffffffff3g50s|r: gold/silver/copper coins.\n"
+            .. "|cffffffff3.50|r: decimal gold, where the two decimals are silver (3.05 = 3g5s).\n\n"
+            .. "Search results always show the standard coin icons, whichever you pick.",
+        default = "gsc",
+        options = {
+            { value = "gsc",      label = "3g50s (coins)" },
+            { value = "currency", label = "3.50 (decimal gold)" },
+        },
+    },
 }
 
 local byKey = {}
@@ -68,7 +84,8 @@ end
 -- Persist a value and announce it. Always emits (even on an unchanged write) so a forced
 -- re-apply is possible; reactors must therefore be idempotent.
 function ns.SetSetting(key, value)
-    value = value and true or false
+    local s = byKey[key]
+    if not (s and s.type == "choice") then value = value and true or false end   -- booleans stay boolean
     store()[key] = value
     ns.Emit("setting:" .. key, value)
     ns.Emit("setting", key, value)

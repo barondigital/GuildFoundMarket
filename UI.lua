@@ -26,20 +26,30 @@ local setBuyMode                                  -- forward declaration (define
 --========================================================================
 -- helpers
 --========================================================================
+-- Parse a typed price to copper. Accepts BOTH notations regardless of the chosen format, so
+-- switching format never breaks existing input:
+--   coins:   "3g50s5c" (silver/copper clamped to 0-99)
+--   decimal: "3" = 3g, "3.5" = 3g50s, "3.05" = 3g5s (two decimals = silver, no copper)
 local function parsePrice(str)
     str = (str or ""):lower():gsub("%s+", "")
     if str == "" then return 0 end
-    if str:match("^%d+$") then return tonumber(str) * 10000 end
+    if str:match("^%d*%.?%d*$") and str:match("%d") then          -- a plain or decimal number = gold
+        return math.floor((tonumber(str) or 0) * 100 + 0.5) * 100 -- round to silver, drop copper
+    end
     local g = tonumber(str:match("(%d+)g")) or 0
-    local s = tonumber(str:match("(%d+)s")) or 0
-    local c = tonumber(str:match("(%d+)c")) or 0
+    local s = math.min(99, tonumber(str:match("(%d+)s")) or 0)
+    local c = math.min(99, tonumber(str:match("(%d+)c")) or 0)
     return g * 10000 + s * 100 + c
 end
 
--- Inverse of parsePrice: copper -> editable "1g20s34c" text for the price box. 0 = "" (bids).
+-- Inverse of parsePrice for the edit prefill, in the player's chosen format. 0 = "" (bids).
+-- "currency" shows decimal gold with two decimals (3g50s -> "3.50"); copper is dropped there.
 local function priceToStr(c)
     c = c or 0
     if c <= 0 then return "" end
+    if ns.GetSetting("priceFormat") == "currency" then
+        return string.format("%.2f", math.floor(c / 100) / 100)   -- copper-free, two decimals
+    end
     local g, s, cc = math.floor(c / 10000), math.floor((c % 10000) / 100), c % 100
     return (g > 0 and (g .. "g") or "") .. (s > 0 and (s .. "s") or "") .. (cc > 0 and (cc .. "c") or "")
 end
@@ -1143,10 +1153,42 @@ local function buildPostPanel()
     local qtyBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     qtyBox:SetPoint("BOTTOMLEFT", 56, 10); qtyBox:SetSize(44, 20); qtyBox:SetAutoFocus(false); qtyBox:SetNumeric(true); qtyBox:SetText("1")
     main.qtyBox = qtyBox
-    label("Price/unit: e.g. 1g20s34c (leave empty to take bids)", 124, 30)
+    local priceLabel = label("", 124, 30)
     local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     priceBox:SetPoint("BOTTOMLEFT", 128, 10); priceBox:SetSize(150, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
     main.priceBox = priceBox
+
+    -- the price field follows the chosen format: label text, a live input restriction for the
+    -- decimal format, and reformatting the current value when the setting changes.
+    local function applyPriceFormat()
+        if ns.GetSetting("priceFormat") == "currency" then
+            priceLabel:SetText("Price/unit: e.g. 3.50 = 3g50s (leave empty to take bids)")
+        else
+            priceLabel:SetText("Price/unit: e.g. 1g20s34c (leave empty to take bids)")
+        end
+        local cur = parsePrice(priceBox:GetText())
+        if cur > 0 then priceBox:SetText(priceToStr(cur)) end
+    end
+    applyPriceFormat()
+    ns.On("setting:priceFormat", applyPriceFormat)
+
+    -- decimal format: restrict typing to digits + one dot + two decimals, and pad to two
+    -- decimals (with a leading zero) when the field loses focus. The coin format is free text
+    -- (silver/copper are clamped to 0-99 in parsePrice).
+    priceBox:SetScript("OnTextChanged", function(self, user)
+        if not user or ns.GetSetting("priceFormat") ~= "currency" then return end
+        local t = self:GetText()
+        local dot = t:find("%.")
+        local intp = (dot and t:sub(1, dot - 1) or t):gsub("%D", "")
+        local frac = dot and t:sub(dot + 1):gsub("%D", ""):sub(1, 2)
+        local clean = intp .. (dot and ("." .. frac) or "")
+        if clean ~= t then self:SetText(clean) end
+    end)
+    priceBox:SetScript("OnEditFocusLost", function(self)
+        if ns.GetSetting("priceFormat") ~= "currency" then return end
+        local n = tonumber(self:GetText())
+        if n and n > 0 then self:SetText(string.format("%.2f", n)) end
+    end)
     local offerBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
     main.offerBtn = offerBtn
@@ -1160,7 +1202,8 @@ local function buildPostPanel()
         offerBtn:SetText("Offer")
     end
 
-    offerBtn:SetScript("OnClick", function()
+    -- Place a new offer or apply an edit. Shared by the button and by Enter in either box.
+    local function submitOffer()
         local qty, price = tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())
         if editingKey then
             -- editing only changes qty/price; the item/variant stays the listing's own
@@ -1168,7 +1211,11 @@ local function buildPostPanel()
         elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price) then
             clearDraft()
         end
-    end)
+    end
+    offerBtn:SetScript("OnClick", submitOffer)
+    -- Enter in the qty or price box commits the same as clicking Offer / Update.
+    qtyBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitOffer() end)
+    priceBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitOffer() end)
 
     -- Load an existing listing into the compose panel for editing (Edit button on a row).
     -- Editing avoids the remove + re-list trip to the bank, so we don't require the item
@@ -1183,7 +1230,7 @@ local function buildPostPanel()
         qtyBox:SetText(tostring(o.qty or 1))
         priceBox:SetText(priceToStr(o.price))
         offerBtn:SetText("Update")
-        qtyBox:SetFocus(); qtyBox:HighlightText()
+        priceBox:SetFocus(); priceBox:HighlightText()   -- price is the field most edits change
     end
 end
 
@@ -1358,8 +1405,9 @@ end
 
 local function buildOptionsPanel()
     --==================== Options panel ====================
-    -- Built entirely from ns.SettingsSchema: one checkbox per entry, no per-feature code.
-    -- A checkbox only ever calls ns.SetSetting; the matching reactor does the actual work.
+    -- Built entirely from ns.SettingsSchema: a checkbox per boolean entry, a radio group per
+    -- "choice" entry. A control only ever calls ns.SetSetting; the matching reactor (or the
+    -- code that reads the setting) does the actual work.
     local optPanel = CreateFrame("Frame", nil, main)
     optPanel:SetPoint("TOPLEFT", 24, -92); optPanel:SetPoint("BOTTOMRIGHT", -30, 16); optPanel:Hide()
     main.optionsPanel = optPanel
@@ -1367,38 +1415,62 @@ local function buildOptionsPanel()
     optTitle:SetPoint("TOPLEFT", 4, -4); optTitle:SetText("Options")
     local optHint = optPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     optHint:SetPoint("TOPLEFT", optTitle, "BOTTOMLEFT", 0, -4)
-    optHint:SetText("Turn features on or off. Changes apply immediately and are saved per account.")
+    optHint:SetText("Configure features here. Changes apply immediately and are saved per account.")
 
-    local optChecks = {}
-    local oy = -48
-    for _, s in ipairs(ns.SettingsSchema) do
-        local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", 4, oy); cb:SetSize(26, 26); cb.key = s.key
-        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
-        -- extend the click/hover area rightward over the label, so hovering or clicking the
-        -- text behaves the same as the checkbox itself (tooltip + toggle)
-        cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
-        cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
-        cb:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(s.label)
-            if s.tip then GameTooltip:AddLine(s.tip, 1, 1, 1, true) end
-            if s.status then
-                local txt, r, g, b = s.status()
-                if txt then GameTooltip:AddLine(" "); GameTooltip:AddLine(txt, r or 1, g or 1, b or 1, true) end
-            end
-            GameTooltip:Show()
-        end)
-        cb:SetScript("OnLeave", GameTooltip_Hide)
-        optChecks[#optChecks + 1] = cb
-        oy = oy - 30
+    -- shared tooltip for any control of a setting (label + wrapped tip + optional status line)
+    local function showTip(owner, s)
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        GameTooltip:SetText(s.label)
+        if s.tip then GameTooltip:AddLine(s.tip, 1, 1, 1, true) end
+        if s.status then
+            local txt, r, g, b = s.status()
+            if txt then GameTooltip:AddLine(" "); GameTooltip:AddLine(txt, r or 1, g or 1, b or 1, true) end
+        end
+        GameTooltip:Show()
     end
 
-    -- pull every checkbox from the store; called on entering the tab and on any change
+    local optChecks, optRadios = {}, {}
+    local oy = -48
+    for _, s in ipairs(ns.SettingsSchema) do
+        if s.type == "choice" then
+            local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            lbl:SetPoint("TOPLEFT", 8, oy); lbl:SetText(s.label)
+            oy = oy - 22
+            local rx = 12
+            for _, opt in ipairs(s.options) do
+                local rb = CreateFrame("CheckButton", nil, optPanel, "UIRadioButtonTemplate")
+                rb:SetPoint("TOPLEFT", rx, oy); rb.key = s.key; rb.value = opt.value
+                local rl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                rl:SetPoint("LEFT", rb, "RIGHT", 3, 0); rl:SetText(opt.label)
+                rb:SetHitRectInsets(0, -(rl:GetStringWidth() + 6), 0, 0)
+                rb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self.value) end)
+                rb:SetScript("OnEnter", function(self) showTip(self, s) end)
+                rb:SetScript("OnLeave", GameTooltip_Hide)
+                optRadios[#optRadios + 1] = rb
+                rx = rx + 24 + rl:GetStringWidth() + 18
+            end
+            oy = oy - 30
+        else
+            local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
+            cb:SetPoint("TOPLEFT", 4, oy); cb:SetSize(26, 26); cb.key = s.key
+            local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
+            -- extend the click/hover area rightward over the label, so hovering or clicking the
+            -- text behaves the same as the checkbox itself (tooltip + toggle)
+            cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
+            cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
+            cb:SetScript("OnEnter", function(self) showTip(self, s) end)
+            cb:SetScript("OnLeave", GameTooltip_Hide)
+            optChecks[#optChecks + 1] = cb
+            oy = oy - 30
+        end
+    end
+
+    -- pull every control from the store; called on entering the tab and on any change
     -- elsewhere (e.g. a slash command), so the panel always mirrors the live settings.
     function ns.RefreshOptions()
         for _, cb in ipairs(optChecks) do cb:SetChecked(ns.GetSetting(cb.key)) end
+        for _, rb in ipairs(optRadios) do rb:SetChecked(ns.GetSetting(rb.key) == rb.value) end
     end
     ns.On("setting", function()
         if main and main.optionsPanel and main.optionsPanel:IsShown() then ns.RefreshOptions() end
