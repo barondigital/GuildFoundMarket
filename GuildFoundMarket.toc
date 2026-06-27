@@ -10,11 +10,18 @@
 
 Libs\Libs.xml
 Debug.lua
-Events.lua
-Settings.lua
-Config.lua
-Transport.lua
-Protocol.lua
+Services\Events.lua
+Services\Settings.lua
+Services\Config.lua
+Services\Transport.lua
+Services\Protocol.lua
+Services\Version.lua
+Services\Offers.lua
+Services\Search.lua
+Services\SellerBrowse.lua
+Services\CategoryBrowse.lua
+Services\ShopLink.lua
+Services\BagSearch.lua
 SoDItems.lua
 ItemDB.lua
 Core.lua
