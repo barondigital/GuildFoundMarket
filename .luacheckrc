@@ -41,10 +41,12 @@ read_globals = {
     -- player / world
     "UnitName", "GetTime", "GetSubZoneText", "GetZoneText", "Ambiguate",
     "GetGuildInfoText", "GetGuildInfo",
-    -- channels / chat
-    "GetChannelName", "GetChannelList", "JoinTemporaryChannel", "LeaveChannelByName",
-    "SendChatMessage", "ChatEdit_InsertLink", "ChatEdit_OpenChat", "ChatFrame_OpenChat",
-    "ChatFrame_AddMessageEventFilter",
+    -- channels / chat / group
+    "GetChannelName", "GetChannelList", "JoinTemporaryChannel", "JoinPermanentChannel",
+    "LeaveChannelByName", "SendChatMessage", "ChatEdit_InsertLink", "ChatEdit_OpenChat",
+    "ChatFrame_OpenChat", "ChatFrame_AddMessageEventFilter",
+    "IsInGuild", "IsInGroup", "IsInRaid",
+    "GetNumGuildMembers", "GetGuildRosterInfo", "GuildRoster",
     -- cursor / modifiers
     "GetCursorInfo", "ClearCursor", "IsAltKeyDown", "IsControlKeyDown", "IsShiftKeyDown",
     "IsModifiedClick", "IsModifierKeyDown",

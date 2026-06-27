@@ -13,19 +13,34 @@ local ADDON, ns = ...
 -- Compose the guild-chat line and hand it to the edit box WITHOUT sending it.
 -- Announcing is the player's decision (and that avoids spam); they can still add
 -- text or shift-click items in before pressing Enter.
-function ns.AnnounceShop()
+-- Compose a shop-announce line into the chat box for `dest` WITHOUT sending it (the player
+-- presses Enter themselves; anti-spam). Only the chat prefix changes per destination.
+-- dest: "guild"|"officer"|"party"|"raid"|"whisper"|"channel"; name = whisper target.
+local DEST_PREFIX = { guild = "/g", party = "/p", raid = "/raid" }
+function ns.AnnounceShop(dest, name)
+    dest = dest or "guild"
     if ns.IsPaused() then
         ns.Feedback("Your listings are offline. Go online before announcing your shop.", true); return
     end
     if not ns.channelName then
         ns.Feedback("No marketplace config in your guild info, so a shop link wouldn't resolve for anyone.", true); return
     end
-    if not IsInGuild() then
+    local prefix = DEST_PREFIX[dest]
+    if dest == "whisper" then
+        if not name or name == "" then ns.Feedback("Enter a name to whisper your shop to.", true); return end
+        prefix = "/w " .. name
+    elseif dest == "channel" then
+        local tc = ns.config and ns.config.tradeChannel
+        local idx = tc and GetChannelName(tc.name)
+        if not (idx and idx > 0) then ns.Feedback("Join the trade channel first to announce there.", true); return end
+        prefix = "/" .. idx
+    elseif dest == "guild" and not IsInGuild() then
         ns.Feedback("You're not in a guild, so there's no guild chat to announce in.", true); return
     end
+    if not prefix then ns.Feedback("Pick where to announce your shop.", true); return end
     -- trailing space so the cursor sits clear of the marker, ready to shift-click items in
-    ChatFrame_OpenChat(("/g Shop is open! {{GFM:%s}} "):format(ns.playerName))
-    ns.Log("ANNOUNCE composed for guild chat (not sent, your call)")
+    ChatFrame_OpenChat(("%s Shop is open! {{GFM:%s}} "):format(prefix, ns.playerName))
+    ns.Log("ANNOUNCE composed for " .. dest .. " (not sent, your call)")
 end
 
 -- Rewrite our plain-text marker into a clickable link on the receiving client.
@@ -46,10 +61,21 @@ local HIDE_KEY_BY_EVENT = {
     CHAT_MSG_CHANNEL = "hideShopChannels",
 }
 
+-- A chat filter runs once per chat window the message would show in, and a self-whisper
+-- fires two events, so one announce hits shareFilter several times. Log only once per
+-- distinct message+frame so the debug log shows one "hid" line per blocked announce.
+local lastHiddenMsg, lastHiddenAt = nil, 0
 local function shareFilter(_, event, msg, ...)
     if not (msg and msg:find("{{GFM:", 1, true)) then return end
     local hideKey = HIDE_KEY_BY_EVENT[event]
-    if hideKey and ns.GetSetting(hideKey) then return true end   -- spam-filtered: drop the line
+    if hideKey and ns.GetSetting(hideKey) then
+        local now = GetTime()
+        if ns.Log and (msg ~= lastHiddenMsg or now ~= lastHiddenAt) then
+            lastHiddenMsg, lastHiddenAt = msg, now
+            ns.Log("SPAM-FILTER: hid a shop link (" .. tostring(event) .. ")")
+        end
+        return true   -- spam-filtered: drop the line for this client
+    end
     local changed = false
     local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
         changed = true

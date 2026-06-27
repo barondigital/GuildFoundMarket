@@ -1328,21 +1328,159 @@ local function buildPauseAnnounce()
     announceBtn:SetNormalTexture("Interface\\FriendsFrame\\UI-Toast-ChatInviteIcon")
     announceBtn:SetPushedTexture("Interface\\FriendsFrame\\UI-Toast-ChatInviteIcon")
     announceBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    announceBtn:SetScript("OnClick", function() ns.AnnounceShop() end)
     announceBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
         GameTooltip:AddLine("Announce your shop")
         if GuildFoundMarketCharDB.paused then
             GameTooltip:AddLine("Unavailable while your listings are offline. Go online first.", 1, 0.5, 0.2, true)
         else
-            GameTooltip:AddLine("Drops a \"Shop is open!\" line, with a clickable shop link, into your guild chat box.", 1, 1, 1, true)
+            GameTooltip:AddLine("Drops a \"Shop is open!\" line, with a clickable shop link, into the chat picked on the left.", 1, 1, 1, true)
             GameTooltip:AddLine("Nothing is sent automatically. Add items or text, then press Enter yourself.", 1, 1, 1, true)
-            GameTooltip:AddLine("Guildies running GFM can click the link to browse your shop. It opens only after you answer on the marketplace channel, so it never leaks outside your confederation.", 0.7, 0.7, 0.7, true)
+            GameTooltip:AddLine("GFM users who click the link browse your shop only after you answer on the marketplace channel, so it never leaks outside your confederation.", 0.7, 0.7, 0.7, true)
         end
         GameTooltip:Show()
     end)
     announceBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.announceBtn = announceBtn
+
+    --==================== Announce destination selector ====================
+    local announceDest = GuildFoundMarketCharDB.announceDest or "guild"
+    -- the fixed destinations; the configured trade channel is appended dynamically
+    local DESTS = {
+        { key = "guild",   label = "Guild",   avail = function() return IsInGuild() end,                    why = "Join a guild to use guild chat." },
+        { key = "party",   label = "Party",   avail = function() return IsInGroup() and not IsInRaid() end, why = "Join a party (not a raid) for party chat." },
+        { key = "raid",    label = "Raid",    avail = function() return IsInRaid() end,                      why = "Join a raid for raid chat." },
+        { key = "whisper", label = "Whisper", avail = function() return true end },
+    }
+    local function tradeChan() return ns.config and ns.config.tradeChannel end
+    local function destLabel(key)
+        if key == "channel" then local tc = tradeChan(); return tc and tc.name or "Channel" end
+        for _, d in ipairs(DESTS) do if d.key == key then return d.label end end
+        return "Guild"
+    end
+
+    local whisperBox = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    whisperBox:SetSize(120, 20); whisperBox:SetAutoFocus(false); whisperBox:Hide()
+    main.announceWhisper = whisperBox
+
+    local destBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    destBtn:SetSize(96, 22); destBtn:SetPoint("RIGHT", announceBtn, "LEFT", -6, 0)
+    whisperBox:SetPoint("RIGHT", destBtn, "LEFT", -8, 0)
+    main.announceDestBtn = destBtn
+
+    local function applyDest(key)
+        announceDest = key
+        GuildFoundMarketCharDB.announceDest = key
+        destBtn:SetText(destLabel(key))
+        whisperBox:SetShown(currentTab == "MINE" and key == "whisper")
+        if main.announceWAC then main.announceWAC:Hide() end
+    end
+
+    local popup = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    popup:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    popup:SetBackdropColor(0, 0, 0, 0.95); popup:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    popup:SetPoint("TOPRIGHT", destBtn, "BOTTOMRIGHT", 0, -2); popup:SetWidth(140); popup:SetFrameStrata("DIALOG"); popup:Hide()
+    popup.rows = {}
+    main.announceDestPopup = popup
+    local function popupRow(i)
+        local r = popup.rows[i]
+        if r then return r end
+        r = CreateFrame("Button", nil, popup); r:SetSize(136, 18); r:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 18)
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.fs:SetPoint("LEFT", 6, 0)
+        popup.rows[i] = r
+        return r
+    end
+    local function entries()
+        local list = {}
+        for _, d in ipairs(DESTS) do list[#list + 1] = d end
+        local tc = tradeChan()
+        if tc then
+            list[#list + 1] = { key = "channel", label = tc.name,
+                avail = function() return (GetChannelName(tc.name) or 0) > 0 end,
+                join  = function() JoinPermanentChannel(tc.name, tc.password) end }
+        end
+        return list
+    end
+    local function refreshPopup()
+        local list = entries()
+        for i, d in ipairs(list) do
+            local r = popupRow(i)
+            local ok = d.avail()
+            local joinable = (d.key == "channel" and not ok)
+            r.fs:SetText(joinable and ("Join " .. d.label) or d.label)
+            r.fs:SetTextColor(ok and 1 or (joinable and 1 or 0.5), ok and 1 or (joinable and 0.82 or 0.5), ok and 1 or (joinable and 0 or 0.5))
+            r:SetScript("OnClick", function()
+                if joinable then d.join(); popup:Hide(); ns.Feedback("Joining " .. d.label .. " ...", false)
+                elseif ok then applyDest(d.key); popup:Hide() end
+            end)
+            r:SetScript("OnEnter", function(self)
+                if not ok and not joinable and d.why then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(d.why); GameTooltip:Show()
+                end
+            end)
+            r:SetScript("OnLeave", GameTooltip_Hide)
+            r:Show()
+        end
+        for i = #list + 1, #popup.rows do popup.rows[i]:Hide() end
+        popup:SetHeight(#list * 18 + 4)
+    end
+    destBtn:SetScript("OnClick", function()
+        if popup:IsShown() then popup:Hide() else refreshPopup(); popup:Show() end
+    end)
+
+    -- guild-name autocomplete for the whisper field
+    local wac = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    wac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    wac:SetBackdropColor(0, 0, 0, 0.95); wac:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    wac:SetPoint("TOPLEFT", whisperBox, "BOTTOMLEFT", -2, -2); wac:SetWidth(124); wac:SetFrameStrata("DIALOG"); wac:Hide()
+    wac.rows = {}
+    main.announceWAC = wac
+    local function wacRow(i)
+        local r = wac.rows[i]; if r then return r end
+        r = CreateFrame("Button", nil, wac); r:SetSize(120, 16); r:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 16)
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.fs:SetPoint("LEFT", 5, 0)
+        wac.rows[i] = r; return r
+    end
+    local function guildMatches(prefix)
+        local out = {}
+        if not IsInGuild() or prefix == "" then return out end
+        prefix = prefix:lower()
+        for i = 1, (GetNumGuildMembers() or 0) do
+            local full = GetGuildRosterInfo(i)
+            local name = full and Ambiguate(full, "short")
+            if name and name:lower():find(prefix, 1, true) == 1 then
+                out[#out + 1] = name
+                if #out >= 10 then break end
+            end
+        end
+        table.sort(out)
+        return out
+    end
+    local function updateWAC()
+        local matches = guildMatches(whisperBox:GetText() or "")
+        if #matches == 0 then wac:Hide(); return end
+        for i = 1, 10 do
+            local r = wacRow(i)
+            local nm = matches[i]
+            if nm then
+                r.fs:SetText(nm)
+                r:SetScript("OnClick", function() whisperBox:SetText(nm); wac:Hide(); whisperBox:ClearFocus() end)
+                r:Show()
+            else r:Hide() end
+        end
+        wac:SetHeight(math.min(#matches, 10) * 16 + 4); wac:Show()
+    end
+    whisperBox:SetScript("OnTextChanged", function(_, user) if user then updateWAC() end end)
+    whisperBox:SetScript("OnEditFocusGained", function()
+        if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster() elseif GuildRoster then GuildRoster() end
+    end)
+    whisperBox:SetScript("OnEscapePressed", function(self) wac:Hide(); self:ClearFocus() end)
+    whisperBox:SetScript("OnEnterPressed", function(self) wac:Hide(); self:ClearFocus() end)
+
+    announceBtn:SetScript("OnClick", function() ns.AnnounceShop(announceDest, whisperBox:GetText()) end)
+    applyDest(announceDest)
 end
 
 local function buildHelpPanel()
@@ -1577,6 +1715,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
     main.announceBtn:SetShown(mine)
+    main.announceDestBtn:SetShown(mine)
+    main.announceWhisper:SetShown(mine and GuildFoundMarketCharDB.announceDest == "whisper")
+    if main.announceDestPopup then main.announceDestPopup:Hide() end
+    if main.announceWAC then main.announceWAC:Hide() end
     main.helpPanel:SetShown(help)
     main.debugBtn:SetShown(help)
     main.optionsPanel:SetShown(options)

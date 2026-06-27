@@ -16,9 +16,13 @@ end
 local function parseGuildConfig()
     local text = GetGuildInfoText()
     if not text or text == "" then return nil end
-    local vars, picked = {}, {}
+    local vars, picked, tradeChannel = {}, {}, nil
     local function applyVars(s) return (s:gsub("%$(.)", function(n) return vars[n] or ("$" .. n) end)) end
     for line in text:gmatch("[^\r\n]+") do
+        -- shop-announce trade channel: GFMtc:Name or GFMtc:Name:password (matched before the
+        -- single-letter operators below, since "tc" is two letters they would not catch)
+        local tcName, tcPass = line:match("^GFMtc:([^:]+):?(.*)$")
+        if tcName then tradeChannel = { name = tcName, password = (tcPass ~= "" and tcPass) or nil } end
         local src, op, args
         op, args = line:match("^GFM(%a):(.*)$"); if op then src = "GFM" end
         if not op then op, args = line:match("^GW(%a):(.*)$");  if op then src = "GW" end end
@@ -37,7 +41,8 @@ local function parseGuildConfig()
     end
     local chosen = picked.GFM or picked.GW
     if not chosen or not chosen.channel or chosen.channel == "" then return nil end
-    return { channel = chosen.channel, password = chosen.password, source = picked.GFM and "GFM" or "GW" }
+    return { channel = chosen.channel, password = chosen.password, source = picked.GFM and "GFM" or "GW",
+             tradeChannel = tradeChannel }
 end
 
 -- Re-read the guild info and (re)derive the channel. Announces a connect/disconnect and
