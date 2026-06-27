@@ -29,14 +29,18 @@ function ns.AnnounceShop()
 end
 
 -- Rewrite our plain-text marker into a clickable link on the receiving client.
--- The capture excludes braces and pipes, so a crafted message can't inject
--- escape codes (and we never reach gsub for those).
+-- The link DATA is a benign real item (Hearthstone), not a custom type: NovaWorldBuffs and
+-- Questie securehook SetItemRef and call ItemRefTooltip:SetHyperlink(link) unconditionally,
+-- which raises "Unknown link type" on a custom type. A real item link parses fine there; the
+-- seller name rides in the visible text and we recover it in the SetItemRef hook below.
+-- The capture excludes braces and pipes, so a crafted message can't inject escape codes.
+local SHOP_LINK_ITEM = "item:6948"   -- Hearthstone: universally valid, shown briefly then hidden
 local function shareFilter(_, _, msg, ...)
     if msg and msg:find("{{GFM:", 1, true) then
         local changed = false
         local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
             changed = true
-            return ("|cff00ff96|Hgfmshop:%s|h[GFM: browse shop]|h|r"):format(name)
+            return ("|cff00ff96|H%s|h[GFM: browse %s's shop]|h|r"):format(SHOP_LINK_ITEM, name)
         end)
         if changed then return false, out, ... end
     end
@@ -52,34 +56,22 @@ local SHARE_EVENTS = {
     "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
 }
 
--- Open a clicked shop link. We REPLACE SetItemRef (capturing the existing chain) and
--- short-circuit our custom gfmshop: link here, so it reaches neither Blizzard's
--- SetItemRef nor any other addon's SetItemRef hook. This is deliberate over two
--- alternatives that each break:
---   * A plain hooksecurefunc on SetItemRef lets the link reach NovaWorldBuffs/Questie,
---     which securehook SetItemRef and call SetHyperlink(link) unconditionally. Our
---     unknown type raises "Unknown link type", and that error aborts the rest of the
---     secure-hook chain, so our own handler never runs and the link does nothing.
---   * Replacing the chat frame's OnHyperlinkClick script taints the chat frames, which
---     then intermittently blocks our SendChatMessage channel broadcasts
---     (ADDON_ACTION_BLOCKED), breaking search and the Sellers scan.
--- Replacing the global SetItemRef touches no chat-frame widget (so search/scan stay
--- untainted) and our link never reaches the unconditional SetHyperlink (so no error).
--- Real links fall through to the original chain unchanged. We install at PLAYER_LOGIN,
--- after other addons have hooked, so our replacement wraps their chain (not vice versa).
+-- Open a clicked shop link. Taint-safe: a post-hook on SetItemRef, never writing the global
+-- (the old code REPLACED SetItemRef, which tainted it and leaked into Blizzard's secure
+-- menu/clipboard path, blocking CopyToClipboard). We recognise our link by the seller name
+-- in its visible text (the link data is a plain Hearthstone, see shareFilter), open the shop,
+-- and hide the placeholder item tooltip that Blizzard/NWB/Questie put up for it.
 local shareInstalled = false
 local function installShareLinks()
     if shareInstalled then return end
     shareInstalled = true
     for _, e in ipairs(SHARE_EVENTS) do ChatFrame_AddMessageEventFilter(e, shareFilter) end
-    local origSetItemRef = SetItemRef
-    SetItemRef = function(link, ...)
-        local name = type(link) == "string" and link:match("^gfmshop:(.+)$")
-        if name then
-            if ns.OpenShopLink then ns.OpenShopLink(name) end
-            return
+    hooksecurefunc("SetItemRef", function(_, text)
+        local name = type(text) == "string" and text:match("|h%[GFM: browse (.-)'s shop%]|h")
+        if name and ns.OpenShopLink then
+            ns.OpenShopLink(name)
+            if ItemRefTooltip then ItemRefTooltip:Hide() end   -- drop the placeholder tooltip
         end
-        return origSetItemRef(link, ...)
-    end
+    end)
 end
 ns.InstallShareLinks = installShareLinks
