@@ -5,5 +5,6 @@ enable-nolib-creation: no
 ignore:
   - .github
   - .pkgmeta
+  - .luacheckrc
   - art
   - changelogs
