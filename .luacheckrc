@@ -36,6 +36,7 @@ read_globals = {
     "CreateFrame", "GameTooltip", "GameTooltip_Hide", "GetAddOnMetadata",
     -- item / money
     "GetItemInfo", "GetItemInfoInstant", "GetItemIcon", "GetItemCount",
+    "GetItemClassInfo", "GetItemSubClassInfo",
     "GetCoinTextureString", "ITEM_QUALITY_COLORS", "BANK_CONTAINER",
     "SetItemButtonTexture", "SetItemButtonCount", "SetItemRef", "HandleModifiedItemClick",
     -- player / world
@@ -53,4 +54,11 @@ read_globals = {
     -- scroll frames
     "FauxScrollFrame_OnVerticalScroll", "FauxScrollFrame_GetOffset",
     "FauxScrollFrame_SetOffset", "FauxScrollFrame_Update",
+}
+
+-- The standalone regression test stubs the WoW API, so it writes globals the addon
+-- only reads (strsplit, Ambiguate, wipe, ...). Let it, and don't fail on unused locals.
+files["tests/"] = {
+    allow_defined_top = true,
+    ignore = { "111", "112", "113", "122", "131", "143", "211", "212", "311", "542" },
 }

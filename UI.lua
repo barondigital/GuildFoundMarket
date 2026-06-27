@@ -17,8 +17,9 @@ local selectedSearchID = nil
 local buyMode = "BROWSE"   -- "SEARCH" | "BROWSE" (Browse is the default view)
 local BROWSE_CAP = 150     -- max Browse rows shown; beyond it the user narrows by level range / filter
 local browseSort = { col = "lvl", asc = false }   -- Browse results sort: "qual"|"lvl"|"price"; default level desc
-local browseSel = { class = nil, sub = nil }      -- selected category (nil = none picked yet)
+local browseSel = { class = nil, sub = nil, slot = nil }   -- selected category (nil = none picked yet)
 local browseExpanded = nil                        -- classID currently expanded in the sidebar (accordion)
+local browseExpandedSub = nil                     -- Armor subID expanded to its slot leaves (3rd level)
 local browseRows, browseView = {}, {}             -- the 6-column results table
 local sideRows, sideView = {}, {}                 -- the category sidebar tree
 local setBuyMode                                  -- forward declaration (defined with the other refreshers)
@@ -587,6 +588,16 @@ local function updateBrowseHeaders()
     main.bhPrice:SetText("Price" .. arr("price"))
 end
 
+-- Armor subclasses get a third sidebar level by equip slot, so the QC query can narrow by
+-- slot instead of fetching the whole subclass. The slot lists are fixed per subclass (we no
+-- longer fetch the whole subclass to discover them). 0=Misc, 1=Cloth, 2=Leather, 3=Mail, 4=Plate.
+local ARMOR_CLASS = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
+local BODY = { "INVTYPE_HEAD", "INVTYPE_SHOULDER", "INVTYPE_CHEST", "INVTYPE_WRIST", "INVTYPE_HAND", "INVTYPE_WAIST", "INVTYPE_LEGS", "INVTYPE_FEET" }
+-- cloaks classify as Cloth, so Back belongs only under Cloth, not Leather/Mail/Plate
+local CLOTH = { unpack(BODY) }; CLOTH[#CLOTH + 1] = "INVTYPE_CLOAK"
+local ACCESSORY = { "INVTYPE_NECK", "INVTYPE_FINGER", "INVTYPE_TRINKET", "INVTYPE_HOLDABLE" }
+local ARMOR_SUB_SLOTS = { [0] = ACCESSORY, [1] = CLOTH, [2] = BODY, [3] = BODY, [4] = BODY }
+
 function ns.RefreshSidebar()
     if not main then return end
     wipe(sideView)
@@ -601,17 +612,48 @@ function ns.RefreshSidebar()
         }
         if expanded then
             for _, sub in ipairs(cls.subs) do
-                local sel = (browseSel.class == cls.id and browseSel.sub == sub.id)
-                sideView[#sideView + 1] = {
-                    label = sub.name, indent = 22, selected = sel,
-                    r = sel and 1 or 0.85, g = sel and 0.82 or 0.85, b = sel and 0 or 0.85,
-                    onClick = function()
-                        browseSel.class, browseSel.sub = cls.id, sub.id
-                        browseSel.label = cls.name .. " > " .. sub.name
-                        ns.RefreshSidebar()
-                        if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
-                    end,
-                }
+                local slots = (cls.id == ARMOR_CLASS) and ARMOR_SUB_SLOTS[sub.id] or nil
+                if slots then
+                    -- Armor subclass: a branch that expands to slot leaves (no query on its own)
+                    local subOpen = (browseExpandedSub == sub.id)
+                    sideView[#sideView + 1] = {
+                        label = (subOpen and "- " or "+ ") .. sub.name, indent = 22, r = 0.85, g = 0.85, b = 0.85,
+                        onClick = function()
+                            -- explicit if/else: `x and nil or y` would never clear it (true and nil -> y)
+                            if browseExpandedSub == sub.id then browseExpandedSub = nil else browseExpandedSub = sub.id end
+                            ns.RefreshSidebar()
+                        end,
+                    }
+                    if subOpen then
+                        for _, loc in ipairs(slots) do
+                            local label = _G[loc] or loc
+                            local s = (browseSel.class == cls.id and browseSel.sub == sub.id and browseSel.slot == loc)
+                            sideView[#sideView + 1] = {
+                                label = label, indent = 38, selected = s,
+                                r = s and 1 or 0.8, g = s and 0.82 or 0.8, b = s and 0 or 0.8,
+                                onClick = function()
+                                    browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, loc
+                                    browseSel.label = cls.name .. " > " .. sub.name .. " > " .. label
+                                    ns.RefreshSidebar()
+                                    if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id, loc) end
+                                end,
+                            }
+                        end
+                    end
+                else
+                    -- non-Armor subclass: a leaf that queries the whole subclass (no slot)
+                    local sel = (browseSel.class == cls.id and browseSel.sub == sub.id and not browseSel.slot)
+                    sideView[#sideView + 1] = {
+                        label = sub.name, indent = 22, selected = sel,
+                        r = sel and 1 or 0.85, g = sel and 0.82 or 0.85, b = sel and 0 or 0.85,
+                        onClick = function()
+                            browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, nil
+                            browseSel.label = cls.name .. " > " .. sub.name
+                            ns.RefreshSidebar()
+                            if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
+                        end,
+                    }
+                end
             end
         end
     end
@@ -630,7 +672,8 @@ function ns.RefreshBrowse()
         local q, lvl = itemQualLevel(o.id, o.suffix)
         local nameOK = filter == "" or vName(o.id, o.suffix):lower():find(filter, 1, true)
         local lvlOK = (not lmin or lvl >= lmin) and (not lmax or lvl <= lmax)
-        if nameOK and lvlOK then
+        local slotOK = (not browseSel.slot) or ns.EquipSlot(o.id) == browseSel.slot   -- drop old sellers' over-replies
+        if nameOK and lvlOK and slotOK then
             total = total + 1
             browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, self = o.self, q = q, lvl = lvl }
         end

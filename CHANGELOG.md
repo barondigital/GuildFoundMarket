@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0
+
+- **Browse armor by equip slot.** Armor subclasses in the Browse sidebar now expand to a
+  third level by equip slot (Head, Shoulder, Chest, and so on; Neck, Finger, Trinket and
+  Held In Off-hand for accessories), so you can search a single slot instead of the whole
+  subclass. Robes group under Chest, and Back appears under Cloth. Subclasses without a
+  useful slot split (shields, relics) still query the whole subclass. Compatible with
+  0.10.x: older clients reply with the whole subclass and your client filters to the slot,
+  so mixed guilds keep working.
+
 ## 0.10.0
 
 - **Announce to more than guild chat.** The Announce button now has a destination picker:
