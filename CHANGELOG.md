@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+- **Announce to more than guild chat.** The Announce button now has a destination picker:
+  guild, party, whisper (with a name field that autocompletes guild members), or your
+  guild's trade channel. Your last choice is remembered per character.
+- **Trade channel (optional, guild setup).** Officers can name a shared trade channel in the
+  guild info with `GFMtc:Name` or `GFMtc:Name:password`. Members get it as an announce
+  destination and can join it in one click from the picker.
+- **Hide shop-link spam.** New Options toggles to hide incoming shop-link lines per surface
+  (guild, party, whispers, channels). Local to you; it changes nothing for anyone else.
+- **Help tab reorganised** into Usage and Guild Setup sections.
+
 ## 0.9.2
 
 - **Fix: shop links no longer interfere with Blizzard menus.** Making the "browse shop"
