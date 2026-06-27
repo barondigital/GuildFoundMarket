@@ -251,7 +251,7 @@ local function formatBuyRow(r, d)
         -- whispering or browsing ourselves, so left-click jumps to My Items to adjust.
         r.c1.fs:SetText((ns.IsPaused() and (d.seller .. " (you, paused)") or (d.seller .. " (you)")) .. tag)
         r.c1.fs:SetTextColor(1, 0.82, 0)   -- gold: stands out as your own row
-        r.c1.tip = "Your offer — click to open My Items and adjust your price"
+        r.c1.tip = "Your offer: click to open My Items and adjust your price"
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then ns.SelectTab("MINE") end
         end)
@@ -398,7 +398,7 @@ function ns.RefreshBuy()
     elseif #view == 0 then
         main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.searchItemID) .. ".")
     else
-        main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s) — cheapest first."):format(#view))
+        main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s), cheapest first."):format(#view))
     end
 end
 
@@ -415,10 +415,10 @@ function ns.RefreshMine()
     renderRows()
     if GuildFoundMarketCharDB.paused then
         main.status:SetTextColor(1, 0.6, 0.2)
-        main.status:SetText("Listings paused — not answering searches. Click \"Offline\" to go back online.")
+        main.status:SetText("Listings paused: not answering searches. Click \"Offline\" to go back online.")
     elseif #view == 0 then
         main.status:SetTextColor(0.7, 0.7, 0.7)
-        main.status:SetText("No items listed yet — pick one up and click the slot below to offer it.")
+        main.status:SetText("No items listed yet: pick one up and click the slot below to offer it.")
     else
         main.status:SetText("")
     end
@@ -466,9 +466,9 @@ function ns.RefreshSellers()
     elseif #names == 0 then
         main.status:SetText("No seller matches \"" .. filter .. "\".")
     elseif ns.sellerCapped then
-        main.status:SetText(("Showing %d online sellers (capped) — type %d+ letters of a name and press Enter to find a specific one."):format(#names, ns.FILTER_MIN))
+        main.status:SetText(("Showing %d online sellers (capped); type %d+ letters of a name and press Enter to find a specific one."):format(#names, ns.FILTER_MIN))
     else
-        main.status:SetText(("%d online seller(s) — click one to see their items."):format(#names))
+        main.status:SetText(("%d online seller(s): click one to see their items."):format(#names))
     end
 end
 
@@ -495,7 +495,7 @@ function ns.RefreshSellerCatalog()
     elseif cat and next(cat.items) == nil then
         main.status:SetText(cat.seller .. " has nothing listed right now.")
     elseif cat then
-        main.status:SetText(("%d item(s) — click one to whisper %s."):format(#view, cat.seller))
+        main.status:SetText(("%d item(s): click one to whisper %s."):format(#view, cat.seller))
     end
 end
 
@@ -659,7 +659,7 @@ setBuyMode = function(mode)
 end
 
 --========================================================================
--- Coalesced refreshes — network replies (R/C/K) and item-info events can arrive
+-- Coalesced refreshes: network replies (R/C/K) and item-info events can arrive
 -- in bursts; debounce so we re-sort/re-render at most ~5x/sec, not once per message.
 --========================================================================
 local pendingRefresh = {}
@@ -716,14 +716,14 @@ local function CreateUI()
     title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
     -- debug-log toggle (opens the copyable sidebar; available to everyone for bug
-    -- reports). Lives on the Help tab, top right — shown only there.
+    -- reports). Lives on the Help tab, top right, shown only there.
     local debugBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     debugBtn:SetSize(60, 20); debugBtn:SetPoint("TOPRIGHT", -30, -64); debugBtn:SetText("Debug"); debugBtn:Hide()
     debugBtn:SetScript("OnClick", function() if ns.ToggleDebug then ns.ToggleDebug() end end)
     debugBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
         GameTooltip:AddLine("Debug log")
-        GameTooltip:AddLine("Open a copyable log of searches, sellers, and any throttling — to send a bug/latency report.", 1, 1, 1, true)
+        GameTooltip:AddLine("Open a copyable log of searches, sellers, and any throttling, to send a bug/latency report.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     debugBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -1105,7 +1105,7 @@ local function CreateUI()
     local qtyBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     qtyBox:SetPoint("BOTTOMLEFT", 56, 10); qtyBox:SetSize(44, 20); qtyBox:SetAutoFocus(false); qtyBox:SetNumeric(true); qtyBox:SetText("1")
     main.qtyBox = qtyBox
-    label("Price/unit — e.g. 1g20s34c (leave empty to take bids)", 124, 30)
+    label("Price/unit: e.g. 1g20s34c (leave empty to take bids)", 124, 30)
     local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     priceBox:SetPoint("BOTTOMLEFT", 128, 10); priceBox:SetSize(150, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
     main.priceBox = priceBox
@@ -1165,7 +1165,7 @@ local function CreateUI()
         GameTooltip:AddLine("Build full item database")
         GameTooltip:AddLine("A one-time background scan so search autocomplete knows every item in the game.", 1, 1, 1, true)
         GameTooltip:AddLine("Runs while you keep playing and resumes if you stop or log out. Only needed once.", 0.7, 0.7, 0.7, true)
-        GameTooltip:AddLine("May cause brief lag or latency while it runs — you can stop it anytime.", 1, 0.5, 0.2, true)
+        GameTooltip:AddLine("May cause brief lag or latency while it runs; you can stop it anytime.", 1, 0.5, 0.2, true)
         GameTooltip:Show()
     end)
     dbBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -1223,7 +1223,7 @@ local function CreateUI()
             GameTooltip:AddLine("Click to go back online.", 0.7, 0.7, 0.7, true)
         else
             GameTooltip:AddLine("Listings online")
-            GameTooltip:AddLine("Pause this while raiding or doing PvP — your items stay listed but stop answering, nothing to clear.", 1, 1, 1, true)
+            GameTooltip:AddLine("Pause this while raiding or doing PvP; your items stay listed but stop answering, nothing to clear.", 1, 1, 1, true)
             GameTooltip:AddLine("Click to go offline.", 0.7, 0.7, 0.7, true)
         end
         GameTooltip:Show()
@@ -1267,25 +1267,25 @@ local function CreateUI()
     helpText:SetPoint("TOPLEFT"); helpText:SetWidth(700)
     helpText:SetJustifyH("LEFT"); helpText:SetJustifyV("TOP"); helpText:SetSpacing(2)
     helpText:SetText(table.concat({
-        "|cffff4040» FIRST TIME — open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
+        "|cffff4040» FIRST TIME: open the Buy tab and click |r|cffffd100Build full DB|r|cffff4040 «|r",
         "|cffffffffRequired before you can search:|r until the database is built, autocomplete can't find items you don't already own. It's a safe one-time background scan that resumes if you stop.",
         "|cffffffffFaster with the |r|cffffd100aux|r|cffffffff addon:|r if you have aux installed, GFM seeds the classic item names from it instantly on login, so the scan only has to fetch the newer Season of Discovery items.",
         " ",
-        "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation — only sellers who are |cffffffffonline right now|r answer.",
+        "|cff00ff96Guild Found Market|r is a private, live marketplace for your guild confederation: only sellers who are |cffffffffonline right now|r answer.",
         " ",
-        "|cffffd100Buy|r  — find an item",
+        "|cffffd100Buy|r: find an item",
         "Type a name (or shift-click an item link) and pick it. Online sellers are listed cheapest first.",
-        "• |cffffffffLeft-click|r a seller — open their full list of items.",
-        "• |cffffffffRight-click|r a seller — whisper them about this item.",
+        "• |cffffffffLeft-click|r a seller: open their full list of items.",
+        "• |cffffffffRight-click|r a seller: whisper them about this item.",
         " ",
-        "|cffffd100Sellers|r  — browse who's online",
+        "|cffffd100Sellers|r: browse who's online",
         "Click a seller to see everything they sell. On one of their items:",
-        "• |cffffffffCtrl-click|r — search that item to find who else is selling it.",
-        "• |cffffffffRight-click|r — whisper the seller, pre-filled with the item and price.",
+        "• |cffffffffCtrl-click|r: search that item to find who else is selling it.",
+        "• |cffffffffRight-click|r: whisper the seller, pre-filled with the item and price.",
         " ",
-        "|cffffd100My Items|r  — what you sell",
-        "Add your items; your client answers searches automatically — no pop-ups.",
-        "• |cffffffffOnline / Offline|r — pause answering while you raid or PvP. Your items are kept.",
+        "|cffffd100My Items|r: what you sell",
+        "Add your items; your client answers searches automatically, no pop-ups.",
+        "• |cffffffffOnline / Offline|r: pause answering while you raid or PvP. Your items are kept.",
         "• |cffffffffAnnounce|r: drop a \"shop is open\" line, with a clickable shop link, into guild chat. You send it yourself, and guildies who click it browse your shop live.",
         " ",
         "|cffffd100Configuration (guild officers)|r",
@@ -1293,8 +1293,8 @@ local function CreateUI()
         "    |cff66ff66GFMc:MyMarket:somesharedsecret|r",
         "Anyone whose guild information contains the identical line joins the same marketplace. If you run GreenWall, its GWc channel is reused automatically; when both are present, |cffffffffGFMc takes precedence|r. On login GFM prints which config it used.",
         " ",
-        "|cffffd100Sister guilds — trading outside GreenWall|r",
-        "To include guilds that are NOT in your GreenWall confederation, give them the |cffffffffsame GFMc line|r — that is all. (Peer-guild GFMp/GWp lines are not used.)",
+        "|cffffd100Sister guilds: trading outside GreenWall|r",
+        "To include guilds that are NOT in your GreenWall confederation, give them the |cffffffffsame GFMc line|r; that is all. (Peer-guild GFMp/GWp lines are not used.)",
         "• |cffff5555Do not share your GWc line|r with them: that is your GreenWall chat-bridge secret, and a sister guild running GreenWall would land in your private guild chat. Keep GWc for the confederation and use a separate GFMc for the market.",
         "• |cffffd100Consequence:|r the GFMc secret is the only gate. Everyone you hand it to can see and answer every search and browse all listed sellers. Share it only with guilds you trust to trade.",
         " ",
@@ -1388,8 +1388,8 @@ function ns.ToggleListings()
     if ns.UpdateMinimapIcon then ns.UpdateMinimapIcon() end
     if currentTab == "MINE" then ns.RefreshMine() end
     ns.Feedback(GuildFoundMarketCharDB.paused
-        and "Listings paused — you won't answer searches until you go online."
-        or "Listings online — you're answering searches again.", false)
+        and "Listings paused: you won't answer searches until you go online."
+        or "Listings online: you're answering searches again.", false)
 end
 
 function ns.UpdateDBPanel()
@@ -1501,7 +1501,7 @@ function ns.ToggleUI()
         if ns.RefreshConfig then ns.RefreshConfig() end
         ns.SelectTab(currentTab)
         if not ns.channelName then
-            ns.Feedback("Not in a Guild Found confederation — open guild (J) once, then /gfm again.", true)
+            ns.Feedback("Not in a Guild Found confederation; open guild (J) once, then /gfm again.", true)
         end
     end
 end

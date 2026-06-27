@@ -97,7 +97,7 @@ local function liveLoc()
 end
 
 --========================================================================
--- Guild-info marketplace config: a single channel line — GFMc (preferred) or
+-- Guild-info marketplace config: a single channel line, GFMc (preferred) or
 -- GreenWall's GWc as fallback. The marketplace is gated purely by who can read
 -- that secret, so peer-guild lines (GFMp/GWp) are not needed and are ignored.
 --========================================================================
@@ -147,7 +147,7 @@ local function refreshConfig()
                 cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall"), false)
             if ns.Log then ns.Log(("CONFIG connected: %s channel (%s)"):format(cfg.source == "GFM" and "GuildFoundMarket" or "GreenWall", newName)) end
         elseif ns.Log then
-            ns.Log("CONFIG disconnected — no marketplace config in guild info")
+            ns.Log("CONFIG disconnected: no marketplace config in guild info")
         end
         if ns.RefreshBuy then ns.RefreshBuy() end
     end
@@ -231,7 +231,7 @@ local function bagBoundState(itemID)
 end
 
 function ns.AddOffer(itemID, suffix, qty, price)
-    if not ns.channelName then ns.Feedback("No confederation config in your guild info — can't offer.", true); return end
+    if not ns.channelName then ns.Feedback("No confederation config in your guild info, can't offer.", true); return end
     if not itemID then ns.Feedback("Pick an item first.", true); return end
     suffix = suffix or 0
     price = math.max(0, price or 0)   -- 0 = no fixed price; the seller takes bids
@@ -291,7 +291,7 @@ end
 -- Search (buyer side)
 --========================================================================
 function ns.Search(itemID)
-    if not ns.channelName then ns.Feedback("Not in a confederation — can't search.", true); return end
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't search.", true); return end
     if not itemID then return end
     querySeq = querySeq + 1
     activeQid = playerName .. "#" .. querySeq
@@ -307,8 +307,8 @@ function ns.Search(itemID)
         SendChatMessage(CHAT_TAG .. ("Q~%s~%d~%s"):format(activeQid, itemID, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SEARCH \"%s\" (id %d) sent"):format(GetItemInfo(itemID) or ("item:" .. itemID), itemID))
     else
-        ns.Feedback("Marketplace channel not ready yet — try the search again in a second.", true)
-        ns.Log(("SEARCH (id %d) FAILED — channel not ready"):format(itemID))
+        ns.Feedback("Marketplace channel not ready yet; try the search again in a second.", true)
+        ns.Log(("SEARCH (id %d) FAILED: channel not ready"):format(itemID))
     end
     -- Always show our own offers for this base item among the results (every variant we
     -- list), so we can see where our price sits and adjust to compete. Local-only injection
@@ -344,7 +344,7 @@ end
 -- filter: optional lowercase name substring. Empty = "who's online" (capped sample);
 -- non-empty = only sellers whose name contains it answer, so it scales to big groups.
 function ns.ScanSellers(filter)
-    if not ns.channelName then ns.Feedback("Not in a confederation — can't browse sellers.", true); return end
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't browse sellers.", true); return end
     filter = filter or ""
     ns.scanFilter = filter
     ns.pendingOpenSeller = nil   -- a fresh scan cancels any pending shop-link auto-open
@@ -360,8 +360,8 @@ function ns.ScanSellers(filter)
         SendChatMessage(CHAT_TAG .. ("S~%s~%s~%s"):format(activeSid, filter, ns.version), "CHANNEL", nil, idx)
         ns.Log(("SELLERS scan sent%s"):format(filter ~= "" and (" (filter \"" .. filter .. "\")") or ""))
     else
-        ns.Feedback("Marketplace channel not ready yet — try again in a second.", true)
-        ns.Log("SELLERS scan FAILED — channel not ready")
+        ns.Feedback("Marketplace channel not ready yet; try again in a second.", true)
+        ns.Log("SELLERS scan FAILED: channel not ready")
     end
     if ns.selfTest and not isPaused() and (filter == "" or playerName:lower():find(filter, 1, true)) then
         local list = offerList()
@@ -402,7 +402,7 @@ end
 function ns.OpenSeller(seller, loc)
     if not seller then return end
     loc = loc or (ns.sellerResults[seller] and ns.sellerResults[seller].loc) or ""
-    ns.Log("OPEN " .. seller .. " — requesting catalog")
+    ns.Log("OPEN " .. seller .. ": requesting catalog")
     sellerSeq = sellerSeq + 1
     activeLid = playerName .. "#L" .. sellerSeq
     ns.sellerCatalog = { seller = seller, loc = loc, items = {}, loading = true }
@@ -443,7 +443,7 @@ local function itemCategory(itemID)
 end
 
 function ns.BrowseCategory(classID, subClassID)
-    if not ns.channelName then ns.Feedback("Not in a confederation — can't browse.", true); return end
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't browse.", true); return end
     if not classID or not subClassID then return end
     browseSeq = browseSeq + 1
     activeQCid = playerName .. "#QC" .. browseSeq
@@ -456,8 +456,8 @@ function ns.BrowseCategory(classID, subClassID)
         SendChatMessage(CHAT_TAG .. ("QC~%s~%d~%d~%s"):format(activeQCid, classID, subClassID, ns.version), "CHANNEL", nil, idx)
         ns.Log(("BROWSE category %d/%d sent"):format(classID, subClassID))
     else
-        ns.Feedback("Marketplace channel not ready yet — try the browse again in a second.", true)
-        ns.Log("BROWSE FAILED — channel not ready")
+        ns.Feedback("Marketplace channel not ready yet; try the browse again in a second.", true)
+        ns.Log("BROWSE FAILED: channel not ready")
     end
     -- inject my own matching offers locally (we never whisper ourselves), even while paused
     for _, it in ipairs(offerList()) do
@@ -744,7 +744,7 @@ local function installBagSearch()
         hooksecurefunc("HandleModifiedItemClick", onItemClick)
         ns.Log("ALT-SEARCH: hooked HandleModifiedItemClick")
     else
-        ns.Log("ALT-SEARCH: HandleModifiedItemClick missing — cannot install")
+        ns.Log("ALT-SEARCH: HandleModifiedItemClick missing; cannot install")
     end
 end
 
@@ -819,7 +819,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 local throttled = Enum and Enum.SendAddonMessageResult
                     and res == Enum.SendAddonMessageResult.AddonMessageThrottle
                 if throttled then
-                    ns.Log("THROTTLE: addon whisper to " .. item.to .. " throttled by server — will retry")
+                    ns.Log("THROTTLE: addon whisper to " .. item.to .. " throttled by server; will retry")
                 else
                     table.remove(sendQ, 1)
                 end
@@ -907,24 +907,24 @@ SlashCmdList.GFMARKET = function(msg)
     elseif msg == "harvest" then
         ns.ItemDB.StartHarvest()
         local cur, max = ns.ItemDB.HarvestProgress()
-        ns.Feedback(("Harvest running — at item %d/%d, DB %d. Watch with /gfm debug."):format(cur, max, ns.ItemDB.Count()), false)
+        ns.Feedback(("Harvest running: at item %d/%d, DB %d. Watch with /gfm debug."):format(cur, max, ns.ItemDB.Count()), false)
     elseif msg == "harveststop" then
         ns.ItemDB.StopHarvest(); ns.Feedback("Harvest stopped.", false)
     elseif msg == "minimap" then
         local on = ns.ToggleSetting("minimapButton")
         ns.Feedback("Minimap button " .. (on and "shown."
-            or "hidden — type /gfm minimap to show it again, or open with /market."), false)
+            or "hidden: type /gfm minimap to show it again, or open with /market."), false)
     elseif ns.dev and msg == "noaux" then
         local on = ns.ToggleSetting("auxSeed")
         ns.Feedback("aux seed " .. (on and "enabled" or "DISABLED")
-            .. " — run /gfm dbreset to clear the current DB and test a clean build.", false)
+            .. "; run /gfm dbreset to clear the current DB and test a clean build.", false)
     elseif ns.dev and msg == "dbreset" then
         ns.ItemDB.Reset()
         if ns.RefreshBuy then ns.RefreshBuy() end
         ns.Feedback("Item DB wiped (clean-install state). /gfm harvest to rebuild from scratch.", false)
     elseif ns.dev and msg == "selftest" then
         ns.selfTest = not ns.selfTest
-        ns.Feedback("Self-test " .. (ns.selfTest and "ON — search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
+        ns.Feedback("Self-test " .. (ns.selfTest and "ON: search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
     elseif ns.dev and msg == "fakesellers" then
         wipe(ns.sellerResults)
         ns.sellerResults["Aldorin"]  = { count = 3,  loc = "Bank, Orgrimmar" }
@@ -934,7 +934,7 @@ SlashCmdList.GFMARKET = function(msg)
         ns._fakeCat = { Aldorin = { 2589, 2592, 4338 }, Cheapcat = { 6948 }, Bigbags = many }
         ns.scanningSellers = false
         if ns.RefreshSellers then ns.RefreshSellers() end
-        ns.Feedback("Injected 3 fake sellers (one with 42 items) — open the Sellers tab.", false)
+        ns.Feedback("Injected 3 fake sellers (one with 42 items); open the Sellers tab.", false)
     elseif ns.dev and msg == "faketest" then
         if not ns.searchItemID then
             ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)

@@ -38,9 +38,9 @@ ns.SettingsSchema = {
             .. "Safe to leave on: it simply does nothing if you don't have aux.",
         status = function()
             if type(_G.aux) == "table" then
-                return "aux addon detected — this option is active.", 0.4, 1, 0.4
+                return "aux addon detected: this option is active.", 0.4, 1, 0.4
             end
-            return "aux addon not installed — this option currently has no effect.", 1, 0.82, 0
+            return "aux addon not installed: this option currently has no effect.", 1, 0.82, 0
         end,
         default = true,
     },

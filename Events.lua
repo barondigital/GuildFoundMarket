@@ -6,7 +6,7 @@ local ADDON, ns = ...
 -- The whole point: code that *changes* a thing and code that *reacts* to it never
 -- reference each other. A producer calls ns.Emit("setting:foo", value); any number of
 -- reactors registered with ns.On("setting:foo", fn) run, in registration order. Add a new
--- feature by subscribing — never by editing a central dispatch with another branch.
+-- feature by subscribing, never by editing a central dispatch with another branch.
 --========================================================================
 local listeners = {}
 

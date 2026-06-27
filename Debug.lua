@@ -33,9 +33,9 @@ function ns.RefreshDebug()
     if not panel or not panel:IsShown() then return end
     ns.UpdateDebugTitle()
     -- While the box has focus (you're selecting/copying) we don't rewrite the text,
-    -- or it would wipe your selection — so the view "freezes". Tell the user how to resume.
+    -- or it would wipe your selection, so the view "freezes". Tell the user how to resume.
     if editBox:HasFocus() then
-        setStatus("PAUSED — press Esc or click the panel to resume", 1, 0.7, 0.2)
+        setStatus("PAUSED: press Esc or click the panel to resume", 1, 0.7, 0.2)
         return
     end
     -- Newest line on top, so the latest is always visible without scrolling.
@@ -92,7 +92,7 @@ local function createSidebar()
     editBox:SetFontObject(ChatFontSmall)
     editBox:SetWidth(290)
     editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    editBox:SetScript("OnEditFocusGained", function() setStatus("PAUSED — press Esc or click the panel to resume", 1, 0.7, 0.2) end)
+    editBox:SetScript("OnEditFocusGained", function() setStatus("PAUSED: press Esc or click the panel to resume", 1, 0.7, 0.2) end)
     editBox:SetScript("OnEditFocusLost", function() ns.RefreshDebug() end)
     scroll:SetScrollChild(editBox)
     scroll:EnableMouseWheel(true)

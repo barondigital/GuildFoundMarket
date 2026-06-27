@@ -19,13 +19,12 @@ local have      = {}         -- [itemID] = true (dedupe)
 local pending   = {}         -- [itemID] = true (requested, awaiting GET_ITEM_INFO_RECEIVED)
 local unused    = {}         -- [itemID] = true (server says it doesn't exist; don't retry)
 local pendingCount = 0
-local lastLearned             -- name of the most recently added item (for the debug panel)
 local lastLoggedPct = -1      -- throttles harvest progress lines into the debug log
 local lastLogTime = 0
 local harvestTicker
 -- The full-DB scan has two phases: brute-force the classic/vanilla range 1..CLASSIC_MAX
 -- (aux usually covers these instantly), then fetch the bundled SoD item list (ns.SoDItems)
--- directly — so we never probe the ~46000 dead IDs in 200000-250000, which is slow and
+-- directly, so we never probe the ~46000 dead IDs in 200000-250000, which is slow and
 -- can disconnect you. Both phases resolve names via GetItemInfo, so the DB stays localized.
 local CLASSIC_MAX = 30000
 
@@ -39,7 +38,6 @@ local function add(itemID, name, q)
     searchList[#searchList + 1] = { id = itemID, name = name, norm = normalize(name), q = q or 1 }
     GuildFoundMarketDB.names[itemID] = name
     GuildFoundMarketDB.quals[itemID] = q or 1
-    lastLearned = name
 end
 
 -- Learn an itemID: store its (localized) name now if cached, else request it.
@@ -75,7 +73,7 @@ end
 --========================================================================
 local HARVEST_BATCH = 400   -- ids processed per tick (cached/known ones are instant, no request)
 local HARVEST_TICK  = 0.1   -- seconds between ticks
-local PENDING_CAP   = 25    -- max outstanding server requests at once — kept low so brute-force
+local PENDING_CAP   = 25    -- max outstanding server requests at once; kept low so brute-force
                             -- probing can't flood the server (which risks a disconnect)
 
 local function sodList()  return ns.SoDItems or {} end
@@ -118,8 +116,8 @@ local function harvestTick()
         local idx = GuildFoundMarketDB.sodNext or 1
         if idx > #list then
             ItemDB.StopHarvest()
-            ns.Feedback(("Item harvest complete — %d items."):format(#searchList), false)
-            if ns.Log then ns.Log(("DBSCAN complete — %d items"):format(#searchList)) end
+            ns.Feedback(("Item harvest complete: %d items."):format(#searchList), false)
+            if ns.Log then ns.Log(("DBSCAN complete: %d items"):format(#searchList)) end
             return
         end
         local budget = HARVEST_BATCH
@@ -148,7 +146,7 @@ function ItemDB.StartHarvest()
             local pos = GuildFoundMarketDB.harvestNext
             local where = (pos <= CLASSIC_MAX) and ("classic id " .. pos)
                 or ("SoD list (" .. #sodList() .. " items)" .. (GuildFoundMarketDB.auxSeeded and ", classic via aux" or ""))
-            ns.Log(("DBSCAN started — %s · %d items so far"):format(where, #searchList))
+            ns.Log(("DBSCAN started: %s · %d items so far"):format(where, #searchList))
         end
     end
 end
@@ -186,7 +184,7 @@ end
 -- One-time opportunistic seed from aux's item database (if present). aux stores
 -- item_ids as { [lowercase_name] = itemID }; we use GetItemInfo for a proper-cased
 -- name when the item is cached, else fall back to aux's name. No server requests
--- are fired here (so it can't flood/throttle) — full coverage, instantly.
+-- are fired here (so it can't flood/throttle): full coverage, instantly.
 function ItemDB.SeedFromAux()
     if GuildFoundMarketDB.disableAux or GuildFoundMarketDB.auxSeeded then return end
     local a = _G.aux
@@ -209,7 +207,7 @@ function ItemDB.SeedFromAux()
 end
 
 -- Rebuild the in-memory list from the persisted names (called on login).
--- IMPORTANT: never call GetItemInfo here — for uncached items that fires a server
+-- IMPORTANT: never call GetItemInfo here; for uncached items that fires a server
 -- request, and doing it for thousands of stored items freezes the client on login.
 function ItemDB.Load()
     GuildFoundMarketDB.names = GuildFoundMarketDB.names or {}

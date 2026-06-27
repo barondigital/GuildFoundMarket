@@ -106,7 +106,7 @@
 
 - **Season of Discovery items are now searchable.** The "Build full DB" scan fetches a
   bundled list of real SoD item IDs (derived from the Questie addon's database) instead of
-  brute-forcing the 200000-250000 range, which was almost all non-existent IDs — slow and
+  brute-forcing the 200000-250000 range, which was almost all non-existent IDs: slow and
   prone to disconnecting you. Classic items are still covered, and skipped instantly when
   the aux addon has already seeded them. Questie is not required at runtime.
 - **Faster, safer database scan:** two phases (classic range + SoD list), a gentler request
@@ -122,25 +122,25 @@
 
 ## 0.4.3
 
-- **Simpler setup.** The marketplace now needs only a single channel line — `GFMc`
+- **Simpler setup.** The marketplace now needs only a single channel line, `GFMc`
   (preferred) or GreenWall's `GWc` as a fallback, with `GFMc` taking precedence. The
   peer-guild lines (`GFMp`/`GWp`) are no longer parsed or required; access is gated purely
   by who can read the channel secret. On login GFM prints which config it picked up.
 - **Sister guilds.** You can now include guilds outside your GreenWall confederation simply
-  by sharing the same `GFMc` line with them — no need to expose your GreenWall `GWc` secret.
+  by sharing the same `GFMc` line with them; no need to expose your GreenWall `GWc` secret.
 - **Help tab: Configuration section.** The Help tab is now scrollable and explains the
   channel config, how to add sister guilds, and the trust consequences of sharing the secret.
 
 ## 0.4.2
 
-- Hover any item to see its full in-game tooltip — in Buy results, a seller's item
+- Hover any item to see its full in-game tooltip: in Buy results, a seller's item
   list, and My Items. The click hint now shows as a small line beneath it.
 
 ## 0.4.1
 
 - **Find a seller by name.** The Sellers filter now also runs as a network query:
   type at least three letters and press Enter, and only sellers whose name matches
-  answer — so you can locate someone even in a large confederation. Typing still
+  answer, so you can locate someone even in a large confederation. Typing still
   narrows the already-listed sellers instantly client-side.
 - **Scales to busy markets.** Incoming replies are coalesced so the list re-sorts
   at most a few times per second instead of once per message; a seller scan now
@@ -150,12 +150,12 @@
 
 ## 0.4.0
 
-- **Sellers tab — browse who's online.** Scan your confederation for sellers who
+- **Sellers tab: browse who's online.** Scan your confederation for sellers who
   are online right now (name + item count + location), then open one to see their
   full list. Catalogs are fetched on demand and chunked, so large lists are fine.
   Includes a client-side name filter.
 - **Online / Offline toggle (My Items).** Pause your listings while you raid or do
-  PvP without clearing anything — your client stops answering searches and seller
+  PvP without clearing anything; your client stops answering searches and seller
   scans, then resumes when you go back online.
 - **Richer row actions.** In Buy, left-click a seller to open their item list and
   right-click to whisper. On a seller's item, right-click opens a whisper pre-filled
@@ -192,7 +192,7 @@ Initial public release.
 - **Buy tab:** item search with multilingual, self-building autocomplete (arrow-key nav,
   quality colors, shift-click an item link to search). Live offers from online sellers,
   sorted cheapest first, showing seller, quantity, price (or "Bid") and current location.
-- **My Items tab:** list your offers (price optional — empty means you take bids). Your
+- **My Items tab:** list your offers (price optional; empty means you take bids). Your
   client answers others' searches automatically; sellers are never notified.
 - Pull/search architecture (query on a hidden channel, point-to-point answers) so it scales
   to large confederations without broadcast lag.

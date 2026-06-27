@@ -1,7 +1,7 @@
 local ADDON, ns = ...
 
 -- Bundled Season of Discovery item IDs. This list is generated once and shipped with
--- the addon — players do NOT need any other addon installed to use it; at runtime GFM
+-- the addon; players do NOT need any other addon installed to use it; at runtime GFM
 -- only reads this table. The DB scan fetches localized names for these via GetItemInfo
 -- instead of brute-forcing 200000-250000 (~93% dead IDs, slow and disconnect-prone).
 --
