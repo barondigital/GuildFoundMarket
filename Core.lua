@@ -711,6 +711,9 @@ local function installShareLinks()
     end
 end
 
+-- Apply the aux-seed setting onto the field the ItemDB seeding actually reads. Idempotent.
+ns.On("setting:auxSeed", function(on) GuildFoundMarketDB.disableAux = not on end)
+
 --========================================================================
 -- Bootstrap
 --========================================================================
@@ -755,6 +758,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end)
         installShareLinks()   -- guild-chat shop-link rewrite + click handling
         if ns.CreateMinimapButton then ns.CreateMinimapButton() end
+        -- push saved settings onto the bus so each feature reactor syncs to it. After the
+        -- minimap exists and before aux seeding, since both react to a setting.
+        if ns.ApplySettings then ns.ApplySettings() end
 
         ns.ItemDB.Load()
         ns.ItemDB.LearnFromBags()
@@ -857,18 +863,12 @@ SlashCmdList.GFMARKET = function(msg)
     elseif msg == "harveststop" then
         ns.ItemDB.StopHarvest(); ns.Feedback("Harvest stopped.", false)
     elseif msg == "minimap" then
-        local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
-        if DBIcon and GuildFoundMarketDB.minimap then
-            GuildFoundMarketDB.minimap.hide = not GuildFoundMarketDB.minimap.hide
-            if GuildFoundMarketDB.minimap.hide then DBIcon:Hide("GuildFoundMarket") else DBIcon:Show("GuildFoundMarket") end
-            ns.Feedback("Minimap button " .. (GuildFoundMarketDB.minimap.hide
-                and "hidden — type /gfm minimap to show it again, or open with /market." or "shown."), false)
-        else
-            ns.Feedback("Minimap button not available.", true)
-        end
+        local on = ns.ToggleSetting("minimapButton")
+        ns.Feedback("Minimap button " .. (on and "shown."
+            or "hidden — type /gfm minimap to show it again, or open with /market."), false)
     elseif ns.dev and msg == "noaux" then
-        GuildFoundMarketDB.disableAux = not GuildFoundMarketDB.disableAux
-        ns.Feedback("aux seed " .. (GuildFoundMarketDB.disableAux and "DISABLED" or "enabled")
+        local on = ns.ToggleSetting("auxSeed")
+        ns.Feedback("aux seed " .. (on and "enabled" or "DISABLED")
             .. " — run /gfm dbreset to clear the current DB and test a clean build.", false)
     elseif ns.dev and msg == "dbreset" then
         ns.ItemDB.Reset()

@@ -210,6 +210,17 @@ function ns.CreateMinimapButton()
     ns.UpdateMinimapIcon()
 end
 
+-- Apply the minimap-button setting: keep LibDBIcon's own .hide field in sync (other code
+-- and the lib both read it) and show/hide the live icon. Idempotent.
+function ns.SetMinimapShown(on)
+    GuildFoundMarketDB.minimap = GuildFoundMarketDB.minimap or {}
+    GuildFoundMarketDB.minimap.hide = not on
+    if DBIcon and DBIcon:IsRegistered("GuildFoundMarket") then
+        if on then DBIcon:Show("GuildFoundMarket") else DBIcon:Hide("GuildFoundMarket") end
+    end
+end
+ns.On("setting:minimapButton", ns.SetMinimapShown)
+
 -- Grey + dim the minimap icon while listings are offline (paused), as a live status cue.
 -- Set it straight on the button (most reliable) and also stash iconR/G/B so it survives
 -- LibDBIcon refreshes.
@@ -718,17 +729,30 @@ local function CreateUI()
     debugBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.debugBtn = debugBtn
 
-    -- tabs
-    local TABS = { { tab = "BUY", label = "Buy", w = 70 }, { tab = "SELLERS", label = "Sellers", w = 80 }, { tab = "MINE", label = "My Items", w = 90 }, { tab = "HELP", label = "Help", w = 50, right = true } }
-    local tx = 20
+    -- tabs. Right-aligned tabs stack leftward in array order, so Help stays rightmost and
+    -- the gear sits just left of it. A tab with an `icon` renders that texture instead of a label.
+    local TABS = {
+        { tab = "BUY", label = "Buy", w = 70 },
+        { tab = "SELLERS", label = "Sellers", w = 80 },
+        { tab = "MINE", label = "My Items", w = 90 },
+        { tab = "HELP", label = "Help", w = 50, right = true },
+        { tab = "OPTIONS", icon = "Interface\\Buttons\\UI-OptionsButton", w = 28, right = true, tip = "Options" },
+    }
+    local tx, rx = 20, -14
     for i, t in ipairs(TABS) do
         local b = CreateFrame("Button", nil, main)
         b:SetSize(t.w, 24)
-        if t.right then b:SetPoint("TOPRIGHT", -14, -36) else b:SetPoint("TOPLEFT", tx, -36); tx = tx + t.w + 8 end
+        if t.right then b:SetPoint("TOPRIGHT", rx, -36); rx = rx - (t.w + 6) else b:SetPoint("TOPLEFT", tx, -36); tx = tx + t.w + 8 end
         b.tab = t.tab
         local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
         local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
-        local txt = b:CreateFontString(nil, "OVERLAY", "GameFontNormal"); txt:SetPoint("CENTER"); txt:SetText(t.label); b.text = txt
+        if t.icon then
+            local tex = b:CreateTexture(nil, "ARTWORK"); tex:SetPoint("CENTER"); tex:SetSize(16, 16); tex:SetTexture(t.icon); b.icon = tex
+            b:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_BOTTOM"); GameTooltip:SetText(t.tip or "Options"); GameTooltip:Show() end)
+            b:SetScript("OnLeave", GameTooltip_Hide)
+        else
+            local txt = b:CreateFontString(nil, "OVERLAY", "GameFontNormal"); txt:SetPoint("CENTER"); txt:SetText(t.label); b.text = txt
+        end
         b:SetScript("OnClick", function(self) ns.SelectTab(self.tab) end)
         tabButtons[i] = b
     end
@@ -1276,11 +1300,61 @@ local function CreateUI()
         " ",
         "|cffffd100Opening & minimap|r",
         "Open with |cffffffff/gfm|r or |cffffffff/market|r, or the minimap button. Toggle the minimap icon with |cffffffff/gfm minimap|r.",
+        " ",
+        "|cffffd100Options|r",
+        "The |cffffffffgear|r at the top right opens Options, where you can turn features on or off. Settings are saved per account.",
     }, "\n"))
     helpContent:SetHeight(helpText:GetStringHeight() + 8)
     main.helpPanel = helpScroll
     main.helpContent = helpContent
     main.helpText = helpText
+
+    --==================== Options panel ====================
+    -- Built entirely from ns.SettingsSchema: one checkbox per entry, no per-feature code.
+    -- A checkbox only ever calls ns.SetSetting; the matching reactor does the actual work.
+    local optPanel = CreateFrame("Frame", nil, main)
+    optPanel:SetPoint("TOPLEFT", 24, -92); optPanel:SetPoint("BOTTOMRIGHT", -30, 16); optPanel:Hide()
+    main.optionsPanel = optPanel
+    local optTitle = optPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    optTitle:SetPoint("TOPLEFT", 4, -4); optTitle:SetText("Options")
+    local optHint = optPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    optHint:SetPoint("TOPLEFT", optTitle, "BOTTOMLEFT", 0, -4)
+    optHint:SetText("Turn features on or off. Changes apply immediately and are saved per account.")
+
+    local optChecks = {}
+    local oy = -48
+    for _, s in ipairs(ns.SettingsSchema) do
+        local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", 4, oy); cb:SetSize(26, 26); cb.key = s.key
+        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
+        -- extend the click/hover area rightward over the label, so hovering or clicking the
+        -- text behaves the same as the checkbox itself (tooltip + toggle)
+        cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
+        cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
+        cb:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(s.label)
+            if s.tip then GameTooltip:AddLine(s.tip, 1, 1, 1, true) end
+            if s.status then
+                local txt, r, g, b = s.status()
+                if txt then GameTooltip:AddLine(" "); GameTooltip:AddLine(txt, r or 1, g or 1, b or 1, true) end
+            end
+            GameTooltip:Show()
+        end)
+        cb:SetScript("OnLeave", GameTooltip_Hide)
+        optChecks[#optChecks + 1] = cb
+        oy = oy - 30
+    end
+
+    -- pull every checkbox from the store; called on entering the tab and on any change
+    -- elsewhere (e.g. a slash command), so the panel always mirrors the live settings.
+    function ns.RefreshOptions()
+        for _, cb in ipairs(optChecks) do cb:SetChecked(ns.GetSetting(cb.key)) end
+    end
+    ns.On("setting", function()
+        if main and main.optionsPanel and main.optionsPanel:IsShown() then ns.RefreshOptions() end
+    end)
 
     ns.SelectTab("BUY")
     main:Hide()
@@ -1339,12 +1413,14 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     for _, b in ipairs(tabButtons) do
         local on = (b.tab == tab)
         b.sel:SetShown(on)
-        b.text:SetTextColor(on and 1 or 1, on and 0.82 or 1, on and 0 or 1)
+        if b.text then b.text:SetTextColor(1, on and 0.82 or 1, on and 0 or 1) end
+        if b.icon then b.icon:SetVertexColor(1, on and 0.82 or 1, on and 0 or 1) end
     end
     local buy     = (tab == "BUY")
     local mine    = (tab == "MINE")
     local sellers = (tab == "SELLERS")
     local help    = (tab == "HELP")
+    local options = (tab == "OPTIONS")
     main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)
     main.ac:Hide()
     main.postPanel:SetShown(mine)
@@ -1367,7 +1443,9 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.announceBtn:SetShown(mine)
     main.helpPanel:SetShown(help)
     main.debugBtn:SetShown(help)
-    main.scroll:SetShown(not help)
+    main.optionsPanel:SetShown(options)
+    main.scroll:SetShown(not help and not options)
+    if options then ns.RefreshOptions() end
     if mine then ns.UpdatePauseButton() end
     if buy then ns.UpdateDBPanel() end
     -- clear stale rows before resetting the scroll: SetVerticalScroll fires renderRows,
@@ -1398,11 +1476,13 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
             ns.SetSellersView("INDEX")   -- sets its own headers + refresh
             ns.ScanSellers("")           -- auto-scan on entering (driven by the tab click = hardware event)
         end
-    elseif help then
+    elseif help or options then
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
         wipe(view); renderRows()
-        main.helpContent:SetHeight(main.helpText:GetStringHeight() + 8)  -- size to text now it's laid out
-        main.helpPanel:SetVerticalScroll(0)                             -- start at the top
+        if help then
+            main.helpContent:SetHeight(main.helpText:GetStringHeight() + 8)  -- size to text now it's laid out
+            main.helpPanel:SetVerticalScroll(0)                             -- start at the top
+        end
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
         ns.RefreshMine()
