@@ -239,11 +239,32 @@ end
 --========================================================================
 -- row rendering (shared between Buy results and My Items)
 --========================================================================
-local function formatBuyRow(r, d)
-    -- every result is from an online seller (offline sellers can't respond)
+-- Price cell text: a coin string, or a gold "Bid" tag when there is no fixed price.
+local function priceText(price)
+    return (price or 0) > 0 and GetCoinTextureString(price) or "|cffffd100Bid|r"
+end
+
+-- Reset a pooled row to a known baseline before a formatter fills in only its differences.
+-- Rows are shared across the Buy / My Items / Sellers tabs, so anything a previous row set
+-- (scripts, colour, the trailing buttons, the hover link) must be cleared here.
+local function resetRow(r)
     r.icon:Hide()
     r.c1:EnableMouse(true)
-    -- the item is implied by the search; tag the row with the random-enchant suffix (if any)
+    r.c1.fs:SetTextColor(1, 1, 1)
+    r.c1.tip = nil
+    r.c1.itemID = nil; r.c1.itemLink = nil
+    r.c1:SetScript("OnClick", nil)
+    r.c2:SetText(""); r.c3:SetText("")
+    r.c4:SetText(""); r.c4:Hide()
+    r.x:Hide(); r.x:SetScript("OnClick", nil)
+    r.edit:Hide(); r.edit:SetScript("OnClick", nil)
+    r.itemID = nil
+end
+
+local function formatBuyRow(r, d)
+    resetRow(r)
+    -- every result is from an online seller (offline sellers can't respond); the item is
+    -- implied by the search, so tag the row with the random-enchant suffix (if any)
     local tag = suffixTag(ns.searchItemID, d.suffix)
     tag = tag ~= "" and (" |cff888888" .. tag .. "|r") or ""
     if d.self then
@@ -257,7 +278,6 @@ local function formatBuyRow(r, d)
         end)
     else
         r.c1.fs:SetText(d.seller .. tag)
-        r.c1.fs:SetTextColor(1, 1, 1)
         r.c1.tip = "Click for items · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.suffix, d.price)
@@ -265,19 +285,18 @@ local function formatBuyRow(r, d)
         end)
     end
     r.c2:SetText(d.qty or 0)
-    r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+    r.c3:SetText(priceText(d.price))
     r.c4:SetText(d.loc or ""); r.c4:Show()
-    r.x:Hide(); r.edit:Hide()
     -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
-    r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(ns.searchItemID, d.suffix)
+    r.c1.itemLink = vLink(ns.searchItemID, d.suffix)
 end
 
 local function formatMineRow(r, d)
+    resetRow(r)
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
-    r.c1:EnableMouse(true)
     r.c1.tip = "Ctrl-click to find who else sells this · shift-click to drop into your open chat message"
-    r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
+    r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1:SetScript("OnClick", function()
         if IsModifiedClick("CHATLINK") then
             local link = vLink(d.id, d.suffix)
@@ -285,44 +304,35 @@ local function formatMineRow(r, d)
         elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
     end)
     r.c2:SetText(d.qty or 0)
-    r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
-    r.c4:SetText(""); r.c4:Hide()
-    r.x:Show()
-    r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
-    r.edit:Show()
-    r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
+    r.c3:SetText(priceText(d.price))
+    r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
+    r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
     r.itemID = d.id
 end
 
 -- Sellers tab: either an index row (a seller) or, in the show view, one of their items.
 local function formatSellerRow(r, d)
+    resetRow(r)
     if d.kind == "seller" then
-        r.icon:Hide()
         r.c1.fs:SetText(d.seller)
         r.c1.fs:SetTextColor(0.4, 1, 0.4)        -- green: online right now
-        r.c1:EnableMouse(true)
         r.c1.tip = "Click to see " .. d.seller .. "'s items"
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
         end)
         r.c2:SetText(d.count or 0)
-        r.c3:SetText("")
         r.c4:SetText(d.loc or ""); r.c4:Show()
-        r.x:Hide(); r.edit:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = nil
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
-        r.c1.fs:SetTextColor(1, 1, 1)
-        r.c1:EnableMouse(true)
         r.c1.tip = "Ctrl-click to compare · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
         r.c2:SetText(d.qty or 0)
-        r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
-        r.c4:SetText(""); r.c4:Hide()
-        r.x:Hide(); r.edit:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
+        r.c3:SetText(priceText(d.price))
+        r.c1.itemLink = vLink(d.id, d.suffix)
     end
 end
 
@@ -340,7 +350,7 @@ local function formatBrowseRow(r, d)
     end)
     r.lvl:SetText(lvl > 0 and lvl or "")
     r.qty:SetText(d.qty or 0)
-    r.price:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
+    r.price:SetText(priceText(d.price))
     r.seller.fs:SetText(d.self and ("|cffffd100" .. d.seller .. " (you)|r") or d.seller)
     if d.self then r.seller:SetScript("OnClick", function() ns.SelectTab("MINE") end)
     else r.seller:SetScript("OnClick", function() ns.SelectTab("SELLERS", d.seller) end) end
@@ -372,131 +382,143 @@ local function renderRows()
     end
 end
 
+-- Shared refresh lifecycle: bail unless this tab/subview is the one on screen, then wipe
+-- the row buffer, let `build` fill and sort it, render, and let `status` set the footer.
+-- Centralizing the order means a refresh can never forget to wipe or render.
+local function refreshList(visible, build, status)
+    if not main or not main:IsShown() or not visible then return end
+    wipe(view)
+    build()
+    renderRows()
+    if status then status() end
+end
+
 --========================================================================
 -- refresh: Buy results
 --========================================================================
 function ns.RefreshBuy()
-    if not main or not main:IsShown() or currentTab ~= "BUY" or buyMode ~= "SEARCH" then return end
-    wipe(view)
-    -- results are keyed by seller+variant; a seller can return several random-enchant variants
-    for _, o in pairs(ns.results) do
-        view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
-    end
-    table.sort(view, function(a, b)
-        -- real prices ascending; "bid" offers (price 0) sink to the bottom
-        local pa = (a.price or 0) > 0 and a.price or math.huge
-        local pb = (b.price or 0) > 0 and b.price or math.huge
-        if pa ~= pb then return pa < pb end
-        if a.seller ~= b.seller then return a.seller < b.seller end
-        return (a.suffix or 0) < (b.suffix or 0)
+    refreshList(currentTab == "BUY" and buyMode == "SEARCH", function()
+        -- results are keyed by seller+variant; a seller can return several random-enchant variants
+        for _, o in pairs(ns.results) do
+            view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
+        end
+        table.sort(view, function(a, b)
+            -- real prices ascending; "bid" offers (price 0) sink to the bottom
+            local pa = (a.price or 0) > 0 and a.price or math.huge
+            local pb = (b.price or 0) > 0 and b.price or math.huge
+            if pa ~= pb then return pa < pb end
+            if a.seller ~= b.seller then return a.seller < b.seller end
+            return (a.suffix or 0) < (b.suffix or 0)
+        end)
+    end, function()
+        if not ns.searchItemID then
+            main.status:SetText("")
+        elseif ns.searching then
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Searching " .. itemName(ns.searchItemID) .. " ...")
+        elseif #view == 0 then
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.searchItemID) .. ".")
+        else
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s), cheapest first."):format(#view))
+        end
     end)
-    renderRows()
-    if not ns.searchItemID then
-        main.status:SetText("");
-    elseif ns.searching then
-        main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Searching " .. itemName(ns.searchItemID) .. " ...")
-    elseif #view == 0 then
-        main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.searchItemID) .. ".")
-    else
-        main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s), cheapest first."):format(#view))
-    end
 end
 
 --========================================================================
 -- refresh: My Items
 --========================================================================
 function ns.RefreshMine()
-    if not main or not main:IsShown() or currentTab ~= "MINE" then return end
-    wipe(view)
-    for key, o in pairs(GuildFoundMarketCharDB.offers) do
-        view[#view + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price, key = key }
-    end
-    table.sort(view, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
-    renderRows()
-    if GuildFoundMarketCharDB.paused then
-        main.status:SetTextColor(1, 0.6, 0.2)
-        main.status:SetText("Listings paused: not answering searches. Click \"Offline\" to go back online.")
-    elseif #view == 0 then
-        main.status:SetTextColor(0.7, 0.7, 0.7)
-        main.status:SetText("No items listed yet: pick one up and click the slot below to offer it.")
-    else
-        main.status:SetText("")
-    end
+    refreshList(currentTab == "MINE", function()
+        for key, o in pairs(GuildFoundMarketCharDB.offers) do
+            view[#view + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price, key = key }
+        end
+        table.sort(view, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
+    end, function()
+        if GuildFoundMarketCharDB.paused then
+            main.status:SetTextColor(1, 0.6, 0.2)
+            main.status:SetText("Listings paused: not answering searches. Click \"Offline\" to go back online.")
+        elseif #view == 0 then
+            main.status:SetTextColor(0.7, 0.7, 0.7)
+            main.status:SetText("No items listed yet: pick one up and click the slot below to offer it.")
+        else
+            main.status:SetText("")
+        end
+    end)
 end
 
 --========================================================================
 -- refresh: Sellers index (list of online sellers, client-side name filter)
 --========================================================================
 function ns.RefreshSellers()
-    if not main or not main:IsShown() or currentTab ~= "SELLERS" or sellersView ~= "INDEX" then return end
-    wipe(view)
-    local filter = (main.sellerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
-    local names = {}
-    for s in pairs(ns.sellerResults) do
-        if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
-    end
-    local asc = sellerSort.asc
-    if sellerSort.col == "count" then
-        table.sort(names, function(a, b)
-            local ca, cb = ns.sellerResults[a].count or 0, ns.sellerResults[b].count or 0
-            if ca ~= cb then return asc and ca < cb or (not asc and ca > cb) end
-            return a < b   -- stable tiebreak: name ascending
-        end)
-    else
-        table.sort(names, function(a, b) return asc and a < b or (not asc and a > b) end)
-    end
-    -- arrow on the active column (Blizzard arrow textures; the font lacks ▲▼ glyphs)
-    local up   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
-    local down = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
-    main.h1:SetText("Seller" .. (sellerSort.col == "name"  and (asc and up or down) or ""))
-    main.h2:SetText("Items"  .. (sellerSort.col == "count" and (asc and up or down) or ""))
-    for _, s in ipairs(names) do
-        local rec = ns.sellerResults[s]
-        view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc }
-    end
-    renderRows()
-    main.status:SetTextColor(0.7, 0.7, 0.7)
-    local sf = ns.scanFilter
-    if ns.scanningSellers then
-        main.status:SetText((sf and sf ~= "") and ("Searching sellers matching \"" .. sf .. "\" ...")
-            or "Scanning your confederation for online sellers ...")
-    elseif next(ns.sellerResults) == nil then
-        main.status:SetText((sf and sf ~= "") and ("No online seller matches \"" .. sf .. "\".")
-            or "No online sellers right now.")
-    elseif #names == 0 then
-        main.status:SetText("No seller matches \"" .. filter .. "\".")
-    elseif ns.sellerCapped then
-        main.status:SetText(("Showing %d online sellers (capped); type %d+ letters of a name and press Enter to find a specific one."):format(#names, ns.FILTER_MIN))
-    else
-        main.status:SetText(("%d online seller(s): click one to see their items."):format(#names))
-    end
+    local filter   -- shared by build (to match names) and status (to report the filter)
+    refreshList(currentTab == "SELLERS" and sellersView == "INDEX", function()
+        filter = (main.sellerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        local names = {}
+        for s in pairs(ns.sellerResults) do
+            if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
+        end
+        local asc = sellerSort.asc
+        if sellerSort.col == "count" then
+            table.sort(names, function(a, b)
+                local ca, cb = ns.sellerResults[a].count or 0, ns.sellerResults[b].count or 0
+                if ca ~= cb then return asc and ca < cb or (not asc and ca > cb) end
+                return a < b   -- stable tiebreak: name ascending
+            end)
+        else
+            table.sort(names, function(a, b) return asc and a < b or (not asc and a > b) end)
+        end
+        -- arrow on the active column (Blizzard arrow textures; the font lacks the glyphs)
+        local up   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
+        local down = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
+        main.h1:SetText("Seller" .. (sellerSort.col == "name"  and (asc and up or down) or ""))
+        main.h2:SetText("Items"  .. (sellerSort.col == "count" and (asc and up or down) or ""))
+        for _, s in ipairs(names) do
+            local rec = ns.sellerResults[s]
+            view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc }
+        end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        local sf = ns.scanFilter
+        if ns.scanningSellers then
+            main.status:SetText((sf and sf ~= "") and ("Searching sellers matching \"" .. sf .. "\" ...")
+                or "Scanning your confederation for online sellers ...")
+        elseif next(ns.sellerResults) == nil then
+            main.status:SetText((sf and sf ~= "") and ("No online seller matches \"" .. sf .. "\".")
+                or "No online sellers right now.")
+        elseif #view == 0 then
+            main.status:SetText("No seller matches \"" .. (filter or "") .. "\".")
+        elseif ns.sellerCapped then
+            main.status:SetText(("Showing %d online sellers (capped); type %d+ letters of a name and press Enter to find a specific one."):format(#view, ns.FILTER_MIN))
+        else
+            main.status:SetText(("%d online seller(s): click one to see their items."):format(#view))
+        end
+    end)
 end
 
 --========================================================================
 -- refresh: Sellers show view (one seller's catalog, fetched lazily)
 --========================================================================
 function ns.RefreshSellerCatalog()
-    if not main or not main:IsShown() or currentTab ~= "SELLERS" or sellersView ~= "SHOW" then return end
-    wipe(view)
     local cat = ns.sellerCatalog
-    if cat then
-        main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
-        local items = {}
-        for _, it in pairs(cat.items) do items[#items + 1] = it end
-        table.sort(items, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
-        for _, it in ipairs(items) do
-            view[#view + 1] = { kind = "item", id = it.id, suffix = it.suffix or 0, qty = it.qty, price = it.price, seller = cat.seller }
+    refreshList(currentTab == "SELLERS" and sellersView == "SHOW", function()
+        if cat then
+            main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
+            local items = {}
+            for _, it in pairs(cat.items) do items[#items + 1] = it end
+            table.sort(items, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
+            for _, it in ipairs(items) do
+                view[#view + 1] = { kind = "item", id = it.id, suffix = it.suffix or 0, qty = it.qty, price = it.price, seller = cat.seller }
+            end
         end
-    end
-    renderRows()
-    main.status:SetTextColor(0.7, 0.7, 0.7)
-    if cat and cat.loading then
-        main.status:SetText("Loading " .. cat.seller .. "'s items ...")
-    elseif cat and next(cat.items) == nil then
-        main.status:SetText(cat.seller .. " has nothing listed right now.")
-    elseif cat then
-        main.status:SetText(("%d item(s): click one to whisper %s."):format(#view, cat.seller))
-    end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        if cat and cat.loading then
+            main.status:SetText("Loading " .. cat.seller .. "'s items ...")
+        elseif cat and next(cat.items) == nil then
+            main.status:SetText(cat.seller .. " has nothing listed right now.")
+        elseif cat then
+            main.status:SetText(("%d item(s): click one to whisper %s."):format(#view, cat.seller))
+        end
+    end)
 end
 
 -- Switch between the seller index and a single seller's catalog.

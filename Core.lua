@@ -482,150 +482,171 @@ end
 --========================================================================
 -- Incoming messages
 --========================================================================
-local function handleMsg(text, sender)
-    local cmd, a, b, c, d, e, f = strsplit("~", text)
-    if cmd == "Q" then
-        notePeerVersion(c)             -- Q~qid~itemID~ver
-        ns.ItemDB.Learn(tonumber(b))   -- learn the searched item (vocabulary)
-        if Ambiguate(sender, "short") == playerName then return end   -- ignore my own query (own offers are injected locally)
-        if isPaused() then return end                                 -- paused: stay invisible
-        local itemID = tonumber(b)
-        -- an offer is the seller's claim: answer every variant we list for this base item,
-        -- exactly as posted, no inventory check (settled buyer<->seller in whispers)
-        local answered = 0
-        for _, it in ipairs(offerList()) do
-            if it.id == itemID then
-                enqueueWhisper(("R~%s~%d~%d~%d~%s~%d"):format(a, it.id, it.qty, it.price, liveLoc(), it.suffix), sender)
-                answered = answered + 1
-            end
+-- One small handler per wire command; handleMsg just splits and dispatches. Each handler
+-- takes the tilde-split fields a..f (meaning differs per command) plus the sender, and
+-- bails early with guard clauses. Splitting per command into its own feature file is a
+-- later step (issue #1 item 7); this table is the seam for it.
+local msgHandlers = {}
+
+-- Q~qid~itemID~ver: someone searched an item. Answer every variant we list for it.
+function msgHandlers.Q(a, b, c, _, _, _, sender)
+    notePeerVersion(c)
+    local itemID = tonumber(b)
+    ns.ItemDB.Learn(itemID)                                       -- learn the searched item (vocabulary)
+    if Ambiguate(sender, "short") == playerName then return end   -- my own query: own offers are injected locally
+    if isPaused() then return end                                 -- paused: stay invisible
+    -- an offer is the seller's claim: answer every variant we list for this base item,
+    -- exactly as posted, no inventory check (settled buyer<->seller in whispers)
+    local answered = 0
+    for _, it in ipairs(offerList()) do
+        if it.id == itemID then
+            enqueueWhisper(("R~%s~%d~%d~%d~%s~%d"):format(a, it.id, it.qty, it.price, liveLoc(), it.suffix), sender)
+            answered = answered + 1
         end
-        if answered > 0 then
-            ns.Log(("answered %s's search for %s (%d variant(s))"):format(Ambiguate(sender, "short"), GetItemInfo(itemID) or ("item:" .. itemID), answered))
+    end
+    if answered > 0 then
+        ns.Log(("answered %s's search for %s (%d variant(s))"):format(Ambiguate(sender, "short"), GetItemInfo(itemID) or ("item:" .. itemID), answered))
+    end
+end
+
+-- R~qid~itemID~qty~price~loc~suffixID: an offer in reply to our search (suffix LAST so
+-- 0.6.0 clients read qty/price/loc correctly).
+function msgHandlers.R(a, b, c, d, e, f, sender)
+    if a ~= activeQid or tonumber(b) ~= ns.searchItemID then return end
+    local suffix = tonumber(f) or 0
+    local s = Ambiguate(sender, "short")
+    ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
+    ns.ItemDB.Learn(tonumber(b))
+    ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
+    if ns.RefreshBuySoon then ns.RefreshBuySoon() end
+end
+
+-- S~sid~filter~ver: a seller-browse scan. Answer with my summary (count + location) if I
+-- have stock and (when filtered) my name matches the requested substring.
+function msgHandlers.S(a, b, c, _, _, _, sender)
+    if Ambiguate(sender, "short") == playerName then return end   -- ignore my own broadcast
+    if isPaused() then return end                                 -- paused: stay invisible
+    notePeerVersion(c)
+    local filter = b
+    if filter and filter ~= "" and not playerName:lower():find(filter, 1, true) then return end
+    local list = offerList()
+    if #list == 0 then return end
+    -- spread replies over time so the scanner isn't hit by a burst; filtered scans match
+    -- few people, so answer those almost immediately.
+    local sid, n, loc = a, #list, liveLoc()
+    local jitter = (filter and filter ~= "") and 0.3 or SCAN_JITTER
+    C_Timer.After(math.random() * jitter, function()
+        enqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
+    end)
+end
+
+-- C~sid~count~loc: a seller's summary in reply to our scan.
+function msgHandlers.C(a, b, c, _, _, _, sender)
+    if a ~= activeSid then return end
+    local s = Ambiguate(sender, "short")
+    if not ns.sellerResults[s] then
+        if (ns.sellerCount or 0) >= SELLER_CAP then ns.sellerCapped = true; return end
+        ns.sellerCount = (ns.sellerCount or 0) + 1
+    end
+    ns.sellerResults[s] = { count = tonumber(b) or 0, loc = c or "" }
+    ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.scanStart or GetTime())))
+    if ns.pendingOpenSeller and s == ns.pendingOpenSeller then
+        -- this seller answered on the private channel, so it's safe to open them
+        ns.pendingOpenSeller = nil
+        if ns.OpenSeller then ns.OpenSeller(s, c or "") end
+        if ns.SetSellersView then ns.SetSellersView("SHOW") end
+    end
+    if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
+end
+
+-- L~lid: a directed request for my full catalog. Reply in <=180-char chunks.
+function msgHandlers.L(a, _, _, _, _, _, sender)
+    if isPaused() then return end                                 -- paused: don't answer
+    local lid, list, buf = a, offerList(), ""
+    local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
+    for i = 1, #list do
+        local it = list[i]
+        local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
+        if #buf + #p + 1 > 180 then flush(1) end
+        buf = (buf == "") and p or (buf .. ";" .. p)
+    end
+    flush(0)   -- final chunk (empty if I have nothing listed)
+    ns.Log(("sent my catalog (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
+end
+
+-- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix;...).
+function msgHandlers.K(a, b, c)
+    if a ~= activeLid or not ns.sellerCatalog then return end
+    for chunk in (c or ""):gmatch("[^;]+") do
+        local id, qty, price, suffix = strsplit(":", chunk)
+        id = tonumber(id)
+        if id then
+            local sfx = tonumber(suffix) or 0
+            ns.sellerCatalog.items[vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+            ns.ItemDB.Learn(id)
         end
-    elseif cmd == "R" then
-        -- R~qid~itemID~qty~price~loc~suffixID  (suffix LAST so 0.6.0 clients read qty/price/loc correctly)
-        if a == activeQid and tonumber(b) == ns.searchItemID then
-            local suffix = tonumber(f) or 0
-            local s = Ambiguate(sender, "short")
-            ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
-            ns.ItemDB.Learn(tonumber(b))
-            ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
-            if ns.RefreshBuySoon then ns.RefreshBuySoon() end
+    end
+    if tonumber(b) == 0 then
+        ns.sellerCatalog.loading = false
+        local n = 0; for _ in pairs(ns.sellerCatalog.items) do n = n + 1 end
+        ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellerCatalog.seller, n, GetTime() - (ns.openStart or GetTime())))
+    end
+    if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
+end
+
+-- QC~qid~class~sub~ver: a category browse. Answer with every in-stock offer matching the
+-- class + subclass, chunked like the catalog and capped + jittered like the seller scan.
+function msgHandlers.QC(a, b, c, d, _, _, sender)
+    if Ambiguate(sender, "short") == playerName then return end   -- own query: injected locally
+    if isPaused() then return end
+    notePeerVersion(d)
+    local classID, subID = tonumber(b), tonumber(c)
+    if not classID or not subID then return end
+    local matches = {}
+    for _, it in ipairs(offerList()) do
+        local cid, sub = itemCategory(it.id)
+        if cid == classID and sub == subID then
+            matches[#matches + 1] = it
+            if #matches >= BROWSE_MATCH_CAP then break end
         end
-    elseif cmd == "S" then
-        -- a seller-browse scan: answer with my summary (count + location) if I have stock
-        -- and (when the scan is filtered) my name matches the requested substring.
-        if Ambiguate(sender, "short") == playerName then return end   -- ignore my own broadcast
-        if isPaused() then return end                                 -- paused: stay invisible
-        notePeerVersion(c)             -- S~sid~filter~ver
-        local filter = b
-        if filter and filter ~= "" and not playerName:lower():find(filter, 1, true) then return end
-        local list = offerList()
-        if #list > 0 then
-            -- spread replies over time so the scanner isn't hit by a burst; filtered
-            -- scans match few people, so answer those almost immediately.
-            local sid, n, loc = a, #list, liveLoc()
-            local jitter = (filter and filter ~= "") and 0.3 or SCAN_JITTER
-            C_Timer.After(math.random() * jitter, function()
-                enqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
-            end)
-        end
-    elseif cmd == "C" then
-        if a == activeSid then
-            local s = Ambiguate(sender, "short")
-            if not ns.sellerResults[s] then
-                if (ns.sellerCount or 0) >= SELLER_CAP then ns.sellerCapped = true; return end
-                ns.sellerCount = (ns.sellerCount or 0) + 1
-            end
-            ns.sellerResults[s] = { count = tonumber(b) or 0, loc = c or "" }
-            ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.scanStart or GetTime())))
-            if ns.pendingOpenSeller and s == ns.pendingOpenSeller then
-                -- this seller answered on the private channel, so it's safe to open them
-                ns.pendingOpenSeller = nil
-                if ns.OpenSeller then ns.OpenSeller(s, c or "") end
-                if ns.SetSellersView then ns.SetSellersView("SHOW") end
-            end
-            if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
-        end
-    elseif cmd == "L" then
-        -- a directed request for my full catalog; reply in <=180-char chunks
-        if isPaused() then return end                                 -- paused: don't answer
-        local lid, list, buf = a, offerList(), ""
-        local function flush(more) enqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
-        for i = 1, #list do
-            local it = list[i]
+    end
+    if #matches == 0 then return end
+    local qid = a
+    C_Timer.After(math.random() * SCAN_JITTER, function()
+        local buf = ""
+        local function flush(more) enqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
+        for i = 1, #matches do
+            local it = matches[i]
             local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
             if #buf + #p + 1 > 180 then flush(1) end
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
-        flush(0)   -- final chunk (empty if I have nothing listed)
-        ns.Log(("sent my catalog (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
-    elseif cmd == "K" then
-        if a == activeLid and ns.sellerCatalog then
-            for chunk in (c or ""):gmatch("[^;]+") do
-                local id, qty, price, suffix = strsplit(":", chunk)
-                id = tonumber(id)
-                if id then
-                    local sfx = tonumber(suffix) or 0
-                    ns.sellerCatalog.items[vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
-                    ns.ItemDB.Learn(id)
-                end
-            end
-            if tonumber(b) == 0 then
-                ns.sellerCatalog.loading = false
-                local n = 0; for _ in pairs(ns.sellerCatalog.items) do n = n + 1 end
-                ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellerCatalog.seller, n, GetTime() - (ns.openStart or GetTime())))
-            end
-            if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
-        end
-    elseif cmd == "QC" then
-        -- a category browse: answer with every in-stock offer matching class b + subclass c,
-        -- chunked like the catalog and capped + jittered like the seller scan
-        if Ambiguate(sender, "short") == playerName then return end   -- own query: injected locally
-        if isPaused() then return end
-        notePeerVersion(d)             -- QC~qid~class~sub~ver
-        local classID, subID = tonumber(b), tonumber(c)
-        if not classID or not subID then return end
-        local matches = {}
-        for _, it in ipairs(offerList()) do
-            local cid, sub = itemCategory(it.id)
-            if cid == classID and sub == subID then
-                matches[#matches + 1] = it
-                if #matches >= BROWSE_MATCH_CAP then break end
-            end
-        end
-        if #matches > 0 then
-            local qid = a
-            C_Timer.After(math.random() * SCAN_JITTER, function()
-                local buf = ""
-                local function flush(more) enqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
-                for i = 1, #matches do
-                    local it = matches[i]
-                    local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
-                    if #buf + #p + 1 > 180 then flush(1) end
-                    buf = (buf == "") and p or (buf .. ";" .. p)
-                end
-                flush(0)
-            end)
-            ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
-        end
-    elseif cmd == "QR" then
-        -- category browse reply chunk: id:suffix:qty:price;... from one seller
-        if a == activeQCid then
-            local s = Ambiguate(sender, "short")
-            for chunk in (c or ""):gmatch("[^;]+") do
-                local id, qty, price, suffix = strsplit(":", chunk)
-                id = tonumber(id)
-                if id then
-                    local sfx = tonumber(suffix) or 0
-                    ns.browseResults[s .. "#" .. id .. "#" .. sfx] =
-                        { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
-                    ns.ItemDB.Learn(id)
-                end
-            end
-            if ns.RefreshBrowseSoon then ns.RefreshBrowseSoon() end
+        flush(0)
+    end)
+    ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
+end
+
+-- QR~qid~rows: a category browse reply chunk (rows are id:qty:price:suffix;...).
+function msgHandlers.QR(a, _, c, _, _, _, sender)
+    if a ~= activeQCid then return end
+    local s = Ambiguate(sender, "short")
+    for chunk in (c or ""):gmatch("[^;]+") do
+        local id, qty, price, suffix = strsplit(":", chunk)
+        id = tonumber(id)
+        if id then
+            local sfx = tonumber(suffix) or 0
+            ns.browseResults[s .. "#" .. id .. "#" .. sfx] =
+                { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+            ns.ItemDB.Learn(id)
         end
     end
+    if ns.RefreshBrowseSoon then ns.RefreshBrowseSoon() end
+end
+
+local function handleMsg(text, sender)
+    local cmd, a, b, c, d, e, f = strsplit("~", text)
+    local h = msgHandlers[cmd]
+    if h then h(a, b, c, d, e, f, sender) end
 end
 
 --========================================================================
