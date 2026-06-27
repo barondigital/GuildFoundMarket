@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0
+
+- **Alt-click an item to search it.** Alt + left-click any item in your bags or
+  bank opens Guild Found Market and searches it instantly. Works with the default
+  bags and with bag addons (Baganator, Bagnon, Combuctor, AdiBags, BetterBags).
+  Turn it on in the new Options tab; disable it if it clashes with another addon.
+- **New Options tab.** A gear next to Help opens Options, where you can toggle
+  features on or off (the minimap button, alt-click search, and importing item
+  names from aux), each with a short description on mouseover. Settings are saved
+  per account.
+- **Edit your listings in place.** Each item on the My Items tab has an Edit
+  button that loads it into the panel below; change the quantity or price and
+  click Update. No bank trip or relisting needed, since editing does not require
+  the item in your bags.
+- **Ctrl-click your own listings to search.** Ctrl-click an item on My Items to
+  jump to the Buy tab and see who else is selling it, the same as in the Sellers
+  and Browse lists.
+
 ## 0.8.2
 
 - **Minimap right-click toggles your listings online/offline**, the same as the
