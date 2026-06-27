@@ -250,6 +250,21 @@ function ns.AddOffer(itemID, suffix, qty, price)
     return true
 end
 
+-- Edit qty/price of an EXISTING listing in place. No GetItemCount/soulbound checks:
+-- the seller is just adjusting numbers on a listing they already own, and stock often
+-- lives on a bank alt or in a vault they aren't standing at (the whole reason editing
+-- exists instead of remove + re-list). The item/variant itself is never changed here.
+function ns.EditOffer(key, qty, price)
+    local o = offers()[key]
+    if not o then ns.Feedback("That listing no longer exists.", true); return end
+    o.qty = math.max(1, qty or o.qty or 1)
+    o.price = math.max(0, price or 0)
+    if ns.RefreshMine then ns.RefreshMine() end
+    ns.Feedback(("Updated %s x%d%s."):format(GetItemInfo(o.id) or ("item:" .. (o.id or "?")), o.qty, o.price == 0 and " (bids)" or ""), false)
+    ns.Log(("OFFER edited: %s x%d @ %s"):format(GetItemInfo(o.id) or ("item:" .. (o.id or "?")), o.qty, o.price == 0 and "bid" or (o.price .. "c")))
+    return true
+end
+
 function ns.RemoveOffer(key)
     local o = offers()[key]
     offers()[key] = nil

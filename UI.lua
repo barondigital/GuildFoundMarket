@@ -36,6 +36,14 @@ local function parsePrice(str)
     return g * 10000 + s * 100 + c
 end
 
+-- Inverse of parsePrice: copper -> editable "1g20s34c" text for the price box. 0 = "" (bids).
+local function priceToStr(c)
+    c = c or 0
+    if c <= 0 then return "" end
+    local g, s, cc = math.floor(c / 10000), math.floor((c % 10000) / 100), c % 100
+    return (g > 0 and (g .. "g") or "") .. (s > 0 and (s .. "s") or "") .. (cc > 0 and (cc .. "c") or "")
+end
+
 local function itemName(id)
     local name = GetItemInfo(id)
     return name or ("item:" .. id)
@@ -248,7 +256,7 @@ local function formatBuyRow(r, d)
     r.c2:SetText(d.qty or 0)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(d.loc or ""); r.c4:Show()
-    r.x:Hide()
+    r.x:Hide(); r.edit:Hide()
     -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
     r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(ns.searchItemID, d.suffix)
 end
@@ -257,19 +265,21 @@ local function formatMineRow(r, d)
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
     r.c1:EnableMouse(true)
-    r.c1.tip = "Shift-click to drop this item into your open chat message (e.g. an announce)"
+    r.c1.tip = "Ctrl-click to find who else sells this · shift-click to drop into your open chat message"
     r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1:SetScript("OnClick", function()
         if IsModifiedClick("CHATLINK") then
             local link = vLink(d.id, d.suffix)
             if link then ChatEdit_InsertLink(link) end
-        end
+        elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
     end)
     r.c2:SetText(d.qty or 0)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
     r.c4:SetText(""); r.c4:Hide()
     r.x:Show()
     r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
+    r.edit:Show()
+    r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
     r.itemID = d.id
 end
 
@@ -287,7 +297,7 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.count or 0)
         r.c3:SetText("")
         r.c4:SetText(d.loc or ""); r.c4:Show()
-        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = nil
+        r.x:Hide(); r.edit:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = nil
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -301,7 +311,7 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cffffd100Bid|r")
         r.c4:SetText(""); r.c4:Hide()
-        r.x:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
+        r.x:Hide(); r.edit:Hide(); r.itemID = nil; r.c1.itemID = nil; r.c1.itemLink = vLink(d.id, d.suffix)
     end
 end
 
@@ -887,6 +897,7 @@ local function CreateUI()
         r.c3 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c3:SetPoint("LEFT", 382, 0); r.c3:SetWidth(130); r.c3:SetJustifyH("LEFT")
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
+        r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
         r:Hide(); rows[i] = r
     end
 
@@ -1031,12 +1042,18 @@ local function CreateUI()
     panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74)
     main.postPanel = panel
 
+    -- key of the listing being edited; nil = composing a brand-new offer
+    local editingKey = nil
+
     local slot = CreateFrame("Button", "GuildFoundMarketSlot", panel, "ItemButtonTemplate")
     slot:SetPoint("LEFT", 4, 0); slot:SetSize(36, 36)
     local function setDraft()
         local t, id, link = GetCursorInfo()
         if t == "item" and id then
             ClearCursor()
+            -- dropping a fresh item means "new offer", so leave any edit-in-progress
+            editingKey = nil
+            if main.offerBtn then main.offerBtn:SetText("Offer") end
             draft.itemID = id
             draft.link = link
             draft.suffix = 0   -- carry the random-enchant suffix so we list the right variant
@@ -1070,13 +1087,42 @@ local function CreateUI()
     main.priceBox = priceBox
     local offerBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
+    main.offerBtn = offerBtn
+
+    -- clear the compose panel back to the empty "new offer" state
+    local function clearDraft()
+        editingKey = nil
+        draft.itemID = nil; draft.suffix = 0; draft.link = nil
+        SetItemButtonTexture(slot, nil); SetItemButtonCount(slot, 0)
+        qtyBox:SetText("1"); priceBox:SetText("")
+        offerBtn:SetText("Offer")
+    end
+
     offerBtn:SetScript("OnClick", function()
-        if ns.AddOffer(draft.itemID, draft.suffix or 0, tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())) then
-            draft.itemID = nil; draft.suffix = 0; draft.link = nil
-            SetItemButtonTexture(slot, nil); SetItemButtonCount(slot, 0)
-            qtyBox:SetText("1"); priceBox:SetText("")
+        local qty, price = tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())
+        if editingKey then
+            -- editing only changes qty/price; the item/variant stays the listing's own
+            if ns.EditOffer(editingKey, qty, price) then clearDraft() end
+        elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price) then
+            clearDraft()
         end
     end)
+
+    -- Load an existing listing into the compose panel for editing (Edit button on a row).
+    -- Editing avoids the remove + re-list trip to the bank, so we don't require the item
+    -- in inventory here; the slot just mirrors the listing.
+    function ns.LoadOfferForEdit(key)
+        local o = GuildFoundMarketCharDB.offers and GuildFoundMarketCharDB.offers[key]
+        if not o then return end
+        editingKey = key
+        draft.itemID = o.id or tonumber(key); draft.suffix = o.suffix or 0
+        draft.link = vLink(draft.itemID, draft.suffix)
+        SetItemButtonTexture(slot, GetItemIcon(draft.itemID)); SetItemButtonCount(slot, GetItemCount(draft.itemID, true))
+        qtyBox:SetText(tostring(o.qty or 1))
+        priceBox:SetText(priceToStr(o.price))
+        offerBtn:SetText("Update")
+        qtyBox:SetFocus(); qtyBox:HighlightText()
+    end
 
     --==================== item database / harvest panel (Buy tab) ====================
     local dbPanel = CreateFrame("Frame", nil, main)
