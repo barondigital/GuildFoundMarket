@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.1
+
+- **Choose how you type prices.** A new "Price input format" option (in Options) lets you
+  enter prices as coins (3g50s) or as decimal gold (3.50, where the two decimals are silver,
+  so 3.05 = 3g5s). Search results still show the usual coin icons either way.
+- **Quicker listing edits.** Editing a listing now jumps straight to the price field, and
+  pressing Enter in the quantity or price box places or updates the offer (no button click).
+- **Shorter minimap tooltip:** it no longer repeats your online/offline status, since the
+  icon already dims while you are offline.
+- **Internal cleanup:** a large maintainability refactor (the code is now split into
+  focused service files). No change to how the addon behaves, and fully compatible with
+  0.9.0, so mixed 0.9.0 / 0.9.1 guilds keep working together.
+
 ## 0.9.0
 
 - **Alt-click an item to search it.** Alt + left-click any item in your bags or
