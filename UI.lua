@@ -156,6 +156,7 @@ end
 --========================================================================
 local fbToken = 0
 function ns.Feedback(msg, isError)
+    if ns.dev and ns.Log and msg and msg ~= "" then ns.Log("feedback: " .. msg) end   -- mirror into the Debug sidebar in dev mode
     if main and main.status then
         main.status:SetText(msg or "")
         main.status:SetTextColor(isError and 1 or 0.3, isError and 0.3 or 1, 0.3)

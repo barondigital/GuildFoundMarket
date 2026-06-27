@@ -54,12 +54,8 @@ ns.browseSub     = nil
 ns.version = ((C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata)(ADDON, "Version") or "?"
 ns.latestVersion = ns.version
 
-function ns.Feedback(msg, isError)
-    if msg and msg ~= "" then
-        print("|cff00ff96GFM|r: " .. msg)
-        if ns.dev and ns.Log then ns.Log("feedback: " .. msg) end   -- mirror into the Debug sidebar in dev mode
-    end
-end
+-- ns.Feedback is defined once, in UI.lua (status line with print fallback). It used to be
+-- defined here too, but UI loads last so this copy was always dead.
 
 -- Dev one-off output goes to the Debug sidebar only (copy-pasteable), not chat.
 local function devEcho(msg)
