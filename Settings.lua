@@ -23,6 +23,13 @@ ns.SettingsSchema = {
         default = true,
     },
     {
+        key = "altClickSearch",
+        label = "Alt-click an item to search it",
+        tip = "Alt + left-click any item in your bags or bank to open Guild Found Market and instantly search for that item.\n\n"
+            .. "Some bag addons also use Alt-click for their own features. Disable this option if it conflicts with another addon.",
+        default = false,
+    },
+    {
         key = "auxSeed",
         label = "Import item names from the aux addon",
         tip = "Optional speed-up, only useful if you also run the |cffffd100aux|r auction addon.\n\n"

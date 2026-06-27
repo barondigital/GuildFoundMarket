@@ -715,6 +715,43 @@ end
 ns.On("setting:auxSeed", function(on) GuildFoundMarketDB.disableAux = not on end)
 
 --========================================================================
+-- Alt-click search: alt + left-click an item in any bag or bank to open GFM and search it.
+--
+-- Bag-addon agnostic via a single global hook. Every bag UI built on Blizzard's
+-- ContainerFrameItemButtonTemplate (default bags, Baganator, Bagnon/Combuctor, AdiBags,
+-- BetterBags, ...) calls HandleModifiedItemClick(itemLink) at the top of its click path.
+-- It returns false for Alt (no built-in alt action), so the click proceeds normally, but
+-- it WAS called with the link, which is all we need. We post-hook it, and when only Alt is
+-- held we run the search. Some addons (e.g. Baganator) also bind Alt-click to their own
+-- feature; we simply coexist. ClearCursor on the next frame undoes a pickup if one happened.
+--========================================================================
+local function onItemClick(link)
+    if not ns.GetSetting("altClickSearch") then return end
+    if not (IsAltKeyDown() and not IsShiftKeyDown() and not IsControlKeyDown()) then return end
+    if type(link) ~= "string" then return end
+    local id = GetItemInfoInstant(link)
+    if not id then return end
+    ns.Log("ALT-SEARCH: item click id " .. tostring(id))
+    if ns.OpenAndSearch then ns.OpenAndSearch(id) end
+    C_Timer.After(0, function() ClearCursor() end)   -- if the click also picked the item up, drop it back
+end
+
+local bagSearchInstalled = false
+local function installBagSearch()
+    if bagSearchInstalled then return end
+    bagSearchInstalled = true
+    if type(HandleModifiedItemClick) == "function" then
+        hooksecurefunc("HandleModifiedItemClick", onItemClick)
+        ns.Log("ALT-SEARCH: hooked HandleModifiedItemClick")
+    else
+        ns.Log("ALT-SEARCH: HandleModifiedItemClick missing — cannot install")
+    end
+end
+
+-- install lazily the first time the feature is switched on (never for users who leave it off)
+ns.On("setting:altClickSearch", function(on) if on then installBagSearch() end end)
+
+--========================================================================
 -- Bootstrap
 --========================================================================
 local function requestGuildData()
@@ -842,6 +879,17 @@ SlashCmdList.GFMARKET = function(msg)
         ns.dev = not ns.dev
         print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off"))
         if ns.UpdateDebugTitle then ns.UpdateDebugTitle() end
+    elseif msg == "altsearch" then
+        devEcho("|cff00ff96GFM altsearch|r")
+        devEcho("  setting altClickSearch = " .. tostring(ns.GetSetting("altClickSearch")))
+        local loaded = C_AddOns and C_AddOns.IsAddOnLoaded or IsAddOnLoaded
+        local bagAddons = { "Bagnon", "Baganator", "ArkInventory", "AdiBags", "Combuctor", "BetterBags", "Baggins", "ElvUI" }
+        local found = {}
+        if loaded then for _, a in ipairs(bagAddons) do if loaded(a) then found[#found + 1] = a end end end
+        devEcho("  bag addons detected: " .. (#found > 0 and table.concat(found, ", ") or "none (default Blizzard bags)"))
+        devEcho("  HandleModifiedItemClick present: " .. tostring(type(HandleModifiedItemClick) == "function"))
+        devEcho("  Alt + left-click an item now; watch for an \"ALT-SEARCH: item click id\" line below.")
+        if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
     elseif msg == "debug" then
         refreshConfig()
         local t = GetGuildInfoText() or ""

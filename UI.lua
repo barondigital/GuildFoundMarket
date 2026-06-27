@@ -1506,6 +1506,19 @@ function ns.ToggleUI()
     end
 end
 
+-- Open the window straight onto a Buy search for one item (alt-click in a bag/bank).
+function ns.OpenAndSearch(itemID)
+    if not itemID then return end
+    if not main then CreateUI() end
+    if not main:IsShown() then
+        main:Show()
+        if ns.RefreshConfig then ns.RefreshConfig() end
+    end
+    if ns.ItemDB then ns.ItemDB.Learn(itemID) end
+    ns.SelectTab("BUY")
+    selectSearchItem(itemID)
+end
+
 -- Open a shop from a clicked announce link. Routed through a name-filtered seller
 -- scan (see Core) so the shop opens only if that seller answers on your private
 -- channel, never straight from the link itself.
