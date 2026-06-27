@@ -190,7 +190,6 @@ function ns.CreateMinimapButton()
         local function iconTooltip(tt)
             tt:AddLine("Guild Found Market")
             tt:AddLine("Left-click to open / close", 1, 1, 1)
-            tt:AddLine(ns.IsPaused() and "Listings: |cffff5555offline|r" or "Listings: |cff40ff40online|r", 1, 1, 1)
             tt:AddLine("Right-click to toggle online / offline", 1, 1, 1)
         end
         minimapLDB = LDB:NewDataObject("GuildFoundMarket", {
