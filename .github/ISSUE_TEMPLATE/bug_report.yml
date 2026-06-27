@@ -7,6 +7,8 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report a bug. Please fill in as much as you can so it can be reproduced.
+
+        **Please install [BugGrabber](https://www.curseforge.com/wow/addons/bug-grabber) and [BugSack](https://www.curseforge.com/wow/addons/bugsack).** They capture Lua errors so you can copy the full stack trace and paste it below. Click the BugSack icon, open the error, and copy the complete text. A stack trace makes bugs far easier to fix.
   - type: textarea
     id: what-happened
     attributes:
@@ -48,9 +50,11 @@ body:
   - type: textarea
     id: lua-error
     attributes:
-      label: Lua error (if any)
-      description: Paste the full error text. Enable Lua errors with /console scriptErrors 1 or use BugSack/BugGrabbe.
+      label: Stack trace
+      description: Paste the full stack trace from BugSack/BugGrabber (BugSack icon > open the error > copy the complete text).
       render: text
+    validations:
+      required: true
   - type: textarea
     id: other-addons
     attributes:
