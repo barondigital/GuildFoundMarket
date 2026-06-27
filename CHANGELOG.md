@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.2
+
+- **Fix: shop links no longer interfere with Blizzard menus.** Making the "browse shop"
+  links clickable overrode a Blizzard function, which could block protected actions like
+  "Copy Name" from a right-click menu (a taint error). GFM now hooks safely instead.
+- **Fix: shop links work alongside NovaWorldBuffs and Questie.** The link is now built as a
+  normal item link, so those addons no longer throw an "Unknown link type" error on click.
+
 ## 0.9.1
 
 - **Choose how you type prices.** A new "Price input format" option (in Options) lets you
