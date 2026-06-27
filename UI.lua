@@ -265,7 +265,7 @@ local function formatBuyRow(r, d)
     resetRow(r)
     -- every result is from an online seller (offline sellers can't respond); the item is
     -- implied by the search, so tag the row with the random-enchant suffix (if any)
-    local tag = suffixTag(ns.searchItemID, d.suffix)
+    local tag = suffixTag(ns.search.itemID, d.suffix)
     tag = tag ~= "" and (" |cff888888" .. tag .. "|r") or ""
     if d.self then
         -- our own offer, injected locally so we can see our price rank (#6): no point
@@ -280,7 +280,7 @@ local function formatBuyRow(r, d)
         r.c1.fs:SetText(d.seller .. tag)
         r.c1.tip = "Click for items · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, ns.searchItemID, d.suffix, d.price)
+            if button == "RightButton" then whisperItem(d.seller, ns.search.itemID, d.suffix, d.price)
             else ns.SelectTab("SELLERS", d.seller, d.loc) end
         end)
     end
@@ -288,7 +288,7 @@ local function formatBuyRow(r, d)
     r.c3:SetText(priceText(d.price))
     r.c4:SetText(d.loc or ""); r.c4:Show()
     -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
-    r.c1.itemLink = vLink(ns.searchItemID, d.suffix)
+    r.c1.itemLink = vLink(ns.search.itemID, d.suffix)
 end
 
 local function formatMineRow(r, d)
@@ -399,7 +399,7 @@ end
 function ns.RefreshBuy()
     refreshList(currentTab == "BUY" and buyMode == "SEARCH", function()
         -- results are keyed by seller+variant; a seller can return several random-enchant variants
-        for _, o in pairs(ns.results) do
+        for _, o in pairs(ns.search.results) do
             view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
         end
         table.sort(view, function(a, b)
@@ -411,12 +411,12 @@ function ns.RefreshBuy()
             return (a.suffix or 0) < (b.suffix or 0)
         end)
     end, function()
-        if not ns.searchItemID then
+        if not ns.search.itemID then
             main.status:SetText("")
-        elseif ns.searching then
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Searching " .. itemName(ns.searchItemID) .. " ...")
+        elseif ns.search.active then
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Searching " .. itemName(ns.search.itemID) .. " ...")
         elseif #view == 0 then
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.searchItemID) .. ".")
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.search.itemID) .. ".")
         else
             main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s), cheapest first."):format(#view))
         end
@@ -453,13 +453,13 @@ function ns.RefreshSellers()
     refreshList(currentTab == "SELLERS" and sellersView == "INDEX", function()
         filter = (main.sellerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
         local names = {}
-        for s in pairs(ns.sellerResults) do
+        for s in pairs(ns.sellers.results) do
             if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
         end
         local asc = sellerSort.asc
         if sellerSort.col == "count" then
             table.sort(names, function(a, b)
-                local ca, cb = ns.sellerResults[a].count or 0, ns.sellerResults[b].count or 0
+                local ca, cb = ns.sellers.results[a].count or 0, ns.sellers.results[b].count or 0
                 if ca ~= cb then return asc and ca < cb or (not asc and ca > cb) end
                 return a < b   -- stable tiebreak: name ascending
             end)
@@ -472,21 +472,21 @@ function ns.RefreshSellers()
         main.h1:SetText("Seller" .. (sellerSort.col == "name"  and (asc and up or down) or ""))
         main.h2:SetText("Items"  .. (sellerSort.col == "count" and (asc and up or down) or ""))
         for _, s in ipairs(names) do
-            local rec = ns.sellerResults[s]
+            local rec = ns.sellers.results[s]
             view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc }
         end
     end, function()
         main.status:SetTextColor(0.7, 0.7, 0.7)
-        local sf = ns.scanFilter
-        if ns.scanningSellers then
+        local sf = ns.sellers.filter
+        if ns.sellers.scanning then
             main.status:SetText((sf and sf ~= "") and ("Searching sellers matching \"" .. sf .. "\" ...")
                 or "Scanning your confederation for online sellers ...")
-        elseif next(ns.sellerResults) == nil then
+        elseif next(ns.sellers.results) == nil then
             main.status:SetText((sf and sf ~= "") and ("No online seller matches \"" .. sf .. "\".")
                 or "No online sellers right now.")
         elseif #view == 0 then
             main.status:SetText("No seller matches \"" .. (filter or "") .. "\".")
-        elseif ns.sellerCapped then
+        elseif ns.sellers.capped then
             main.status:SetText(("Showing %d online sellers (capped); type %d+ letters of a name and press Enter to find a specific one."):format(#view, ns.FILTER_MIN))
         else
             main.status:SetText(("%d online seller(s): click one to see their items."):format(#view))
@@ -498,7 +498,7 @@ end
 -- refresh: Sellers show view (one seller's catalog, fetched lazily)
 --========================================================================
 function ns.RefreshSellerCatalog()
-    local cat = ns.sellerCatalog
+    local cat = ns.sellers.catalog
     refreshList(currentTab == "SELLERS" and sellersView == "SHOW", function()
         if cat then
             main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
@@ -1491,7 +1491,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
             main.sellerFilter:SetText(findSeller)
             ns.ScanSellers(findSeller:lower())
             if ns.channelName then
-                ns.pendingOpenSeller = findSeller
+                ns.sellers.pendingOpen = findSeller
                 ns.Feedback(("Checking the marketplace for %s's shop…"):format(findSeller), false)
             end
         else

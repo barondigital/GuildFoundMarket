@@ -24,15 +24,23 @@ local playerName = UnitName("player")
 ns.config       = nil   -- parsed confederation config from guild info
 ns.channelName  = nil   -- private channel derived from the config secret
 ns.channelIndex = nil
-ns.results      = {}    -- [sellerName] = { qty, price, loc }  for the active search
-ns.searchItemID = nil
+
+-- Buyer search-by-item state, grouped under one owned table.
+ns.search = {
+    results = {},   -- [sellerName#suffix] = { seller, suffix, qty, price, loc } for the active search
+    itemID  = nil,  -- the item currently being searched
+    -- set while a search runs: active (in flight), start (GetTime when it began)
+}
 local activeQid  = nil
 local querySeq   = 0
 
--- Browse-by-seller state. The index only carries a summary per seller; a seller's
--- full catalog is fetched lazily (a directed whisper) when you open them.
-ns.sellerResults = {}   -- [sellerName] = { count, loc }            index summaries from a scan
-ns.sellerCatalog = nil  -- { seller, loc, items = {[id]=…}, loading } the open seller's catalog
+-- Browse-by-seller state, grouped under one owned table. The index only carries a summary
+-- per seller; a seller's full catalog is fetched lazily (a directed whisper) when opened.
+ns.sellers = {
+    results = {},   -- [sellerName] = { count, loc }  index summaries from a scan
+    catalog = nil,  -- { seller, loc, items = {...}, loading }  the open seller's catalog
+    -- set while a scan runs: scanStart, openStart, filter, scanning, count, capped, pendingOpen
+}
 local activeSid  = nil  -- id of the active "who's selling" scan (drops stale replies)
 local activeLid  = nil  -- id of the active per-seller catalog fetch
 local sellerSeq  = 0
@@ -295,13 +303,13 @@ function ns.Search(itemID)
     if not itemID then return end
     querySeq = querySeq + 1
     activeQid = playerName .. "#" .. querySeq
-    wipe(ns.results)
-    ns.searchItemID = itemID
-    ns.searching = true
+    wipe(ns.search.results)
+    ns.search.itemID = itemID
+    ns.search.active = true
     -- Broadcast the query right here, inside the search keypress/click. SendChatMessage
     -- to a channel is only allowed from a hardware event (never a timer), and addon
     -- messages over custom channels are disabled in Classic Era, so this is the only path.
-    ns.searchStart = GetTime()
+    ns.search.start = GetTime()
     local idx = ensureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("Q~%s~%d~%s"):format(activeQid, itemID, ns.version), "CHANNEL", nil, idx)
@@ -317,7 +325,7 @@ function ns.Search(itemID)
     for _, it in ipairs(offerList()) do
         if it.id == itemID then
             mineCount = mineCount + 1
-            ns.results[playerName .. "#" .. it.suffix] =
+            ns.search.results[playerName .. "#" .. it.suffix] =
                 { seller = playerName, suffix = it.suffix, qty = it.qty, price = it.price, loc = liveLoc(), self = true }
         end
     end
@@ -328,9 +336,9 @@ function ns.Search(itemID)
     local thisQid = activeQid
     C_Timer.After(QUERY_SETTLE, function()
         if activeQid == thisQid then
-            ns.searching = false
-            local n = 0; for _ in pairs(ns.results) do n = n + 1 end
-            ns.Log(("SEARCH done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.searchStart or GetTime())))
+            ns.search.active = false
+            local n = 0; for _ in pairs(ns.search.results) do n = n + 1 end
+            ns.Log(("SEARCH done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.search.start or GetTime())))
             if ns.RefreshBuy then ns.RefreshBuy() end
         end
     end)
@@ -346,15 +354,15 @@ end
 function ns.ScanSellers(filter)
     if not ns.channelName then ns.Feedback("Not in a confederation, can't browse sellers.", true); return end
     filter = filter or ""
-    ns.scanFilter = filter
-    ns.pendingOpenSeller = nil   -- a fresh scan cancels any pending shop-link auto-open
+    ns.sellers.filter = filter
+    ns.sellers.pendingOpen = nil   -- a fresh scan cancels any pending shop-link auto-open
     sellerSeq = sellerSeq + 1
     activeSid = playerName .. "#S" .. sellerSeq
-    wipe(ns.sellerResults)
-    ns.sellerCount = 0
-    ns.sellerCapped = false
-    ns.scanningSellers = true
-    ns.scanStart = GetTime()
+    wipe(ns.sellers.results)
+    ns.sellers.count = 0
+    ns.sellers.capped = false
+    ns.sellers.scanning = true
+    ns.sellers.scanStart = GetTime()
     local idx = ensureChannel()
     if idx then
         SendChatMessage(CHAT_TAG .. ("S~%s~%s~%s"):format(activeSid, filter, ns.version), "CHANNEL", nil, idx)
@@ -371,10 +379,10 @@ function ns.ScanSellers(filter)
             local thisSid, count, loc = activeSid, #list, liveLoc()
             C_Timer.After(0.2, function()
                 if activeSid ~= thisSid then return end
-                if not ns.sellerResults[playerName] then ns.sellerCount = (ns.sellerCount or 0) + 1 end
-                ns.sellerResults[playerName] = { count = count, loc = loc }
-                if ns.pendingOpenSeller == playerName then
-                    ns.pendingOpenSeller = nil
+                if not ns.sellers.results[playerName] then ns.sellers.count = (ns.sellers.count or 0) + 1 end
+                ns.sellers.results[playerName] = { count = count, loc = loc }
+                if ns.sellers.pendingOpen == playerName then
+                    ns.sellers.pendingOpen = nil
                     ns.OpenSeller(playerName, loc)
                     if ns.SetSellersView then ns.SetSellersView("SHOW") end
                 end
@@ -386,13 +394,13 @@ function ns.ScanSellers(filter)
     local thisSid = activeSid
     C_Timer.After(QUERY_SETTLE, function()
         if activeSid == thisSid then
-            ns.scanningSellers = false
-            if ns.pendingOpenSeller then   -- a shop-link click that nobody answered
-                ns.Feedback(("%s's shop isn't answering. They may be offline or out of stock."):format(ns.pendingOpenSeller), true)
-                ns.pendingOpenSeller = nil
+            ns.sellers.scanning = false
+            if ns.sellers.pendingOpen then   -- a shop-link click that nobody answered
+                ns.Feedback(("%s's shop isn't answering. They may be offline or out of stock."):format(ns.sellers.pendingOpen), true)
+                ns.sellers.pendingOpen = nil
             end
             ns.Log(("SELLERS scan done: %d seller(s)%s in %.1fs"):format(
-                ns.sellerCount or 0, ns.sellerCapped and " (capped)" or "", GetTime() - (ns.scanStart or GetTime())))
+                ns.sellers.count or 0, ns.sellers.capped and " (capped)" or "", GetTime() - (ns.sellers.scanStart or GetTime())))
             if ns.RefreshSellers then ns.RefreshSellers() end
         end
     end)
@@ -401,25 +409,25 @@ end
 -- Open one seller: request their full catalog (lazy). Replies arrive as K~ chunks.
 function ns.OpenSeller(seller, loc)
     if not seller then return end
-    loc = loc or (ns.sellerResults[seller] and ns.sellerResults[seller].loc) or ""
+    loc = loc or (ns.sellers.results[seller] and ns.sellers.results[seller].loc) or ""
     ns.Log("OPEN " .. seller .. ": requesting catalog")
     sellerSeq = sellerSeq + 1
     activeLid = playerName .. "#L" .. sellerSeq
-    ns.sellerCatalog = { seller = seller, loc = loc, items = {}, loading = true }
+    ns.sellers.catalog = { seller = seller, loc = loc, items = {}, loading = true }
     if ns._fakeCat and ns._fakeCat[seller] then          -- dev: /gfm fakesellers
         for _, id in ipairs(ns._fakeCat[seller]) do
-            ns.sellerCatalog.items[vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
+            ns.sellers.catalog.items[vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
         end
-        ns.sellerCatalog.loading = false
+        ns.sellers.catalog.loading = false
     elseif ns.selfTest and seller == playerName and not isPaused() then  -- can't whisper yourself
-        for _, it in ipairs(offerList()) do ns.sellerCatalog.items[vkey(it.id, it.suffix)] = it end
-        ns.sellerCatalog.loading = false
+        for _, it in ipairs(offerList()) do ns.sellers.catalog.items[vkey(it.id, it.suffix)] = it end
+        ns.sellers.catalog.loading = false
     else
         enqueueWhisper(("L~%s"):format(activeLid), seller)
         local thisLid = activeLid
         C_Timer.After(QUERY_SETTLE, function()
-            if activeLid == thisLid and ns.sellerCatalog and ns.sellerCatalog.loading then
-                ns.sellerCatalog.loading = false   -- no reply (seller went offline / paused)
+            if activeLid == thisLid and ns.sellers.catalog and ns.sellers.catalog.loading then
+                ns.sellers.catalog.loading = false   -- no reply (seller went offline / paused)
                 if ns.RefreshSellerCatalog then ns.RefreshSellerCatalog() end
             end
         end)
@@ -512,12 +520,12 @@ end
 -- R~qid~itemID~qty~price~loc~suffixID: an offer in reply to our search (suffix LAST so
 -- 0.6.0 clients read qty/price/loc correctly).
 function msgHandlers.R(a, b, c, d, e, f, sender)
-    if a ~= activeQid or tonumber(b) ~= ns.searchItemID then return end
+    if a ~= activeQid or tonumber(b) ~= ns.search.itemID then return end
     local suffix = tonumber(f) or 0
     local s = Ambiguate(sender, "short")
-    ns.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
+    ns.search.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
     ns.ItemDB.Learn(tonumber(b))
-    ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.searchStart or GetTime())))
+    ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.search.start or GetTime())))
     if ns.RefreshBuySoon then ns.RefreshBuySoon() end
 end
 
@@ -544,15 +552,15 @@ end
 function msgHandlers.C(a, b, c, _, _, _, sender)
     if a ~= activeSid then return end
     local s = Ambiguate(sender, "short")
-    if not ns.sellerResults[s] then
-        if (ns.sellerCount or 0) >= SELLER_CAP then ns.sellerCapped = true; return end
-        ns.sellerCount = (ns.sellerCount or 0) + 1
+    if not ns.sellers.results[s] then
+        if (ns.sellers.count or 0) >= SELLER_CAP then ns.sellers.capped = true; return end
+        ns.sellers.count = (ns.sellers.count or 0) + 1
     end
-    ns.sellerResults[s] = { count = tonumber(b) or 0, loc = c or "" }
-    ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.scanStart or GetTime())))
-    if ns.pendingOpenSeller and s == ns.pendingOpenSeller then
+    ns.sellers.results[s] = { count = tonumber(b) or 0, loc = c or "" }
+    ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.sellers.scanStart or GetTime())))
+    if ns.sellers.pendingOpen and s == ns.sellers.pendingOpen then
         -- this seller answered on the private channel, so it's safe to open them
-        ns.pendingOpenSeller = nil
+        ns.sellers.pendingOpen = nil
         if ns.OpenSeller then ns.OpenSeller(s, c or "") end
         if ns.SetSellersView then ns.SetSellersView("SHOW") end
     end
@@ -576,20 +584,20 @@ end
 
 -- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix;...).
 function msgHandlers.K(a, b, c)
-    if a ~= activeLid or not ns.sellerCatalog then return end
+    if a ~= activeLid or not ns.sellers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix = strsplit(":", chunk)
         id = tonumber(id)
         if id then
             local sfx = tonumber(suffix) or 0
-            ns.sellerCatalog.items[vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+            ns.sellers.catalog.items[vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
             ns.ItemDB.Learn(id)
         end
     end
     if tonumber(b) == 0 then
-        ns.sellerCatalog.loading = false
-        local n = 0; for _ in pairs(ns.sellerCatalog.items) do n = n + 1 end
-        ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellerCatalog.seller, n, GetTime() - (ns.openStart or GetTime())))
+        ns.sellers.catalog.loading = false
+        local n = 0; for _ in pairs(ns.sellers.catalog.items) do n = n + 1 end
+        ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellers.catalog.seller, n, GetTime() - (ns.sellers.openStart or GetTime())))
     end
     if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
 end
@@ -947,22 +955,22 @@ SlashCmdList.GFMARKET = function(msg)
         ns.selfTest = not ns.selfTest
         ns.Feedback("Self-test " .. (ns.selfTest and "ON: search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
     elseif ns.dev and msg == "fakesellers" then
-        wipe(ns.sellerResults)
-        ns.sellerResults["Aldorin"]  = { count = 3,  loc = "Bank, Orgrimmar" }
-        ns.sellerResults["Bigbags"]  = { count = 42, loc = "Auction House, Orgrimmar" }
-        ns.sellerResults["Cheapcat"] = { count = 1,  loc = "The Crossroads" }
+        wipe(ns.sellers.results)
+        ns.sellers.results["Aldorin"]  = { count = 3,  loc = "Bank, Orgrimmar" }
+        ns.sellers.results["Bigbags"]  = { count = 42, loc = "Auction House, Orgrimmar" }
+        ns.sellers.results["Cheapcat"] = { count = 1,  loc = "The Crossroads" }
         local many = {}; for i = 1, 42 do many[i] = 700 + i end
         ns._fakeCat = { Aldorin = { 2589, 2592, 4338 }, Cheapcat = { 6948 }, Bigbags = many }
-        ns.scanningSellers = false
+        ns.sellers.scanning = false
         if ns.RefreshSellers then ns.RefreshSellers() end
         ns.Feedback("Injected 3 fake sellers (one with 42 items); open the Sellers tab.", false)
     elseif ns.dev and msg == "faketest" then
-        if not ns.searchItemID then
+        if not ns.search.itemID then
             ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)
         else
-            ns.results["Testseller1#0"]  = { seller = "Testseller1",  suffix = 0, qty = 5,  price = 150000, loc = "Bank, Orgrimmar" }
-            ns.results["Cheapcharlie#0"] = { seller = "Cheapcharlie", suffix = 0, qty = 20, price = 95000,  loc = "Auction House, Orgrimmar" }
-            ns.results["Bidderbob#0"]    = { seller = "Bidderbob",    suffix = 0, qty = 1,  price = 0,      loc = "The Crossroads" }
+            ns.search.results["Testseller1#0"]  = { seller = "Testseller1",  suffix = 0, qty = 5,  price = 150000, loc = "Bank, Orgrimmar" }
+            ns.search.results["Cheapcharlie#0"] = { seller = "Cheapcharlie", suffix = 0, qty = 20, price = 95000,  loc = "Auction House, Orgrimmar" }
+            ns.search.results["Bidderbob#0"]    = { seller = "Bidderbob",    suffix = 0, qty = 1,  price = 0,      loc = "The Crossroads" }
             if ns.RefreshBuy then ns.RefreshBuy() end
             ns.Feedback("Injected 3 fake offers into the current search.", false)
         end
