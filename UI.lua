@@ -1719,6 +1719,9 @@ local function buildPostPanel()
     local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     priceBox:SetPoint("BOTTOMLEFT", 128, 10); priceBox:SetSize(150, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
     main.priceBox = priceBox
+    -- Tab moves between qty and price (Shift+Tab too)
+    qtyBox:SetScript("OnTabPressed", function() priceBox:SetFocus(); priceBox:HighlightText() end)
+    priceBox:SetScript("OnTabPressed", function() qtyBox:SetFocus(); qtyBox:HighlightText() end)
 
     -- the price field follows the chosen format: label text, a live input restriction for the
     -- decimal format, and reformatting the current value when the setting changes.
@@ -2226,24 +2229,30 @@ local function buildWTB()
     local editingWantKey = nil
     local wantDraft = { itemID = nil, suffix = 0 }
 
+    -- fields stay inline on one row (item | qty | price | COD | Want); the labels sit above
     local itemLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     itemLabel:SetPoint("BOTTOMLEFT", 6, 52); itemLabel:SetText("Item (type to search):")
     local itemBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     itemBox:SetPoint("BOTTOMLEFT", 10, 30); itemBox:SetSize(250, 20); itemBox:SetAutoFocus(false)
 
-    -- compact autocomplete for the item field; opens upward (the panel sits at the bottom)
+    -- compact autocomplete for the item field; opens downward like the Buy search picker, with
+    -- arrow-key navigation. Floats below the panel on DIALOG strata.
     local ac = CreateFrame("Frame", nil, main, "BackdropTemplate")
     ac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
     ac:SetBackdropColor(0, 0, 0, 0.92); ac:SetBackdropBorderColor(0.4, 0.4, 0.4)
-    ac:SetPoint("BOTTOMLEFT", itemBox, "TOPLEFT", -2, 2); ac:SetWidth(254); ac:SetFrameStrata("DIALOG"); ac:Hide()
-    ac.rows = {}
+    ac:SetPoint("TOPLEFT", itemBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(254); ac:SetFrameStrata("DIALOG"); ac:Hide()
+    ac.rows = {}; ac.sel = 0
     for i = 1, 8 do
         local row = CreateFrame("Button", nil, ac); row:SetSize(250, 18)
         row:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 18)
         local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        row.selTex = row:CreateTexture(nil, "BACKGROUND"); row.selTex:SetAllPoints(); row.selTex:SetColorTexture(1, 0.82, 0, 0.25); row.selTex:Hide()
         row.icon = row:CreateTexture(nil, "ARTWORK"); row.icon:SetSize(14, 14); row.icon:SetPoint("LEFT", 2, 0)
         row.fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.fs:SetPoint("LEFT", 20, 0)
         row:Hide(); ac.rows[i] = row
+    end
+    local function highlightAC()
+        for i, row in ipairs(ac.rows) do row.selTex:SetShown(ac.sel == i and row:IsShown()) end
     end
 
     local function pickItem(id, name)
@@ -2254,14 +2263,17 @@ local function buildWTB()
     end
     local function updateAC()
         local matches = ns.ItemDB.Match(itemBox:GetText())
+        ac.matches = matches; ac.sel = 0
         if #matches == 0 then ac:Hide(); return end
         for i, row in ipairs(ac.rows) do
             local m = matches[i]
+            row.selTex:Hide()
             if m then
                 row.icon:SetTexture(GetItemIcon(m.id))
                 local col = ITEM_QUALITY_COLORS[m.q] or ITEM_QUALITY_COLORS[1]
                 row.fs:SetText(m.name); row.fs:SetTextColor(col.r, col.g, col.b)
                 row:SetScript("OnClick", function() pickItem(m.id, m.name) end)
+                row:SetScript("OnEnter", function() ac.sel = i; highlightAC() end)
                 row:Show()
             else row:Hide() end
         end
@@ -2273,7 +2285,17 @@ local function buildWTB()
         if linkID then pickItem(tonumber(linkID), itemName(tonumber(linkID))); return end
         wantDraft.itemID = nil; updateAC()
     end)
+    itemBox:SetScript("OnArrowPressed", function(self, key)
+        if not ac:IsShown() or not ac.matches then return end
+        local n = #ac.matches
+        if n == 0 then return end
+        if key == "DOWN" then ac.sel = (ac.sel >= n) and 1 or ac.sel + 1; highlightAC()
+        elseif key == "UP" then ac.sel = (ac.sel <= 1) and n or ac.sel - 1; highlightAC() end
+    end)
     itemBox:SetScript("OnEnterPressed", function(self)
+        if ac:IsShown() and ac.sel and ac.sel > 0 and ac.matches and ac.matches[ac.sel] then
+            local m = ac.matches[ac.sel]; pickItem(m.id, m.name); return
+        end
         local matches = ns.ItemDB.Match(self:GetText())
         if matches[1] then pickItem(matches[1].id, matches[1].name) end
     end)
@@ -2290,6 +2312,21 @@ local function buildWTB()
     label("Price (empty = open to offers)", 336, 52)
     local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
     priceBox:SetPoint("BOTTOMLEFT", 340, 30); priceBox:SetSize(130, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
+
+    -- Tab cycles Item -> Qty -> Price (Shift+Tab reverses). Tabbing out of the item field first
+    -- accepts the highlighted suggestion, so type + Tab is a quick way to pick an item.
+    itemBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then priceBox:SetFocus(); priceBox:HighlightText(); return end
+        local m = ac:IsShown() and ac.matches and ac.matches[ac.sel > 0 and ac.sel or 1]
+        if m then pickItem(m.id, m.name) end
+        qtyBox:SetFocus(); qtyBox:HighlightText()
+    end)
+    qtyBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then itemBox:SetFocus() else priceBox:SetFocus(); priceBox:HighlightText() end
+    end)
+    priceBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then qtyBox:SetFocus(); qtyBox:HighlightText() else itemBox:SetFocus() end
+    end)
 
     local codCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
     codCheck:SetSize(24, 24); codCheck:SetPoint("BOTTOMLEFT", 484, 28)
