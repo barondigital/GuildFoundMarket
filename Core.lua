@@ -43,6 +43,15 @@ ns.sellers = {
     -- set while a scan runs: scanStart, openStart, filter, scanning, count, capped, pendingOpen
 }
 
+-- Browse-by-buyer state (the buy-side mirror of ns.sellers). `find` holds the "who wants this
+-- item?" results, `results` the buyer index, `catalog` one opened buyer's full want list.
+ns.buyers = {
+    results = {},   -- [buyerName] = { count, loc }  index summaries from a scan
+    catalog = nil,  -- { buyer, loc, items = {...}, loading }  the open buyer's want list
+    find    = { itemID = nil, active = false, results = {} },  -- [buyer#suffix] = { buyer, suffix, qty, price, cod, loc, self }
+    -- set while a scan runs: scanStart, filter, scanning, count, capped, pendingOpen
+}
+
 -- Browse-by-category state. A category query (class + subclass) collects matching offers
 -- from many sellers at once; results span many items, keyed by seller + item + variant.
 ns.browseResults = {}   -- [seller#id#suffix] = { seller, id, suffix, qty, price, self }
@@ -103,6 +112,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketDB.quals = GuildFoundMarketDB.quals or {}
         GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
+        GuildFoundMarketCharDB.wants = GuildFoundMarketCharDB.wants or {}   -- WTB list (buy side)
         -- migrate legacy offers keyed by a bare numeric itemID to the "itemID:suffix" form
         do
             local off, legacy = GuildFoundMarketCharDB.offers, {}
@@ -168,6 +178,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         if ns.RefreshMineSoon then ns.RefreshMineSoon() end
         if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
+        if ns.RefreshWantSoon then ns.RefreshWantSoon() end
+        if ns.RefreshBuyerCatalogSoon then ns.RefreshBuyerCatalogSoon() end
+        if ns.RefreshFindBuyersSoon then ns.RefreshFindBuyersSoon() end
     end
 end)
 
@@ -254,6 +267,16 @@ SlashCmdList.GFMARKET = function(msg)
         ns.sellers.scanning = false
         if ns.RefreshSellers then ns.RefreshSellers() end
         ns.Feedback("Injected 3 fake sellers (Aldorin has a note, Bigbags 'click to load'); open the Sellers tab.", false)
+    elseif ns.dev and msg == "fakebuyers" then
+        wipe(ns.buyers.results)
+        ns.buyers.results["Wantsalot"] = { count = 3,  loc = "Bank, Orgrimmar" }
+        ns.buyers.results["Maxbidder"] = { count = 12, loc = "Auction House, Orgrimmar" }
+        ns.buyers.results["Pennypinch"] = { count = 1, loc = "The Crossroads" }
+        local many = {}; for i = 1, 12 do many[i] = 760 + i end
+        ns._fakeWant = { Wantsalot = { 2589, 2592, 4338 }, Pennypinch = { 6948 }, Maxbidder = many }
+        ns.buyers.scanning = false
+        if ns.RefreshBuyers then ns.RefreshBuyers() end
+        ns.Feedback("Injected 3 fake buyers; open the Buyers tab.", false)
     elseif ns.dev and msg == "faketest" then
         if not ns.search.itemID then
             ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)

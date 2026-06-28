@@ -17,8 +17,10 @@ Services\Transport.lua
 Services\Protocol.lua
 Services\Version.lua
 Services\Offers.lua
+Services\Wants.lua
 Services\Search.lua
 Services\SellerBrowse.lua
+Services\BuyerBrowse.lua
 Services\CategoryBrowse.lua
 Services\ShopLink.lua
 Services\BagSearch.lua

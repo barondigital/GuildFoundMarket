@@ -9,6 +9,12 @@ local view = {}            -- current rows being displayed (buy results / my off
 local currentTab = "BUY"
 local sellersView = "INDEX"  -- within the Sellers tab: "INDEX" (list) or "SHOW" (one seller)
 local sellerSort = { col = "count", asc = false }  -- Sellers index sort: col "name"|"count", direction (default: most items first)
+-- Buyers tab (buy-side mirror of Sellers): "INDEX" (browse buyers), "FIND" (buyers wanting a
+-- picked item), "SHOW" (one buyer's want list). My Items has two sub-modes: "SELLING" | "WTB".
+local buyersView = "INDEX"
+local buyerShowFrom = "INDEX"   -- which Buyers view to return to from a buyer's want list
+local mineMode = "SELLING"
+local buyerSort = { col = "count", asc = false }   -- Buyers index sort, mirrors sellerSort
 local tabButtons = {}
 local draft = { itemID = nil }     -- item being composed in the My Items post panel
 local selectedSearchID = nil
@@ -23,12 +29,17 @@ local browseExpandedSub = nil                     -- Armor subID expanded to its
 local browseRows, browseView = {}, {}             -- the 6-column results table
 local sideRows, sideView = {}, {}                 -- the category sidebar tree
 local setBuyMode                                  -- forward declaration (defined with the other refreshers)
+local setMineMode                                 -- My Items Selling/WTB sub-tab toggle (forward decl)
 
 -- Per-view sort state for the shared item lists. Each view keeps its own column + direction
 -- so its default sticks: Buy search stays cheapest-first; the item lists open on quality.
 local buySort     = { col = "price", asc = true }   -- Buy search rows: name(seller)|qty|price
 local mineSort    = { col = "name",  asc = true }   -- My Items rows:   item(qual/name)|qty|price; opens alphabetical
 local catalogSort = { col = "name",  asc = true }   -- Seller catalog:  item(qual/name)|qty|price; opens alphabetical
+-- Buyers-side item-list sort states, mirroring the seller-side ones above
+local findBuyersSort     = { col = "price", asc = true }   -- "who wants X" results: name(buyer)|qty|price
+local wantSort           = { col = "name",  asc = true }   -- My WTB list:        item(qual/name)|qty|price
+local buyerCatalogSort   = { col = "name",  asc = true }   -- one buyer's wants:  item(qual/name)|qty|price
 -- First click on a qty/price/seller column picks this direction; clicking it again toggles.
 local SORT_DEFAULT_ASC = { name = true, qty = false, price = true, count = false }
 local SORT_UP   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
@@ -179,10 +190,15 @@ end
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
 local function selectSearchItem(id, name)
     if not main then return end
-    if setBuyMode and buyMode ~= "SEARCH" then setBuyMode("SEARCH") end   -- a picked search item always lands in the Search view
     selectedSearchID = id
     main.searchBox:SetText(name or itemName(id)); main.searchBox:SetCursorPosition(0); main.searchBox:ClearFocus()
     main.ac:Hide()
+    if currentTab == "BUYERS" then   -- the same picker, but it finds buyers of the item
+        ns.SetBuyersView("FIND")
+        if ns.FindBuyersForItem then ns.FindBuyersForItem(id) end
+        return
+    end
+    if setBuyMode and buyMode ~= "SEARCH" then setBuyMode("SEARCH") end   -- a picked search item always lands in the Search view
     ns.Search(id)
 end
 
@@ -279,6 +295,13 @@ local function priceText(price)
     return (price or 0) > 0 and GetCoinTextureString(price) or "|cffffd100Bid|r"
 end
 
+-- Want price cell: a coin string tagged COD (firm, paid on delivery) or "max" (a ceiling),
+-- or "Offers" when the buyer set no price (open to offers).
+local function wantPriceText(price, cod)
+    if (price or 0) <= 0 then return "|cffffd100Offers|r" end
+    return GetCoinTextureString(price) .. (cod and " |cffff8800COD|r" or " |cff888888max|r")
+end
+
 -- Reset a pooled row to a known baseline before a formatter fills in only its differences.
 -- Rows are shared across the Buy / My Items / Sellers tabs, so anything a previous row set
 -- (scripts, colour, the trailing buttons, the hover link) must be cleared here.
@@ -294,6 +317,7 @@ local function resetRow(r)
     r.x:Hide(); r.x:SetScript("OnClick", nil)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil
+    r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.itemID = nil
 end
 
@@ -343,6 +367,11 @@ local function formatMineRow(r, d)
     r.c3:SetText(priceText(d.price))
     r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
     r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
+    -- "Find buyers": jump to the Buyers tab and query who wants this item (via the shared
+    -- picker, which on the Buyers tab switches to the FIND view and runs the WQ query)
+    r.findBtn:Show(); r.findBtn:SetScript("OnClick", function()
+        ns.SelectTab("BUYERS"); selectSearchItem(d.id)
+    end)
     r.itemID = d.id
 end
 
@@ -376,6 +405,66 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(priceText(d.price))
         r.c1.itemLink = vLink(d.id, d.suffix)
+    end
+end
+
+-- My WTB list row: like a Selling row but for a wanted item (Remove + Edit, no Find buyers).
+local function formatWantRow(r, d)
+    resetRow(r)
+    r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
+    r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+    r.c1.tip = "Ctrl-click to find sellers of this · shift-click to drop into your open chat message"
+    r.c1.itemLink = vLink(d.id, d.suffix)
+    r.c1:SetScript("OnClick", function()
+        if IsModifiedClick("CHATLINK") then
+            local link = vLink(d.id, d.suffix)
+            if link then ChatEdit_InsertLink(link) end
+        elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
+    end)
+    r.c2:SetText(d.qty or 0)
+    r.c3:SetText(wantPriceText(d.price, d.cod))
+    r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveWant(d.key) end)
+    r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadWantForEdit(d.key) end)
+    r.itemID = d.id
+end
+
+-- Buyers tab row: an index buyer, a "who wants X" result, or one of an open buyer's wants.
+local function formatBuyerRow(r, d)
+    resetRow(r)
+    if d.kind == "buyer" then
+        r.c1.fs:SetText(d.self and (d.buyer .. " (you)") or d.buyer)
+        r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
+        r.c1.tip = "Click to see what " .. d.buyer .. " wants · right-click to whisper"
+        r.c1:SetScript("OnClick", function(_, button)
+            if button == "RightButton" then ChatFrame_OpenChat("/w " .. d.buyer .. " ")
+            else buyerShowFrom = "INDEX"; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
+        end)
+        r.c2:SetText(d.count or 0)
+        r.c4:SetText(d.loc or ""); r.c4:Show()
+    elseif d.kind == "findbuyer" then
+        local id = ns.buyers.find.itemID
+        r.c1.fs:SetText(d.self and (d.buyer .. " (you)") or d.buyer)
+        r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
+        r.c1.tip = "Click for their wants · right-click to whisper about this item"
+        r.c1.itemLink = id and vLink(id, d.suffix)
+        r.c1:SetScript("OnClick", function(_, button)
+            if button == "RightButton" then whisperItem(d.buyer, id, d.suffix, d.price)
+            else buyerShowFrom = "FIND"; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
+        end)
+        r.c2:SetText(d.qty or 0)
+        r.c3:SetText(wantPriceText(d.price, d.cod))
+        r.c4:SetText(d.loc or ""); r.c4:Show()
+    else   -- "wantitem": one item the open buyer wants
+        r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
+        r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+        r.c1.tip = "Right-click to whisper " .. (d.buyer or "") .. " · ctrl-click to find sellers"
+        r.c1.itemLink = vLink(d.id, d.suffix)
+        r.c1:SetScript("OnClick", function(_, button)
+            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price)
+            elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
+        end)
+        r.c2:SetText(d.qty or 0)
+        r.c3:SetText(wantPriceText(d.price, d.cod))
     end
 end
 
@@ -417,6 +506,8 @@ local function renderRows()
         if d then
             if currentTab == "BUY" then formatBuyRow(r, d)
             elseif currentTab == "SELLERS" then formatSellerRow(r, d)
+            elseif currentTab == "BUYERS" then formatBuyerRow(r, d)
+            elseif currentTab == "MINE" and mineMode == "WTB" then formatWantRow(r, d)
             else formatMineRow(r, d) end
             r:Show()
         else
@@ -474,27 +565,35 @@ end
 
 -- The sort state of whichever shared item list is on screen (nil if none is).
 function activeItemSort()
-    if currentTab == "MINE" then return mineSort end
+    if currentTab == "MINE" then return mineMode == "WTB" and wantSort or mineSort end
     if currentTab == "BUY" and buyMode == "SEARCH" then return buySort end
     if currentTab == "SELLERS" and sellersView == "SHOW" then return catalogSort end
+    if currentTab == "BUYERS" then
+        if buyersView == "SHOW" then return buyerCatalogSort end
+        if buyersView == "FIND" then return findBuyersSort end
+    end
 end
 
 function refreshActiveItemView()
-    if currentTab == "MINE" then ns.RefreshMine()
+    if currentTab == "MINE" then if mineMode == "WTB" then ns.RefreshWant() else ns.RefreshMine() end
     elseif currentTab == "BUY" then ns.RefreshBuy()
-    elseif currentTab == "SELLERS" then ns.RefreshSellerCatalog() end
+    elseif currentTab == "SELLERS" then ns.RefreshSellerCatalog()
+    elseif currentTab == "BUYERS" then if buyersView == "SHOW" then ns.RefreshBuyerCatalog() else ns.RefreshFindBuyers() end end
 end
 
 -- Show the sort-header overlays that fit the current view: the item-column overlays for the
--- three shared item lists, the seller-index overlays for the Sellers index, neither elsewhere.
+-- shared item lists, the index overlays for the Sellers/Buyers index, neither elsewhere.
 function updateSharedSortHeaders()
     if not main or not main.itemSort1 then return end
     local itemView  = (currentTab == "MINE")
         or (currentTab == "BUY" and buyMode == "SEARCH")
         or (currentTab == "SELLERS" and sellersView == "SHOW")
-    local indexView = (currentTab == "SELLERS" and sellersView == "INDEX")
+        or (currentTab == "BUYERS" and (buyersView == "SHOW" or buyersView == "FIND"))
+    local sellerIndex = (currentTab == "SELLERS" and sellersView == "INDEX")
+    local buyerIndex  = (currentTab == "BUYERS" and buyersView == "INDEX")
     main.itemSort1:SetShown(itemView); main.itemSort2:SetShown(itemView); main.itemSort3:SetShown(itemView)
-    main.sortName:SetShown(indexView); main.sortCount:SetShown(indexView)
+    main.sortName:SetShown(sellerIndex); main.sortCount:SetShown(sellerIndex)
+    main.buyerSortName:SetShown(buyerIndex); main.buyerSortCount:SetShown(buyerIndex)
 end
 
 --========================================================================
@@ -674,6 +773,168 @@ function ns.SetSellersView(v)
     wipe(view)   -- avoid feeding the other view's stale rows to the formatter on scroll reset
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
     if index then ns.RefreshSellers() else ns.RefreshSellerCatalog() end
+end
+
+--========================================================================
+-- refresh: My WTB list (your own wanted items) — buy-side mirror of RefreshMine
+--========================================================================
+function ns.RefreshWant()
+    local filter, hasWants
+    refreshList(currentTab == "MINE" and mineMode == "WTB", function()
+        filter = (main.wtbFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        for key, w in pairs(GuildFoundMarketCharDB.wants) do
+            hasWants = true
+            local id, suffix = w.id or tonumber(key), w.suffix or 0
+            if filter == "" or vName(id, suffix):lower():find(filter, 1, true) then
+                view[#view + 1] = { id = id, suffix = suffix, qty = w.qty, price = w.price, cod = w.cod, key = key, q = (itemQualLevel(id, suffix)) }
+            end
+        end
+        applyItemHeaderArrows(wantSort, "Item", true)
+        sortItemView(view, wantSort, function(d) return vName(d.id, d.suffix) end)
+    end, function()
+        if GuildFoundMarketCharDB.paused then
+            main.status:SetTextColor(1, 0.6, 0.2)
+            main.status:SetText("Listings paused: not answering buyer searches. Click \"Offline\" to go back online.")
+        elseif not hasWants then
+            main.status:SetTextColor(0.7, 0.7, 0.7)
+            main.status:SetText("Nothing wanted yet: pick an item below to add it to your WTB list.")
+        elseif #view == 0 then
+            main.status:SetTextColor(0.7, 0.7, 0.7)
+            main.status:SetText("No wanted item matches \"" .. (filter or "") .. "\".")
+        else
+            main.status:SetText("")
+        end
+    end)
+end
+
+--========================================================================
+-- refresh: Buyers index (online buyers with a want list) — mirror of RefreshSellers
+--========================================================================
+function ns.RefreshBuyers()
+    local filter
+    refreshList(currentTab == "BUYERS" and buyersView == "INDEX", function()
+        filter = (main.buyerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        local names = {}
+        for s in pairs(ns.buyers.results) do
+            if filter == "" or s:lower():find(filter, 1, true) then names[#names + 1] = s end
+        end
+        local asc = buyerSort.asc
+        if buyerSort.col == "count" then
+            table.sort(names, function(a, b)
+                local ca, cb = ns.buyers.results[a].count or 0, ns.buyers.results[b].count or 0
+                if ca ~= cb then return asc and ca < cb or (not asc and ca > cb) end
+                return a < b
+            end)
+        else
+            table.sort(names, function(a, b) return asc and a < b or (not asc and a > b) end)
+        end
+        main.h1:SetText("Buyer" .. (buyerSort.col == "name"  and (asc and SORT_UP or SORT_DOWN) or ""))
+        main.h2:SetText("Wants" .. (buyerSort.col == "count" and (asc and SORT_UP or SORT_DOWN) or ""))
+        for _, s in ipairs(names) do
+            local rec = ns.buyers.results[s]
+            view[#view + 1] = { kind = "buyer", buyer = s, count = rec.count, loc = rec.loc, self = (s == playerName) }
+        end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        local sf = ns.buyers.filter
+        if ns.buyers.scanning then
+            main.status:SetText((sf and sf ~= "") and ("Searching buyers matching \"" .. sf .. "\" ...")
+                or "Scanning your confederation for buyers ...")
+        elseif next(ns.buyers.results) == nil then
+            main.status:SetText((sf and sf ~= "") and ("No buyer matches \"" .. sf .. "\".")
+                or "No buyers with a want list right now.")
+        elseif #view == 0 then
+            main.status:SetText("No buyer matches \"" .. (filter or "") .. "\".")
+        elseif ns.buyers.capped then
+            main.status:SetText(("Showing %d buyers (capped); type %d+ letters of a name and press Enter."):format(#view, ns.FILTER_MIN))
+        else
+            main.status:SetText(("%d buyer(s): click one to see what they want."):format(#view))
+        end
+    end)
+end
+
+--========================================================================
+-- refresh: "who wants this item?" results — buy-side mirror of RefreshBuy
+--========================================================================
+function ns.RefreshFindBuyers()
+    refreshList(currentTab == "BUYERS" and buyersView == "FIND", function()
+        for _, o in pairs(ns.buyers.find.results) do
+            view[#view + 1] = { kind = "findbuyer", buyer = o.buyer, suffix = o.suffix or 0, qty = o.qty, price = o.price, cod = o.cod, loc = o.loc, self = o.self }
+        end
+        applyItemHeaderArrows(findBuyersSort, "Buyer", false)
+        sortItemView(view, findBuyersSort, function(d) return d.buyer or "" end)
+    end, function()
+        local id = ns.buyers.find.itemID
+        if not id then
+            main.status:SetText("")
+        elseif ns.buyers.find.active then
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Looking for buyers of " .. itemName(id) .. " ...")
+        elseif #view == 0 then
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No one is looking for " .. itemName(id) .. " right now.")
+        else
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d buyer(s) want %s; right-click to whisper."):format(#view, itemName(id)))
+        end
+    end)
+end
+
+--========================================================================
+-- refresh: one buyer's full want list — mirror of RefreshSellerCatalog
+--========================================================================
+function ns.RefreshBuyerCatalog()
+    local cat = ns.buyers.catalog
+    local filter, hasItems
+    refreshList(currentTab == "BUYERS" and buyersView == "SHOW", function()
+        if cat then
+            main.buyerHeader:SetText(cat.buyer .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
+            filter = (main.buyerCatalogFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+            for _, it in pairs(cat.items) do
+                hasItems = true
+                local suffix = it.suffix or 0
+                if filter == "" or vName(it.id, suffix):lower():find(filter, 1, true) then
+                    view[#view + 1] = { kind = "wantitem", id = it.id, suffix = suffix, qty = it.qty, price = it.price, cod = it.cod, buyer = cat.buyer, q = (itemQualLevel(it.id, suffix)) }
+                end
+            end
+            applyItemHeaderArrows(buyerCatalogSort, "Item", true)
+            sortItemView(view, buyerCatalogSort, function(d) return vName(d.id, d.suffix) end)
+        end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        if cat and cat.loading then
+            main.status:SetText("Loading " .. cat.buyer .. "'s want list ...")
+        elseif cat and not hasItems then
+            main.status:SetText(cat.buyer .. " wants nothing right now.")
+        elseif cat and #view == 0 then
+            main.status:SetText("No wanted item matches \"" .. (filter or "") .. "\".")
+        elseif cat then
+            main.status:SetText(("%d wanted item(s): right-click one to whisper %s."):format(#view, cat.buyer))
+        end
+    end)
+end
+
+-- Switch the Buyers tab between the index, "who wants X" results, and one buyer's want list.
+function ns.SetBuyersView(v)
+    if not main then return end
+    buyersView = v
+    local index = (v == "INDEX")
+    local show  = (v == "SHOW")
+    local find  = (v == "FIND")
+    main.buyerFilter:SetShown(index); main.buyerFilterLabel:SetShown(index); main.buyerRefreshBtn:SetShown(index)
+    main.searchBox:SetShown(not show); main.searchLabel:SetShown(index)   -- item search on INDEX/FIND; its label only on INDEX (Back takes its spot in FIND)
+    main.buyerBackBtn:SetShown(not index); main.buyerHeader:SetShown(show)
+    main.buyerCatalogFilter:SetShown(show); main.buyerCatalogFilterLabel:SetShown(show)
+    if show then main.buyerCatalogFilter:SetText("") end
+    main.ac:Hide()
+    updateSharedSortHeaders()
+    if index then
+        main.h1:SetText("Buyer"); main.h2:SetText("Wants"); main.h3:SetText(""); main.h4:SetText("Location")
+    elseif find then
+        main.h1:SetText("Buyer"); main.h2:SetText("Qty"); main.h3:SetText("Price"); main.h4:SetText("Location")
+    else
+        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price"); main.h4:SetText("")
+    end
+    wipe(view)
+    FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
+    if index then ns.RefreshBuyers() elseif find then ns.RefreshFindBuyers() else ns.RefreshBuyerCatalog() end
 end
 
 --========================================================================
@@ -887,6 +1148,10 @@ local function scheduleRefresh(which)
         if p.sellers and ns.RefreshSellers        then ns.RefreshSellers() end
         if p.catalog and ns.RefreshSellerCatalog  then ns.RefreshSellerCatalog() end
         if p.browse  and ns.RefreshBrowse         then ns.RefreshBrowse() end
+        if p.want    and ns.RefreshWant           then ns.RefreshWant() end
+        if p.buyers  and ns.RefreshBuyers         then ns.RefreshBuyers() end
+        if p.findbuy and ns.RefreshFindBuyers     then ns.RefreshFindBuyers() end
+        if p.bcat    and ns.RefreshBuyerCatalog   then ns.RefreshBuyerCatalog() end
     end)
 end
 function ns.RefreshBuySoon()           scheduleRefresh("buy") end
@@ -894,6 +1159,10 @@ function ns.RefreshMineSoon()          scheduleRefresh("mine") end
 function ns.RefreshSellersSoon()       scheduleRefresh("sellers") end
 function ns.RefreshSellerCatalogSoon() scheduleRefresh("catalog") end
 function ns.RefreshBrowseSoon()        scheduleRefresh("browse") end
+function ns.RefreshWantSoon()          scheduleRefresh("want") end
+function ns.RefreshBuyersSoon()        scheduleRefresh("buyers") end
+function ns.RefreshFindBuyersSoon()    scheduleRefresh("findbuy") end
+function ns.RefreshBuyerCatalogSoon()  scheduleRefresh("bcat") end
 
 function ns.UpdateVersionDisplay()
     if not main or not main.versionFS then return end
@@ -947,6 +1216,7 @@ local function buildTabs()
     local TABS = {
         { tab = "BUY", label = "Buy", w = 70 },
         { tab = "SELLERS", label = "Sellers", w = 80 },
+        { tab = "BUYERS", label = "Buyers", w = 80 },
         { tab = "MINE", label = "My Items", w = 90 },
         { tab = "HELP", label = "Help", w = 50, right = true },
         { tab = "OPTIONS", icon = "Interface\\Buttons\\UI-OptionsButton", w = 28, right = true, tip = "Options" },
@@ -1038,7 +1308,7 @@ local function buildAutocomplete()
     if not ns._linkHooked then
         ns._linkHooked = true
         hooksecurefunc("ChatEdit_InsertLink", function(link)
-            if not (main and main:IsShown() and currentTab == "BUY" and main.searchBox and main.searchBox:HasFocus()) then return end
+            if not (main and main:IsShown() and (currentTab == "BUY" or currentTab == "BUYERS") and main.searchBox and main.searchBox:HasFocus()) then return end
             local id = link and tonumber(tostring(link):match("Hitem:(%d+)"))
             if id then ns.ItemDB.Learn(id); selectSearchItem(id) end
         end)
@@ -1068,7 +1338,7 @@ local function buildAutocomplete()
             local m = ac.matches[ac.sel]; selectItem(m.id, m.name); return
         end
         local matches = ns.ItemDB.Match(self:GetText())
-        if selectedSearchID then ns.Search(selectedSearchID); ac:Hide(); self:ClearFocus()
+        if selectedSearchID then selectItem(selectedSearchID, self:GetText()); ac:Hide(); self:ClearFocus()
         elseif matches[1] then selectItem(matches[1].id, matches[1].name) end
     end)
     -- shift-click an item link/bag item into the search box
@@ -1083,22 +1353,24 @@ local function buildHeaders()
     local function header(x) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); return fs end
     main.h1 = header(28); main.h2 = header(322); main.h3 = header(384); main.h4 = header(524)
 
-    -- clickable overlays on the Seller/Items headers to sort the Sellers index (#5);
-    -- shown only in that view (see SetSellersView / SelectTab). Toggle asc/desc on repeat.
-    local function sortHeaderBtn(target, col, w)
+    -- clickable overlays on the index Name/Count headers (Sellers and Buyers); shown only in
+    -- the matching index view (see SetSellersView/SetBuyersView). Toggle asc/desc on repeat.
+    local function sortHeaderBtn(target, col, w, sortState, refresh)
         local b = CreateFrame("Button", nil, main)
         b:SetPoint("LEFT", target, "LEFT", -2, 0); b:SetSize(w, 16)
         b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         b:SetScript("OnClick", function()
-            if sellerSort.col == col then sellerSort.asc = not sellerSort.asc
-            else sellerSort.col = col; sellerSort.asc = true end
-            ns.RefreshSellers()
+            if sortState.col == col then sortState.asc = not sortState.asc
+            else sortState.col = col; sortState.asc = true end
+            refresh()
         end)
         b:Hide()
         return b
     end
-    main.sortName  = sortHeaderBtn(main.h1, "name", 150)
-    main.sortCount = sortHeaderBtn(main.h2, "count", 48)
+    main.sortName       = sortHeaderBtn(main.h1, "name",  150, sellerSort, function() ns.RefreshSellers() end)
+    main.sortCount      = sortHeaderBtn(main.h2, "count", 48,  sellerSort, function() ns.RefreshSellers() end)
+    main.buyerSortName  = sortHeaderBtn(main.h1, "name",  150, buyerSort,  function() ns.RefreshBuyers() end)
+    main.buyerSortCount = sortHeaderBtn(main.h2, "count", 48,  buyerSort,  function() ns.RefreshBuyers() end)
 
     -- clickable overlays on the Item/Qty/Price headers, shared by the three item lists
     -- (Buy search, My Items, seller catalog). The first header sorts by quality/name (a
@@ -1111,7 +1383,7 @@ local function buildHeaders()
             local s = activeItemSort()
             if not s then return end
             if kind == "name" then
-                if s == buySort then          -- Buy results: "Seller" is a plain name toggle, no quality
+                if s == buySort or s == findBuyersSort then   -- results lists: first column is a plain name (seller/buyer) toggle, no quality
                     if s.col == "name" then s.asc = not s.asc else s.col = "name"; s.asc = SORT_DEFAULT_ASC.name end
                 elseif s.itemSorted then       -- already cycling the Item column: advance one step
                     s.col, s.asc = nextItemSort(s)
@@ -1219,7 +1491,19 @@ local function buildRows()
             local onEnter = self:GetScript("OnEnter"); if onEnter then onEnter(self) end   -- reflect new state
         end)
         r.noteBtn:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn)
+        -- "Find buyers" icon (My Items › Selling rows only): jumps to the Buyers tab and queries
+        -- who wants this item. Positioned left of Edit; OnClick wired per-row in formatMineRow.
+        r.findBtn = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.findBtn:SetSize(20, 20); r.findBtn:SetPoint("RIGHT", r.edit, "LEFT", -2, 0)
+        r.findBtn:RegisterForClicks("LeftButtonUp")
+        local fb = r.findBtn:CreateTexture(nil, "ARTWORK"); fb:SetSize(14, 14); fb:SetPoint("CENTER")
+        fb:SetTexture("Interface\\MoneyFrame\\UI-GoldIcon")
+        r.findBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Find buyers for this item"); GameTooltip:Show()
+        end)
+        r.findBtn:SetScript("OnLeave", GameTooltip_Hide)
+        r.findBtn:Hide()
+        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn)
         r:Hide(); rows[i] = r
     end
 end
@@ -1606,13 +1890,61 @@ local function buildSellerWidgets()
     main.catalogFilter = catalogFilter
 end
 
+local function buildBuyerWidgets()
+    --==================== Buyers tab widgets (index + find + show) ====================
+    -- The item search reuses the shared main.searchBox / main.ac (see SelectTab). Here we add
+    -- the buyer-name filter, refresh, back, header, and the per-buyer "Find item:" filter.
+    local buyerFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    buyerFilterLabel:SetPoint("TOPLEFT", 408, -68); buyerFilterLabel:SetText("Buyer:"); buyerFilterLabel:Hide()
+    main.buyerFilterLabel = buyerFilterLabel
+    local buyerFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    buyerFilter:SetPoint("TOPLEFT", 452, -64); buyerFilter:SetSize(180, 22); buyerFilter:SetAutoFocus(false); buyerFilter:Hide()
+    local function buyerFilterText() return (buyerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower() end
+    buyerFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshBuyers() end end)
+    buyerFilter:SetScript("OnEnterPressed", function(self)
+        local t = buyerFilterText(); self:ClearFocus()
+        if t == "" then ns.ScanBuyers("")
+        elseif #t >= ns.FILTER_MIN then ns.ScanBuyers(t)
+        else ns.Feedback(("Type at least %d letters of a name to search buyers."):format(ns.FILTER_MIN), true) end
+    end)
+    buyerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanBuyers("") end)
+    main.buyerFilter = buyerFilter
+    local buyerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    buyerRefreshBtn:SetSize(80, 22); buyerRefreshBtn:SetPoint("TOPLEFT", 640, -64); buyerRefreshBtn:SetText("Refresh"); buyerRefreshBtn:Hide()
+    buyerRefreshBtn:SetScript("OnClick", function()
+        local t = buyerFilterText(); ns.ScanBuyers((#t >= ns.FILTER_MIN) and t or "")
+    end)
+    main.buyerRefreshBtn = buyerRefreshBtn
+
+    local buyerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    buyerBackBtn:SetSize(70, 22); buyerBackBtn:SetPoint("TOPLEFT", 16, -64); buyerBackBtn:SetText("< Back"); buyerBackBtn:Hide()
+    buyerBackBtn:SetScript("OnClick", function()
+        if buyersView == "SHOW" then ns.SetBuyersView(buyerShowFrom or "INDEX") else ns.SetBuyersView("INDEX") end
+    end)
+    main.buyerBackBtn = buyerBackBtn
+    local buyerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    buyerHeader:SetPoint("LEFT", buyerBackBtn, "RIGHT", 12, 0); buyerHeader:SetText(""); buyerHeader:Hide()
+    main.buyerHeader = buyerHeader
+
+    local buyerCatalogFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    buyerCatalogFilterLabel:SetPoint("TOPRIGHT", -222, -70); buyerCatalogFilterLabel:SetText("Find item:"); buyerCatalogFilterLabel:Hide()
+    main.buyerCatalogFilterLabel = buyerCatalogFilterLabel
+    local buyerCatalogFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    buyerCatalogFilter:SetPoint("TOPRIGHT", -40, -66); buyerCatalogFilter:SetSize(170, 22); buyerCatalogFilter:SetAutoFocus(false); buyerCatalogFilter:Hide()
+    buyerCatalogFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshBuyerCatalog() end end)
+    buyerCatalogFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshBuyerCatalog() end)
+    main.buyerCatalogFilter = buyerCatalogFilter
+end
+
 local function buildPauseAnnounce()
     --==================== My Items: online/offline toggle ====================
+    -- (the "Listings:" label is gone; the Selling/WTB sub-tab buttons live at the far left now,
+    -- and the pause button's own text says Online/Offline. Kept as a hidden field for safety.)
     local pauseLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    pauseLabel:SetPoint("TOPLEFT", 16, -70); pauseLabel:SetText("Listings:"); pauseLabel:Hide()
+    pauseLabel:SetPoint("TOPLEFT", 16, -70); pauseLabel:SetText(""); pauseLabel:Hide()
     main.pauseLabel = pauseLabel
     local pauseBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    pauseBtn:SetSize(140, 22); pauseBtn:SetPoint("TOPLEFT", 70, -66); pauseBtn:Hide()
+    pauseBtn:SetSize(120, 22); pauseBtn:SetPoint("TOPLEFT", 142, -64); pauseBtn:Hide()
     pauseBtn:SetScript("OnClick", function() ns.ToggleListings() end)
     pauseBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -1633,10 +1965,10 @@ local function buildPauseAnnounce()
     -- substring filter over your listed items (client-side), sitting between the pause button
     -- and the announce controls
     local mineFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    mineFilterLabel:SetPoint("TOPLEFT", 230, -70); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
+    mineFilterLabel:SetPoint("TOPLEFT", 268, -68); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
     main.mineFilterLabel = mineFilterLabel
     local mineFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    mineFilter:SetPoint("TOPLEFT", 300, -66); mineFilter:SetSize(150, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
+    mineFilter:SetPoint("TOPLEFT", 332, -64); mineFilter:SetSize(120, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
     mineFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshMine() end end)
     mineFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshMine() end)
     main.mineFilter = mineFilter
@@ -1864,6 +2196,170 @@ local HELP_SETUP = table.concat({
     "• |cffffd100Consequence:|r the GFMc secret is the only gate. Everyone you hand it to can see and answer every search and browse all listed sellers. Share it only with guilds you trust to trade.",
 }, "\n")
 
+local function buildWTB()
+    --==================== My Items: Selling/WTB sub-tabs + WTB compose ====================
+    -- two small sub-tab buttons at the far left (the pause button moved right to make room)
+    local function subTabBtn(x, text)
+        local b = CreateFrame("Button", nil, main); b:SetSize(56, 22); b:SetPoint("TOPLEFT", x, -64); b:Hide()
+        local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
+        local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
+        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
+        return b
+    end
+    main.mineSellBtn = subTabBtn(16, "Selling")
+    main.mineWtbBtn  = subTabBtn(74, "WTB")
+    main.mineSellBtn:SetScript("OnClick", function() setMineMode("SELLING") end)
+    main.mineWtbBtn:SetScript("OnClick", function() setMineMode("WTB") end)
+
+    -- substring filter over your WTB list (shares the "Find item:" label with Selling)
+    local wtbFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    wtbFilter:SetPoint("TOPLEFT", 332, -64); wtbFilter:SetSize(120, 22); wtbFilter:SetAutoFocus(false); wtbFilter:Hide()
+    wtbFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshWant() end end)
+    wtbFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshWant() end)
+    main.wtbFilter = wtbFilter
+
+    --==================== WTB compose panel (item via autocomplete, qty, price, COD) ====
+    local panel = CreateFrame("Frame", nil, main)
+    panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74); panel:Hide()
+    main.wtbPanel = panel
+
+    local editingWantKey = nil
+    local wantDraft = { itemID = nil, suffix = 0 }
+
+    local itemLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    itemLabel:SetPoint("BOTTOMLEFT", 6, 52); itemLabel:SetText("Item (type to search):")
+    local itemBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    itemBox:SetPoint("BOTTOMLEFT", 10, 30); itemBox:SetSize(250, 20); itemBox:SetAutoFocus(false)
+
+    -- compact autocomplete for the item field; opens upward (the panel sits at the bottom)
+    local ac = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    ac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    ac:SetBackdropColor(0, 0, 0, 0.92); ac:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    ac:SetPoint("BOTTOMLEFT", itemBox, "TOPLEFT", -2, 2); ac:SetWidth(254); ac:SetFrameStrata("DIALOG"); ac:Hide()
+    ac.rows = {}
+    for i = 1, 8 do
+        local row = CreateFrame("Button", nil, ac); row:SetSize(250, 18)
+        row:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 18)
+        local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        row.icon = row:CreateTexture(nil, "ARTWORK"); row.icon:SetSize(14, 14); row.icon:SetPoint("LEFT", 2, 0)
+        row.fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.fs:SetPoint("LEFT", 20, 0)
+        row:Hide(); ac.rows[i] = row
+    end
+
+    local function pickItem(id, name)
+        wantDraft.itemID = id; wantDraft.suffix = 0
+        ns.ItemDB.Learn(id)
+        itemBox:SetText(name or itemName(id)); itemBox:SetCursorPosition(0); itemBox:ClearFocus()
+        ac:Hide()
+    end
+    local function updateAC()
+        local matches = ns.ItemDB.Match(itemBox:GetText())
+        if #matches == 0 then ac:Hide(); return end
+        for i, row in ipairs(ac.rows) do
+            local m = matches[i]
+            if m then
+                row.icon:SetTexture(GetItemIcon(m.id))
+                local col = ITEM_QUALITY_COLORS[m.q] or ITEM_QUALITY_COLORS[1]
+                row.fs:SetText(m.name); row.fs:SetTextColor(col.r, col.g, col.b)
+                row:SetScript("OnClick", function() pickItem(m.id, m.name) end)
+                row:Show()
+            else row:Hide() end
+        end
+        ac:SetHeight(math.min(#matches, 8) * 18 + 4); ac:Show()
+    end
+    itemBox:SetScript("OnTextChanged", function(self, user)
+        if not user then return end
+        local linkID = self:GetText():match("|Hitem:(%d+)")
+        if linkID then pickItem(tonumber(linkID), itemName(tonumber(linkID))); return end
+        wantDraft.itemID = nil; updateAC()
+    end)
+    itemBox:SetScript("OnEnterPressed", function(self)
+        local matches = ns.ItemDB.Match(self:GetText())
+        if matches[1] then pickItem(matches[1].id, matches[1].name) end
+    end)
+    itemBox:SetScript("OnEscapePressed", function(self) ac:Hide(); self:ClearFocus() end)
+    itemBox:SetScript("OnReceiveDrag", function(self)
+        local t, id = GetCursorInfo()
+        if t == "item" and id then ClearCursor(); pickItem(id, itemName(id)) end
+    end)
+
+    local function label(text, x, y) local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("BOTTOMLEFT", x, y); fs:SetText(text); return fs end
+    label("Qty", 276, 52)
+    local qtyBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    qtyBox:SetPoint("BOTTOMLEFT", 280, 30); qtyBox:SetSize(40, 20); qtyBox:SetAutoFocus(false); qtyBox:SetNumeric(true); qtyBox:SetText("1")
+    label("Price (empty = open to offers)", 336, 52)
+    local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    priceBox:SetPoint("BOTTOMLEFT", 340, 30); priceBox:SetSize(130, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
+
+    local codCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    codCheck:SetSize(24, 24); codCheck:SetPoint("BOTTOMLEFT", 484, 28)
+    local codLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    codLabel:SetPoint("LEFT", codCheck, "RIGHT", 2, 1); codLabel:SetText("COD")
+    codCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Cash on delivery")
+        GameTooltip:AddLine("You'll pay this exact price on delivery. COD needs a price.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    codCheck:SetScript("OnLeave", GameTooltip_Hide)
+
+    local wantBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    wantBtn:SetSize(90, 24); wantBtn:SetPoint("BOTTOMRIGHT", -4, 28); wantBtn:SetText("Want")
+    main.wantBtn = wantBtn
+
+    local function clearWant()
+        editingWantKey = nil
+        wantDraft.itemID = nil; wantDraft.suffix = 0
+        itemBox:SetText(""); qtyBox:SetText("1"); priceBox:SetText(""); codCheck:SetChecked(false)
+        wantBtn:SetText("Want")
+    end
+    local function submitWant()
+        local qty = tonumber(qtyBox:GetText()) or 1
+        local price = parsePrice(priceBox:GetText())
+        local cod = codCheck:GetChecked() and true or false
+        if editingWantKey then
+            if ns.EditWant(editingWantKey, qty, price, cod) then clearWant() end
+        elseif ns.AddWant(wantDraft.itemID, wantDraft.suffix or 0, qty, price, cod) then
+            clearWant()
+        end
+    end
+    wantBtn:SetScript("OnClick", submitWant)
+    qtyBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitWant() end)
+    priceBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitWant() end)
+
+    -- load an existing want into the compose panel for editing (Edit button on a row)
+    function ns.LoadWantForEdit(key)
+        local w = GuildFoundMarketCharDB.wants and GuildFoundMarketCharDB.wants[key]
+        if not w then return end
+        editingWantKey = key
+        wantDraft.itemID = w.id or tonumber(key); wantDraft.suffix = w.suffix or 0
+        itemBox:SetText(vName(wantDraft.itemID, wantDraft.suffix))
+        qtyBox:SetText(tostring(w.qty or 1)); priceBox:SetText(priceToStr(w.price)); codCheck:SetChecked(w.cod and true or false)
+        wantBtn:SetText("Update")
+        priceBox:SetFocus(); priceBox:HighlightText()
+    end
+
+    -- Selling/WTB sub-tab switch (mirrors setBuyMode). Toggles the bottom panels, the announce
+    -- controls (Selling only), and the active filter box, then refreshes the right list.
+    setMineMode = function(mode)
+        mineMode = mode
+        if not main then return end
+        local wtb = (mode == "WTB")
+        main.mineSellBtn.sel:SetShown(not wtb); main.mineWtbBtn.sel:SetShown(wtb)
+        main.postPanel:SetShown(not wtb); main.wtbPanel:SetShown(wtb)
+        main.announceBtn:SetShown(not wtb); main.announceDestBtn:SetShown(not wtb)
+        main.announceWhisper:SetShown(not wtb and GuildFoundMarketCharDB.announceDest == "whisper")
+        if main.announceDestPopup then main.announceDestPopup:Hide() end
+        if main.announceWAC then main.announceWAC:Hide() end
+        main.mineFilter:SetShown(not wtb); main.wtbFilter:SetShown(wtb)
+        ac:Hide()
+        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText("")
+        updateSharedSortHeaders()
+        wipe(view); FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
+        if wtb then clearWant(); ns.RefreshWant() else ns.RefreshMine() end
+    end
+end
+
 local function buildHelpPanel()
     --==================== Help tab: Usage / Guild Setup sub-sections ====================
     local helpScroll = CreateFrame("ScrollFrame", "GuildFoundMarketHelpScroll", main, "UIPanelScrollFrameTemplate")
@@ -1993,7 +2489,9 @@ local function CreateUI()
     buildPostPanel()
     buildDbPanel()
     buildSellerWidgets()
+    buildBuyerWidgets()
     buildPauseAnnounce()
+    buildWTB()
     buildHelpPanel()
     buildOptionsPanel()
     ns.SelectTab("BUY")
@@ -2059,9 +2557,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     local buy     = (tab == "BUY")
     local mine    = (tab == "MINE")
     local sellers = (tab == "SELLERS")
+    local buyers  = (tab == "BUYERS")
     local help    = (tab == "HELP")
     local options = (tab == "OPTIONS")
-    main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)
+    main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)   -- buyers re-shows it via SetBuyersView
     main.ac:Hide()
     main.postPanel:SetShown(mine)
     main.dbPanel:SetShown(buy)
@@ -2072,20 +2571,28 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.catalogFilter:Hide(); main.catalogFilterLabel:Hide()
         main.sellerNotePanel:Hide()
     end
+    if not buyers then   -- hide all buyer widgets when on another tab
+        main.buyerFilter:Hide(); main.buyerFilterLabel:Hide(); main.buyerRefreshBtn:Hide()
+        main.buyerBackBtn:Hide(); main.buyerHeader:Hide()
+        main.buyerSortName:Hide(); main.buyerSortCount:Hide()
+        main.buyerCatalogFilter:Hide(); main.buyerCatalogFilterLabel:Hide()
+    end
     main.modeToggle:SetShown(buy)
     if not buy then   -- leaving the Buy tab: hide all Browse widgets, restore the shared headers
         main.sidebar:Hide(); main.browseScroll:Hide(); main.browseFilter:Hide(); main.browseFilterLabel:Hide()
         main.bLvlLabel:Hide(); main.bLvlMin:Hide(); main.bLvlTo:Hide(); main.bLvlMax:Hide()
         main.bhItem:Hide(); main.bhLvl:Hide(); main.bhQty:Hide(); main.bhPrice:Hide(); main.bhSeller:Hide()
-        main.bSortItem:Hide(); main.bSortLvl:Hide(); main.bSortPrice:Hide()
+        main.bSortItem:Hide(); main.bSortLvl:Hide(); main.bSortQty:Hide(); main.bSortPrice:Hide()
         for i = 1, ROWS do browseRows[i]:Hide() end
         main.h1:Show(); main.h2:Show(); main.h3:Show(); main.h4:Show()
     end
-    main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
-    main.mineFilter:SetShown(mine); main.mineFilterLabel:SetShown(mine)
+    main.pauseBtn:SetShown(mine)
+    main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine)
+    main.mineFilterLabel:SetShown(mine)
+    if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbPanel:Hide() end
     main.announceBtn:SetShown(mine)
     main.announceDestBtn:SetShown(mine)
-    main.announceWhisper:SetShown(mine and GuildFoundMarketCharDB.announceDest == "whisper")
+    main.announceWhisper:SetShown(mine and mineMode == "SELLING" and GuildFoundMarketCharDB.announceDest == "whisper")
     if main.announceDestPopup then main.announceDestPopup:Hide() end
     if main.announceWAC then main.announceWAC:Hide() end
     main.helpPanel:SetShown(help)
@@ -2102,8 +2609,14 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
     main.status:SetText("")
     if buy then
+        main.searchLabel:SetText("Search item:"); main.searchBox:SetWidth(460)
         main.h1:SetText("Seller"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("Location")
         setBuyMode(buyMode)   -- apply Search vs Browse sub-mode (handles visibility + refresh)
+    elseif buyers then
+        main.searchLabel:SetText("Item:"); main.searchBox:SetWidth(300); main.searchBox:SetText("")
+        main.buyerFilter:SetText("")
+        ns.SetBuyersView("INDEX")   -- sets headers + visibility + refresh
+        ns.ScanBuyers("")           -- auto-scan on entering (tab click = hardware event)
     elseif sellers then
         main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then
@@ -2128,11 +2641,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
         wipe(view); renderRows()
         if help then main.helpShowUsage() end   -- default to Usage; sizes the text + scrolls to top
-    else
-        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
-        main.mineFilter:SetText("")   -- fresh entry: clear any leftover item filter
+    else   -- MINE
+        main.mineFilter:SetText(""); main.wtbFilter:SetText("")   -- fresh entry: clear leftover filters
         main.noteBox:SetText(ns.GetShopNote())
-        ns.RefreshMine()
+        setMineMode(mineMode)   -- Selling/WTB sub-tab: sets headers, panels, announce, filter, refresh
     end
     updateSharedSortHeaders()   -- show/hide the column-sort overlays to match the new view
 end
