@@ -24,6 +24,30 @@ local browseRows, browseView = {}, {}             -- the 6-column results table
 local sideRows, sideView = {}, {}                 -- the category sidebar tree
 local setBuyMode                                  -- forward declaration (defined with the other refreshers)
 
+-- Per-view sort state for the shared item lists. Each view keeps its own column + direction
+-- so its default sticks: Buy search stays cheapest-first; the item lists open on quality.
+local buySort     = { col = "price", asc = true }   -- Buy search rows: name(seller)|qty|price
+local mineSort    = { col = "name",  asc = true }   -- My Items rows:   item(qual/name)|qty|price; opens alphabetical
+local catalogSort = { col = "name",  asc = true }   -- Seller catalog:  item(qual/name)|qty|price; opens alphabetical
+-- First click on a qty/price/seller column picks this direction; clicking it again toggles.
+local SORT_DEFAULT_ASC = { name = true, qty = false, price = true, count = false }
+local SORT_UP   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
+local SORT_DOWN = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
+local function sortArrow(sort, col) return sort.col == col and (sort.asc and SORT_UP or SORT_DOWN) or "" end
+
+-- The Item header cycles four ways on repeated clicks: quality desc -> quality asc ->
+-- alphabetical asc -> alphabetical desc -> (back to quality desc). Coming from another
+-- column (qty/price) restarts the cycle at quality desc.
+local function nextItemSort(s)
+    if s.col == "qual" and not s.asc then return "qual", true  end   -- qual desc -> qual asc
+    if s.col == "qual" and s.asc     then return "name", true  end   -- qual asc  -> name asc
+    if s.col == "name" and s.asc     then return "name", false end   -- name asc  -> name desc
+    return "qual", false                                             -- name desc / elsewhere -> qual desc
+end
+
+-- forward decls (defined with the refreshers; referenced by header click handlers built earlier)
+local activeItemSort, refreshActiveItemView, updateSharedSortHeaders
+
 --========================================================================
 -- helpers
 --========================================================================
@@ -404,6 +428,67 @@ local function refreshList(visible, build, status)
     if status then status() end
 end
 
+-- Sort one of the shared item lists in place. `nameOf(d)` yields the row's sort name
+-- (seller for Buy search, item name for My Items / catalog). Quality uses the precomputed
+-- d.q. Ties always fall back to name ascending, then suffix, for a stable order.
+local function sortItemView(list, sort, nameOf)
+    local col, asc = sort.col, sort.asc
+    table.sort(list, function(a, b)
+        if col == "qty" then
+            local qa, qb = a.qty or 0, b.qty or 0
+            if qa ~= qb then return asc == (qa < qb) end
+        elseif col == "price" then
+            local pa = (a.price or 0) > 0 and a.price or math.huge
+            local pb = (b.price or 0) > 0 and b.price or math.huge
+            if pa ~= pb then return asc == (pa < pb) end
+        elseif col == "qual" then
+            local qa, qb = a.q or 0, b.q or 0
+            if qa ~= qb then return asc == (qa < qb) end
+        else   -- name
+            local na, nb = nameOf(a), nameOf(b)
+            if na ~= nb then return asc == (na < nb) end
+        end
+        local na, nb = nameOf(a), nameOf(b)
+        if na ~= nb then return na < nb end
+        return (a.suffix or 0) < (b.suffix or 0)
+    end)
+end
+
+-- Write the three shared headers with a sort arrow on the active column. The first column
+-- doubles as the quality/name "Item" sort when qualCol is true (My Items / catalog), or is a
+-- plain name sort otherwise (Buy search's "Seller").
+local function applyItemHeaderArrows(sort, nameLabel, qualCol)
+    local onName = (sort.col == "name") or (qualCol and sort.col == "qual")
+    main.h1:SetText(nameLabel .. (onName and (sort.asc and SORT_UP or SORT_DOWN) or ""))
+    main.h2:SetText("Qty" .. sortArrow(sort, "qty"))
+    main.h3:SetText("Price/unit" .. sortArrow(sort, "price"))
+end
+
+-- The sort state of whichever shared item list is on screen (nil if none is).
+function activeItemSort()
+    if currentTab == "MINE" then return mineSort end
+    if currentTab == "BUY" and buyMode == "SEARCH" then return buySort end
+    if currentTab == "SELLERS" and sellersView == "SHOW" then return catalogSort end
+end
+
+function refreshActiveItemView()
+    if currentTab == "MINE" then ns.RefreshMine()
+    elseif currentTab == "BUY" then ns.RefreshBuy()
+    elseif currentTab == "SELLERS" then ns.RefreshSellerCatalog() end
+end
+
+-- Show the sort-header overlays that fit the current view: the item-column overlays for the
+-- three shared item lists, the seller-index overlays for the Sellers index, neither elsewhere.
+function updateSharedSortHeaders()
+    if not main or not main.itemSort1 then return end
+    local itemView  = (currentTab == "MINE")
+        or (currentTab == "BUY" and buyMode == "SEARCH")
+        or (currentTab == "SELLERS" and sellersView == "SHOW")
+    local indexView = (currentTab == "SELLERS" and sellersView == "INDEX")
+    main.itemSort1:SetShown(itemView); main.itemSort2:SetShown(itemView); main.itemSort3:SetShown(itemView)
+    main.sortName:SetShown(indexView); main.sortCount:SetShown(indexView)
+end
+
 --========================================================================
 -- refresh: Buy results
 --========================================================================
@@ -413,14 +498,8 @@ function ns.RefreshBuy()
         for _, o in pairs(ns.search.results) do
             view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
         end
-        table.sort(view, function(a, b)
-            -- real prices ascending; "bid" offers (price 0) sink to the bottom
-            local pa = (a.price or 0) > 0 and a.price or math.huge
-            local pb = (b.price or 0) > 0 and b.price or math.huge
-            if pa ~= pb then return pa < pb end
-            if a.seller ~= b.seller then return a.seller < b.seller end
-            return (a.suffix or 0) < (b.suffix or 0)
-        end)
+        applyItemHeaderArrows(buySort, "Seller", false)
+        sortItemView(view, buySort, function(d) return d.seller or "" end)
     end, function()
         if not ns.search.itemID then
             main.status:SetText("")
@@ -429,7 +508,7 @@ function ns.RefreshBuy()
         elseif #view == 0 then
             main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No online sellers for " .. itemName(ns.search.itemID) .. ".")
         else
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s), cheapest first."):format(#view))
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d offer(s); click a column to sort."):format(#view))
         end
     end)
 end
@@ -438,18 +517,28 @@ end
 -- refresh: My Items
 --========================================================================
 function ns.RefreshMine()
+    local filter, hasOffers   -- shared by build (to match names) and status (to report empties)
     refreshList(currentTab == "MINE", function()
+        filter = (main.mineFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
         for key, o in pairs(GuildFoundMarketCharDB.offers) do
-            view[#view + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price, key = key }
+            hasOffers = true
+            local id, suffix = o.id or tonumber(key), o.suffix or 0
+            if filter == "" or vName(id, suffix):lower():find(filter, 1, true) then
+                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, key = key, q = (itemQualLevel(id, suffix)) }
+            end
         end
-        table.sort(view, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
+        applyItemHeaderArrows(mineSort, "Item", true)
+        sortItemView(view, mineSort, function(d) return vName(d.id, d.suffix) end)
     end, function()
         if GuildFoundMarketCharDB.paused then
             main.status:SetTextColor(1, 0.6, 0.2)
             main.status:SetText("Listings paused: not answering searches. Click \"Offline\" to go back online.")
-        elseif #view == 0 then
+        elseif not hasOffers then
             main.status:SetTextColor(0.7, 0.7, 0.7)
             main.status:SetText("No items listed yet: pick one up and click the slot below to offer it.")
+        elseif #view == 0 then
+            main.status:SetTextColor(0.7, 0.7, 0.7)
+            main.status:SetText("No listed item matches \"" .. (filter or "") .. "\".")
         else
             main.status:SetText("")
         end
@@ -510,22 +599,29 @@ end
 --========================================================================
 function ns.RefreshSellerCatalog()
     local cat = ns.sellers.catalog
+    local filter, hasItems   -- shared by build (to match names) and status (to report empties)
     refreshList(currentTab == "SELLERS" and sellersView == "SHOW", function()
         if cat then
             main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
-            local items = {}
-            for _, it in pairs(cat.items) do items[#items + 1] = it end
-            table.sort(items, function(a, b) return vName(a.id, a.suffix) < vName(b.id, b.suffix) end)
-            for _, it in ipairs(items) do
-                view[#view + 1] = { kind = "item", id = it.id, suffix = it.suffix or 0, qty = it.qty, price = it.price, seller = cat.seller }
+            filter = (main.catalogFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+            for _, it in pairs(cat.items) do
+                hasItems = true
+                local suffix = it.suffix or 0
+                if filter == "" or vName(it.id, suffix):lower():find(filter, 1, true) then
+                    view[#view + 1] = { kind = "item", id = it.id, suffix = suffix, qty = it.qty, price = it.price, seller = cat.seller, q = (itemQualLevel(it.id, suffix)) }
+                end
             end
+            applyItemHeaderArrows(catalogSort, "Item", true)
+            sortItemView(view, catalogSort, function(d) return vName(d.id, d.suffix) end)
         end
     end, function()
         main.status:SetTextColor(0.7, 0.7, 0.7)
         if cat and cat.loading then
             main.status:SetText("Loading " .. cat.seller .. "'s items ...")
-        elseif cat and next(cat.items) == nil then
+        elseif cat and not hasItems then
             main.status:SetText(cat.seller .. " has nothing listed right now.")
+        elseif cat and #view == 0 then
+            main.status:SetText("No item matches \"" .. (filter or "") .. "\".")
         elseif cat then
             main.status:SetText(("%d item(s): click one to whisper %s."):format(#view, cat.seller))
         end
@@ -539,7 +635,9 @@ function ns.SetSellersView(v)
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
     main.sellerBackBtn:SetShown(not index); main.sellerHeader:SetShown(not index)
-    main.sortName:SetShown(index); main.sortCount:SetShown(index)
+    main.catalogFilter:SetShown(not index); main.catalogFilterLabel:SetShown(not index)
+    if not index then main.catalogFilter:SetText("") end   -- fresh seller: drop any leftover filter
+    updateSharedSortHeaders()
     if index then
         main.h1:SetText("Seller"); main.h2:SetText("Items"); main.h3:SetText(""); main.h4:SetText("Location")
     else
@@ -583,8 +681,11 @@ local function updateBrowseHeaders()
     local up   = " |TInterface\\Buttons\\Arrow-Up-Up:12|t"
     local down = " |TInterface\\Buttons\\Arrow-Down-Up:12|t"
     local function arr(col) return (browseSort.col == col) and (browseSort.asc and up or down) or "" end
-    main.bhItem:SetText("Item" .. arr("qual"))
+    -- the Item header carries the arrow for either of its sort keys (quality or name)
+    local itemArr = (browseSort.col == "qual" or browseSort.col == "name") and (browseSort.asc and up or down) or ""
+    main.bhItem:SetText("Item" .. itemArr)
     main.bhLvl:SetText("Lvl" .. arr("lvl"))
+    main.bhQty:SetText("Qty" .. arr("qty"))
     main.bhPrice:SetText("Price" .. arr("price"))
 end
 
@@ -680,13 +781,19 @@ function ns.RefreshBrowse()
     end
     local col, asc = browseSort.col, browseSort.asc
     table.sort(browseView, function(a, b)
+        if col == "name" then
+            local na, nb = vName(a.id, a.suffix), vName(b.id, b.suffix)
+            if na ~= nb then return asc == (na < nb) end
+            return a.seller < b.seller
+        end
         local va, vb
         if col == "price" then
             va = (a.price or 0) > 0 and a.price or math.huge
             vb = (b.price or 0) > 0 and b.price or math.huge
         elseif col == "qual" then va = a.q; vb = b.q
+        elseif col == "qty" then va = a.qty or 0; vb = b.qty or 0
         else va = a.lvl; vb = b.lvl end
-        if va ~= vb then return asc and va < vb or (not asc and va > vb) end
+        if va ~= vb then return asc == (va < vb) end
         local na, nb = vName(a.id, a.suffix), vName(b.id, b.suffix)
         if na ~= nb then return na < nb end
         return a.seller < b.seller
@@ -723,7 +830,8 @@ setBuyMode = function(mode)
     main.bLvlLabel:SetShown(browse); main.bLvlMin:SetShown(browse); main.bLvlTo:SetShown(browse); main.bLvlMax:SetShown(browse)
     main.bhItem:SetShown(browse); main.bhLvl:SetShown(browse)
     main.bhQty:SetShown(browse); main.bhPrice:SetShown(browse); main.bhSeller:SetShown(browse)
-    main.bSortItem:SetShown(browse); main.bSortLvl:SetShown(browse); main.bSortPrice:SetShown(browse)
+    main.bSortItem:SetShown(browse); main.bSortLvl:SetShown(browse); main.bSortQty:SetShown(browse); main.bSortPrice:SetShown(browse)
+    updateSharedSortHeaders()   -- show the item-column overlays in Search, hide them in Browse
     if browse then
         for i = 1, ROWS do rows[i]:Hide() end          -- clear the search table's rows
         ns.RefreshSidebar(); ns.RefreshBrowse()
@@ -963,6 +1071,56 @@ local function buildHeaders()
     end
     main.sortName  = sortHeaderBtn(main.h1, "name", 150)
     main.sortCount = sortHeaderBtn(main.h2, "count", 48)
+
+    -- clickable overlays on the Item/Qty/Price headers, shared by the three item lists
+    -- (Buy search, My Items, seller catalog). The first header sorts by quality/name (a
+    -- 4-way cycle on the item lists) or plainly by seller name on the Buy results.
+    local function itemSortBtn(target, kind, w)
+        local b = CreateFrame("Button", nil, main)
+        b:SetPoint("LEFT", target, "LEFT", -2, 0); b:SetSize(w, 16)
+        b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        b:SetScript("OnClick", function()
+            local s = activeItemSort()
+            if not s then return end
+            if kind == "name" then
+                if s == buySort then          -- Buy results: "Seller" is a plain name toggle, no quality
+                    if s.col == "name" then s.asc = not s.asc else s.col = "name"; s.asc = SORT_DEFAULT_ASC.name end
+                elseif s.itemSorted then       -- already cycling the Item column: advance one step
+                    s.col, s.asc = nextItemSort(s)
+                else                           -- first Item click from the alphabetical default: start at quality desc
+                    s.col, s.asc, s.itemSorted = "qual", false, true
+                end
+            else
+                local col = (kind == "qty") and "qty" or "price"
+                if s.col == col then s.asc = not s.asc else s.col = col; s.asc = SORT_DEFAULT_ASC[col] end
+                s.itemSorted = false           -- leaving the Item column restarts its cycle on the next click
+            end
+            refreshActiveItemView()
+        end)
+        b:Hide(); return b
+    end
+    main.itemSort1 = itemSortBtn(main.h1, "name",  290)
+    main.itemSort2 = itemSortBtn(main.h2, "qty",   56)
+    main.itemSort3 = itemSortBtn(main.h3, "price", 130)
+end
+
+-- Whole-row hover highlight. A HIGHLIGHT texture only lights the single frame under the
+-- cursor, so hovering a child button (the item name, the seller, X/Edit) would otherwise
+-- highlight just that cell. Instead we drive one row-wide bar from hover events on the row
+-- and each of its interactive children, keeping it lit while the cursor is anywhere on the
+-- row. The bar sits on BACKGROUND so it never tints the icon or text.
+local function addRowHighlight(r, ...)
+    r.rowHL = r:CreateTexture(nil, "BACKGROUND")
+    r.rowHL:SetAllPoints(); r.rowHL:SetColorTexture(1, 1, 1, 0.14); r.rowHL:Hide()
+    r:EnableMouse(true)
+    local function show() r.rowHL:Show() end
+    local function hide() if not r:IsMouseOver() then r.rowHL:Hide() end end   -- still over a child? stay lit
+    r:SetScript("OnEnter", show); r:SetScript("OnLeave", hide)
+    for i = 1, select("#", ...) do
+        local child = select(i, ...)
+        child:HookScript("OnEnter", show)   -- HookScript: coexists with the child's tooltip/click handlers
+        child:HookScript("OnLeave", hide)
+    end
 end
 
 local function buildRows()
@@ -985,7 +1143,6 @@ local function buildRows()
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(18, 18); r.icon:SetPoint("LEFT", 4, 0)
         r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 26, 0); r.c1:SetSize(280, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
-        local c1hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); c1hl:SetAllPoints(); c1hl:SetColorTexture(1, 1, 1, 0.12)
         r.c1:SetScript("OnEnter", function(self)
             if self.itemLink or self.itemID then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1007,6 +1164,7 @@ local function buildRows()
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
+        addRowHighlight(r, r.c1, r.x, r.edit)
         r:Hide(); rows[i] = r
     end
 end
@@ -1105,14 +1263,16 @@ local function buildBrowse()
         b:SetPoint("LEFT", target, "LEFT", -2, 0); b:SetSize(w, 16)
         b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         b:SetScript("OnClick", function()
-            if browseSort.col == col then browseSort.asc = not browseSort.asc
-            else browseSort.col = col; browseSort.asc = (col == "price") end   -- price asc, qual/lvl desc by default
+            if col == "qual" then browseSort.col, browseSort.asc = nextItemSort(browseSort)   -- Item header: 4-way quality/name cycle
+            elseif browseSort.col == col then browseSort.asc = not browseSort.asc
+            else browseSort.col = col; browseSort.asc = (col == "price") end   -- price asc, lvl/qty desc by default
             ns.RefreshBrowse()
         end)
         b:Hide(); return b
     end
-    main.bSortItem  = browseSortBtn(main.bhItem,  "qual",  120)   -- Item header sorts by quality (the name colour)
+    main.bSortItem  = browseSortBtn(main.bhItem,  "qual",  120)   -- Item header sorts by quality, then name (cycled)
     main.bSortLvl   = browseSortBtn(main.bhLvl,   "lvl",   40)
+    main.bSortQty   = browseSortBtn(main.bhQty,   "qty",   30)
     main.bSortPrice = browseSortBtn(main.bhPrice, "price", 56)
 
     local browseScroll = CreateFrame("ScrollFrame", "GuildFoundMarketBrowseScroll", main, "FauxScrollFrameTemplate")
@@ -1132,7 +1292,6 @@ local function buildBrowse()
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 0, 0)
         r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 20, 0); r.c1:SetSize(212, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
-        local hl = r.c1:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.12)
         r.c1:SetScript("OnEnter", function(self)
             if self.itemLink then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetHyperlink(self.itemLink)
@@ -1146,7 +1305,7 @@ local function buildBrowse()
         r.price  = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.price:SetPoint("LEFT", 304, 0); r.price:SetWidth(105); r.price:SetJustifyH("LEFT")
         r.seller = CreateFrame("Button", nil, r); r.seller:SetPoint("LEFT", 414, 0); r.seller:SetSize(126, ROW_H); r.seller:RegisterForClicks("LeftButtonUp")
         r.seller.fs = r.seller:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.seller.fs:SetAllPoints(); r.seller.fs:SetJustifyH("LEFT")
-        local shl = r.seller:CreateTexture(nil, "HIGHLIGHT"); shl:SetAllPoints(); shl:SetColorTexture(1, 1, 1, 0.12)
+        addRowHighlight(r, r.c1, r.seller)
         r:Hide(); browseRows[i] = r
     end
 end
@@ -1339,6 +1498,16 @@ local function buildSellerWidgets()
     local sellerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sellerHeader:SetPoint("LEFT", sellerBackBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
     main.sellerHeader = sellerHeader
+
+    -- substring filter over the open seller's loaded items (client-side, like the Browse filter)
+    local catalogFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    catalogFilterLabel:SetPoint("TOPRIGHT", -222, -70); catalogFilterLabel:SetText("Find item:"); catalogFilterLabel:Hide()
+    main.catalogFilterLabel = catalogFilterLabel
+    local catalogFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    catalogFilter:SetPoint("TOPRIGHT", -40, -66); catalogFilter:SetSize(170, 22); catalogFilter:SetAutoFocus(false); catalogFilter:Hide()
+    catalogFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshSellerCatalog() end end)
+    catalogFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshSellerCatalog() end)
+    main.catalogFilter = catalogFilter
 end
 
 local function buildPauseAnnounce()
@@ -1364,6 +1533,17 @@ local function buildPauseAnnounce()
     end)
     pauseBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.pauseBtn = pauseBtn
+
+    -- substring filter over your listed items (client-side), sitting between the pause button
+    -- and the announce controls
+    local mineFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    mineFilterLabel:SetPoint("TOPLEFT", 230, -70); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
+    main.mineFilterLabel = mineFilterLabel
+    local mineFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
+    mineFilter:SetPoint("TOPLEFT", 300, -66); mineFilter:SetSize(150, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
+    mineFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshMine() end end)
+    mineFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshMine() end)
+    main.mineFilter = mineFilter
 
     -- Announce: a chat/note icon, right-aligned. Disabled while listings are paused.
     local announceBtn = CreateFrame("Button", nil, main)
@@ -1793,6 +1973,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.sellerFilter:Hide(); main.sellerFilterLabel:Hide(); main.sellerRefreshBtn:Hide()
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
         main.sortName:Hide(); main.sortCount:Hide()
+        main.catalogFilter:Hide(); main.catalogFilterLabel:Hide()
     end
     main.modeToggle:SetShown(buy)
     if not buy then   -- leaving the Buy tab: hide all Browse widgets, restore the shared headers
@@ -1804,6 +1985,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.h1:Show(); main.h2:Show(); main.h3:Show(); main.h4:Show()
     end
     main.pauseBtn:SetShown(mine); main.pauseLabel:SetShown(mine)
+    main.mineFilter:SetShown(mine); main.mineFilterLabel:SetShown(mine)
     main.announceBtn:SetShown(mine)
     main.announceDestBtn:SetShown(mine)
     main.announceWhisper:SetShown(mine and GuildFoundMarketCharDB.announceDest == "whisper")
@@ -1851,8 +2033,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         if help then main.helpShowUsage() end   -- default to Usage; sizes the text + scrolls to top
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
+        main.mineFilter:SetText("")   -- fresh entry: clear any leftover item filter
         ns.RefreshMine()
     end
+    updateSharedSortHeaders()   -- show/hide the column-sort overlays to match the new view
 end
 
 --========================================================================
