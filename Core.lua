@@ -243,14 +243,17 @@ SlashCmdList.GFMARKET = function(msg)
         ns.Feedback("Self-test " .. (ns.selfTest and "ON: search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
     elseif ns.dev and msg == "fakesellers" then
         wipe(ns.sellers.results)
-        ns.sellers.results["Aldorin"]  = { count = 3,  loc = "Bank, Orgrimmar" }
-        ns.sellers.results["Bigbags"]  = { count = 42, loc = "Auction House, Orgrimmar" }
+        -- Aldorin: note pre-cached (hover shows it at once). Bigbags: flag only, so the bubble
+        -- offers "click to load" (a real fetch that times out, since it's a fake name). Cheapcat:
+        -- no note (no bubble) as a control.
+        ns.sellers.results["Aldorin"]  = { count = 3,  loc = "Bank, Orgrimmar", hasNote = true, note = "Bulk enchanting mats; whisper for a guild discount. Also buying greens." }
+        ns.sellers.results["Bigbags"]  = { count = 42, loc = "Auction House, Orgrimmar", hasNote = true }
         ns.sellers.results["Cheapcat"] = { count = 1,  loc = "The Crossroads" }
         local many = {}; for i = 1, 42 do many[i] = 700 + i end
         ns._fakeCat = { Aldorin = { 2589, 2592, 4338 }, Cheapcat = { 6948 }, Bigbags = many }
         ns.sellers.scanning = false
         if ns.RefreshSellers then ns.RefreshSellers() end
-        ns.Feedback("Injected 3 fake sellers (one with 42 items); open the Sellers tab.", false)
+        ns.Feedback("Injected 3 fake sellers (Aldorin has a note, Bigbags 'click to load'); open the Sellers tab.", false)
     elseif ns.dev and msg == "faketest" then
         if not ns.search.itemID then
             ns.Feedback("Open Buy, search an item first, then /gfm faketest.", true)

@@ -10,6 +10,17 @@ local function offers() return GuildFoundMarketCharDB.offers end
 local function vkey(id, suffix) return id .. ":" .. (suffix or 0) end
 ns.vkey = vkey
 
+-- Shop note: one free-text line a seller shows to buyers, surfaced beside their name in the
+-- Sellers index. Stored per character (like offers/paused). We strip "~" (the wire field
+-- separator) and newlines; the input field caps the length so it always fits one
+-- addon-message reply.
+function ns.GetShopNote() return GuildFoundMarketCharDB.note or "" end
+function ns.SetShopNote(s)
+    s = (s or ""):gsub("[~\r\n]", " "):gsub("%s+$", "")
+    GuildFoundMarketCharDB.note = s
+    return s
+end
+
 -- Scan the player's bags for an item's bound state. Returns (sawCopy, sawTradeable):
 -- sawTradeable is true if at least one UNbound copy exists. We block a listing only
 -- when we saw copies and every one was bound (soulbound or quest-bound = untradeable);

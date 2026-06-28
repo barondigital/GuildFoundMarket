@@ -293,6 +293,7 @@ local function resetRow(r)
     r.c4:SetText(""); r.c4:Hide()
     r.x:Hide(); r.x:SetScript("OnClick", nil)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil)
+    r.noteBtn:Hide(); r.noteBtn.seller = nil
     r.itemID = nil
 end
 
@@ -357,6 +358,13 @@ local function formatSellerRow(r, d)
         end)
         r.c2:SetText(d.count or 0)
         r.c4:SetText(d.loc or ""); r.c4:Show()
+        if d.hasNote then
+            -- a chat-bubble icon just after the location; click loads the note, then hover shows it
+            r.noteBtn.seller = d.seller
+            r.noteBtn:ClearAllPoints()
+            r.noteBtn:SetPoint("LEFT", r.c4, "LEFT", (r.c4:GetStringWidth() or 0) + 6, 0)
+            r.noteBtn:Show()
+        end
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -573,7 +581,7 @@ function ns.RefreshSellers()
         main.h2:SetText("Items"  .. (sellerSort.col == "count" and (asc and up or down) or ""))
         for _, s in ipairs(names) do
             local rec = ns.sellers.results[s]
-            view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc }
+            view[#view + 1] = { kind = "seller", seller = s, count = rec.count, loc = rec.loc, hasNote = rec.hasNote }
         end
     end, function()
         main.status:SetTextColor(0.7, 0.7, 0.7)
@@ -594,6 +602,18 @@ function ns.RefreshSellers()
     end)
 end
 
+-- A seller's note just arrived (NR): if its bubble is on screen and the cursor is over it,
+-- re-show the tooltip so a note clicked a moment ago appears without moving the mouse.
+function ns.NoteArrived(seller)
+    if not main or not main:IsShown() then return end
+    for i = 1, ROWS do
+        local b = rows[i].noteBtn
+        if b:IsShown() and b.seller == seller and b:IsMouseOver() then
+            local onEnter = b:GetScript("OnEnter"); if onEnter then onEnter(b) end
+        end
+    end
+end
+
 --========================================================================
 -- refresh: Sellers show view (one seller's catalog, fetched lazily)
 --========================================================================
@@ -603,6 +623,13 @@ function ns.RefreshSellerCatalog()
     refreshList(currentTab == "SELLERS" and sellersView == "SHOW", function()
         if cat then
             main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
+            if cat.note and cat.note ~= "" then
+                main.sellerNoteText:SetText(cat.note)
+                main.sellerNotePanel:SetHeight(math.min(86, math.max(40, main.sellerNoteText:GetStringHeight() + 26)))
+                main.sellerNotePanel:Show()
+            else
+                main.sellerNotePanel:Hide()
+            end
             filter = (main.catalogFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
             for _, it in pairs(cat.items) do
                 hasItems = true
@@ -637,6 +664,7 @@ function ns.SetSellersView(v)
     main.sellerBackBtn:SetShown(not index); main.sellerHeader:SetShown(not index)
     main.catalogFilter:SetShown(not index); main.catalogFilterLabel:SetShown(not index)
     if not index then main.catalogFilter:SetText("") end   -- fresh seller: drop any leftover filter
+    if index then main.sellerNotePanel:Hide() end          -- shown again by the catalog refresh when a note loads
     updateSharedSortHeaders()
     if index then
         main.h1:SetText("Seller"); main.h2:SetText("Items"); main.h3:SetText(""); main.h4:SetText("Location")
@@ -1164,7 +1192,34 @@ local function buildRows()
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit)
+        -- chat-bubble icon for a seller's shop note (Sellers index rows only); positioned after
+        -- the location in formatSellerRow. The note text is fetched on click (cached on the
+        -- seller's index record), then shown on hover. Reads state live by seller name.
+        r.noteBtn = CreateFrame("Button", nil, r); r.noteBtn:SetSize(16, 16)
+        r.noteBtn:SetNormalTexture("Interface\\GossipFrame\\GossipGossipIcon")
+        r.noteBtn:RegisterForClicks("LeftButtonUp")
+        r.noteBtn:SetScript("OnEnter", function(self)
+            local rec = self.seller and ns.sellers.results[self.seller]
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Shop note", 1, 0.82, 0)
+            if rec and rec.note and rec.note ~= "" then
+                GameTooltip:AddLine(rec.note, 1, 1, 1, true)
+            elseif rec and rec.note == "" then
+                GameTooltip:AddLine("This seller has no note.", 0.7, 0.7, 0.7, true)
+            elseif rec and rec.noteLoading then
+                GameTooltip:AddLine("Loading...", 0.7, 0.7, 0.7, true)
+            else
+                GameTooltip:AddLine("Click to load this seller's note.", 0.7, 0.7, 0.7, true)
+            end
+            GameTooltip:Show()
+        end)
+        r.noteBtn:SetScript("OnLeave", GameTooltip_Hide)
+        r.noteBtn:SetScript("OnClick", function(self)
+            if self.seller and ns.RequestSellerNote then ns.RequestSellerNote(self.seller) end
+            local onEnter = self:GetScript("OnEnter"); if onEnter then onEnter(self) end   -- reflect new state
+        end)
+        r.noteBtn:Hide()
+        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn)
         r:Hide(); rows[i] = r
     end
 end
@@ -1315,6 +1370,27 @@ local function buildPostPanel()
     local panel = CreateFrame("Frame", nil, main)
     panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74)
     main.postPanel = panel
+
+    -- shop note: a one-line blurb buyers see beside your name in the Sellers index (a bubble
+    -- they click to load it). It travels in its own NR reply, so it can be long; capped to
+    -- 240 bytes to fit one ~255-byte addon message. Saved on Enter / focus loss.
+    local noteLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    noteLabel:SetPoint("TOPLEFT", 4, -3); noteLabel:SetText("Shop note:")
+    local noteBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    noteBox:SetPoint("TOPLEFT", noteLabel, "TOPRIGHT", 12, 3); noteBox:SetPoint("TOPRIGHT", -8, 0); noteBox:SetHeight(16)
+    noteBox:SetAutoFocus(false); noteBox:SetMaxBytes(240)
+    local function saveNote() noteBox:SetText(ns.SetShopNote(noteBox:GetText())) end
+    noteBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); saveNote() end)
+    noteBox:SetScript("OnEditFocusLost", saveNote)
+    noteBox:SetScript("OnEscapePressed", function(self) self:SetText(ns.GetShopNote()); self:ClearFocus() end)
+    noteBox:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Shop note")
+        GameTooltip:AddLine("A short line buyers see next to your name in the Sellers list (chat-bubble icon). Leave empty for none.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    noteBox:SetScript("OnLeave", GameTooltip_Hide)
+    main.noteBox = noteBox
 
     -- key of the listing being edited; nil = composing a brand-new offer
     local editingKey = nil
@@ -1498,6 +1574,26 @@ local function buildSellerWidgets()
     local sellerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sellerHeader:SetPoint("LEFT", sellerBackBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
     main.sellerHeader = sellerHeader
+
+    -- the open seller's shop note (arrives bundled with their catalog): an outlined block at the
+    -- bottom of the view, under the status line, with a "Shop note" title and the wrapped text.
+    local notePanel = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    notePanel:SetPoint("BOTTOMLEFT", 16, 14); notePanel:SetPoint("BOTTOMRIGHT", -16, 14); notePanel:SetHeight(48)
+    notePanel:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    notePanel:SetBackdropColor(0, 0, 0, 0.35); notePanel:SetBackdropBorderColor(0.5, 0.5, 0.5)
+    notePanel:Hide()
+    local noteTitle = notePanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    noteTitle:SetPoint("TOPLEFT", 8, -6); noteTitle:SetText("Shop note"); noteTitle:SetTextColor(1, 0.82, 0)
+    local noteText = notePanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    noteText:SetPoint("TOPLEFT", noteTitle, "BOTTOMLEFT", 0, -4); noteText:SetPoint("RIGHT", notePanel, "RIGHT", -8, 0)
+    noteText:SetJustifyH("LEFT"); noteText:SetJustifyV("TOP")
+    main.sellerNotePanel = notePanel
+    main.sellerNoteText = noteText
 
     -- substring filter over the open seller's loaded items (client-side, like the Browse filter)
     local catalogFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1974,6 +2070,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
         main.sortName:Hide(); main.sortCount:Hide()
         main.catalogFilter:Hide(); main.catalogFilterLabel:Hide()
+        main.sellerNotePanel:Hide()
     end
     main.modeToggle:SetShown(buy)
     if not buy then   -- leaving the Buy tab: hide all Browse widgets, restore the shared headers
@@ -2034,6 +2131,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("")
         main.mineFilter:SetText("")   -- fresh entry: clear any leftover item filter
+        main.noteBox:SetText(ns.GetShopNote())
         ns.RefreshMine()
     end
     updateSharedSortHeaders()   -- show/hide the column-sort overlays to match the new view

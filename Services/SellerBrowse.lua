@@ -40,7 +40,7 @@ function ns.ScanSellers(filter)
             C_Timer.After(0.2, function()
                 if activeSid ~= thisSid then return end
                 if not ns.sellers.results[ns.playerName] then ns.sellers.count = (ns.sellers.count or 0) + 1 end
-                ns.sellers.results[ns.playerName] = { count = count, loc = loc }
+                ns.sellers.results[ns.playerName] = { count = count, loc = loc, hasNote = (ns.GetShopNote and ns.GetShopNote() ~= "") }
                 if ns.sellers.pendingOpen == ns.playerName then
                     ns.sellers.pendingOpen = nil
                     ns.OpenSeller(ns.playerName, loc)
@@ -73,7 +73,10 @@ function ns.OpenSeller(seller, loc)
     ns.Log("OPEN " .. seller .. ": requesting catalog")
     sellerSeq = sellerSeq + 1
     activeLid = ns.playerName .. "#L" .. sellerSeq
-    ns.sellers.catalog = { seller = seller, loc = loc, items = {}, loading = true }
+    -- seed the note from the index cache (if you already loaded it there); real sellers also
+    -- bundle a fresh note with their catalog reply (see the L handler)
+    local seededNote = ns.sellers.results[seller] and ns.sellers.results[seller].note
+    ns.sellers.catalog = { seller = seller, loc = loc, items = {}, loading = true, note = seededNote }
     if ns._fakeCat and ns._fakeCat[seller] then          -- dev: /gfm fakesellers
         for _, id in ipairs(ns._fakeCat[seller]) do
             ns.sellers.catalog.items[ns.vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
@@ -81,6 +84,7 @@ function ns.OpenSeller(seller, loc)
         ns.sellers.catalog.loading = false
     elseif ns.selfTest and seller == ns.playerName and not ns.IsPaused() then  -- can't whisper yourself
         for _, it in ipairs(ns.OfferList()) do ns.sellers.catalog.items[ns.vkey(it.id, it.suffix)] = it end
+        ns.sellers.catalog.note = ns.GetShopNote and ns.GetShopNote() or ""
         ns.sellers.catalog.loading = false
     else
         ns.EnqueueWhisper(("L~%s"):format(activeLid), seller)
@@ -110,19 +114,24 @@ ns.OnMessage("S", function(a, b, c, _, _, _, sender)
     local sid, n, loc = a, #list, ns.LiveLoc()
     local jitter = (filter and filter ~= "") and 0.3 or ns.SCAN_JITTER
     C_Timer.After(math.random() * jitter, function()
-        ns.EnqueueWhisper(("C~%s~%d~%s"):format(sid, n, loc), sender)
+        -- 4th field is a 1-byte "have a shop note" flag, not the note itself: the index reply
+        -- stays tiny (full protocol headroom) and the note text is fetched on demand (NQ/NR)
+        -- only when a buyer clicks the bubble. Old clients ignore the extra field.
+        local flag = (ns.GetShopNote and ns.GetShopNote() ~= "") and "1" or ""
+        ns.EnqueueWhisper(("C~%s~%d~%s~%s"):format(sid, n, loc, flag), sender)
     end)
 end)
 
--- C~sid~count~loc: a seller's summary in reply to our scan.
-ns.OnMessage("C", function(a, b, c, _, _, _, sender)
+-- C~sid~count~loc~hasNote: a seller's summary in reply to our scan (hasNote flag optional/last).
+ns.OnMessage("C", function(a, b, c, d, _, _, sender)
     if a ~= activeSid then return end
     local s = Ambiguate(sender, "short")
     if not ns.sellers.results[s] then
         if (ns.sellers.count or 0) >= ns.SELLER_CAP then ns.sellers.capped = true; return end
         ns.sellers.count = (ns.sellers.count or 0) + 1
     end
-    ns.sellers.results[s] = { count = tonumber(b) or 0, loc = c or "" }
+    -- note stays nil ("not fetched yet"); the bubble offers to load it when hasNote is set
+    ns.sellers.results[s] = { count = tonumber(b) or 0, loc = c or "", hasNote = (d == "1") }
     ns.Log(("  seller %s: %s items (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.sellers.scanStart or GetTime())))
     if ns.sellers.pendingOpen and s == ns.sellers.pendingOpen then
         -- this seller answered on the private channel, so it's safe to open them
@@ -145,6 +154,10 @@ ns.OnMessage("L", function(a, _, _, _, _, _, sender)
         buf = (buf == "") and p or (buf .. ";" .. p)
     end
     flush(0)   -- final chunk (empty if I have nothing listed)
+    -- bundle the shop note with the catalog so opening a seller delivers items + note together
+    -- (same NR message the index bubble uses); skip it when there's nothing to show
+    local note = ns.GetShopNote and ns.GetShopNote() or ""
+    if note ~= "" then ns.EnqueueWhisper("NR~" .. note, sender) end
     ns.Log(("sent my catalog (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
 end)
 
@@ -166,4 +179,57 @@ ns.OnMessage("K", function(a, b, c)
         ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellers.catalog.seller, n, GetTime() - (ns.sellers.openStart or GetTime())))
     end
     if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
+end)
+
+--========================================================================
+-- Shop note: fetched on demand (clicking a seller's bubble in the index), so the heavy text
+-- never rides the scan. We whisper NQ to the seller; they answer NR with the note. The reply
+-- is matched to the seller by the whisper's sender, so no id is needed.
+--========================================================================
+
+-- Ask one seller for their shop note (directed whisper). Caches into the index result so a
+-- second hover/click is free; a timeout clears the "loading" state if they don't answer.
+function ns.RequestSellerNote(seller)
+    if not seller or not ns.channelName then return end
+    local rec = ns.sellers.results[seller]
+    if not rec or rec.note ~= nil or rec.noteLoading then return end   -- already have it / in flight
+    rec.noteLoading = true
+    if ns.selfTest and seller == ns.playerName then                    -- can't whisper yourself
+        rec.note = ns.GetShopNote and ns.GetShopNote() or ""; rec.noteLoading = nil
+        if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
+        if ns.NoteArrived then ns.NoteArrived(seller) end
+        return
+    end
+    ns.EnqueueWhisper("NQ", seller)
+    ns.Log("NOTE request -> " .. seller)
+    C_Timer.After(ns.QUERY_SETTLE, function()
+        if rec.noteLoading then          -- no answer (offline / paused / no addon)
+            rec.noteLoading = nil
+            ns.Feedback(("Couldn't fetch %s's note (offline?)."):format(seller), true)
+            if ns.NoteArrived then ns.NoteArrived(seller) end
+        end
+    end)
+end
+
+-- NQ: a buyer wants my shop note. Answer with it (paused sellers stay silent).
+ns.OnMessage("NQ", function(_, _, _, _, _, _, sender)
+    if ns.IsPaused() then return end
+    ns.EnqueueWhisper("NR~" .. (ns.GetShopNote and ns.GetShopNote() or ""), sender)
+end)
+
+-- NR~note: a seller's shop note. Arrives two ways: as the reply to an index NQ click, and
+-- bundled with a catalog fetch (L). Updates whichever is live: the index record and/or the
+-- open seller's catalog. Matched to the seller by the whisper's sender.
+ns.OnMessage("NR", function(a, _, _, _, _, _, sender)
+    local s = Ambiguate(sender, "short")
+    local note = a or ""
+    local rec = ns.sellers.results[s]
+    local cat = ns.sellers.catalog
+    local forCatalog = cat and cat.seller == s
+    if not rec and not forCatalog then return end   -- unsolicited / stale
+    if rec then rec.note = note; rec.noteLoading = nil end
+    if forCatalog then cat.note = note; if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end end
+    ns.Log(("NOTE recv <- %s (%d chars)"):format(s, #note))
+    if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
+    if ns.NoteArrived then ns.NoteArrived(s) end
 end)

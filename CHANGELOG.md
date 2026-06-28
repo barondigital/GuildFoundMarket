@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.0
+
+- **Sort the item lists.** Click a column header to sort Buy search, Buy browse, the seller
+  view and My Items. Qty, Price and Lvl (where shown) toggle ascending/descending; the Item
+  header cycles quality descending, quality ascending, then alphabetical ascending and
+  descending. Lists open alphabetically.
+- **Find an item in a list.** My Items and the seller view get a "Find item:" box that filters
+  the loaded items by name as you type.
+- **Full-row hover highlight.** Hovering anywhere on a row now highlights the whole row, not
+  just the item name.
+- **Shop note.** Sellers can set a one-line note in My Items that buyers see. In the Sellers
+  list a chat-bubble marks sellers who have one; click it to load the note, then hover to
+  read it. Opening a seller shows the note in an outlined block at the bottom of their view.
+  Compatible with 0.11.x: the scan reply carries only a tiny "has note" flag and the note
+  text travels in new messages older clients ignore.
+
 ## 0.11.0
 
 - **Browse armor by equip slot.** Armor subclasses in the Browse sidebar now expand to a
