@@ -49,8 +49,10 @@ ns.SettingsSchema = {
     {
         key = "priceFormat",
         type = "choice",
-        label = "Price input format",
-        tip = "How you type a price on the My Items tab.\n\n"
+        label = "Price fill format",
+        tip = "How a price is filled in for you (the edit prefill and example) on the My Items "
+            .. "and Buyers tabs. You can always TYPE either notation; this only sets the format "
+            .. "shown back to you.\n\n"
             .. "|cffffffff3g50s|r: gold/silver/copper coins.\n"
             .. "|cffffffff3.50|r: decimal gold, where the two decimals are silver (3.05 = 3g5s).\n\n"
             .. "Search results always show the standard coin icons, whichever you pick.",

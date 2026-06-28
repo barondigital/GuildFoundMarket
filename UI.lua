@@ -866,7 +866,7 @@ function ns.RefreshFindBuyers()
     end, function()
         local id = ns.buyers.find.itemID
         if not id then
-            main.status:SetText("")
+            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Type an item above to find buyers who want it.")
         elseif ns.buyers.find.active then
             main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Looking for buyers of " .. itemName(id) .. " ...")
         elseif #view == 0 then
@@ -918,11 +918,16 @@ function ns.SetBuyersView(v)
     local index = (v == "INDEX")
     local show  = (v == "SHOW")
     local find  = (v == "FIND")
-    main.buyerFilter:SetShown(index); main.buyerFilterLabel:SetShown(index); main.buyerRefreshBtn:SetShown(index)
-    main.searchBox:SetShown(not show); main.searchLabel:SetShown(index)   -- item search on INDEX/FIND; its label only on INDEX (Back takes its spot in FIND)
-    main.buyerBackBtn:SetShown(not index); main.buyerHeader:SetShown(show)
+    -- INDEX = search buyers by name (+ "Search by item »"); FIND = search an item (+ "« Find
+    -- buyer"); SHOW = one buyer's want list (+ "< Back"). Each mode shows only its own chrome.
+    main.buyerFilter:SetShown(index); main.buyerFilterLabel:SetShown(index)
+    main.buyerRefreshBtn:SetShown(index); main.buyerToItemBtn:SetShown(index)
+    main.searchBox:SetShown(find); main.searchLabel:SetShown(find); main.buyerToIndexBtn:SetShown(find)
+    main.buyerFindRefreshBtn:SetShown(find)
+    main.buyerBackBtn:SetShown(show); main.buyerHeader:SetShown(show)
     main.buyerCatalogFilter:SetShown(show); main.buyerCatalogFilterLabel:SetShown(show)
     if show then main.buyerCatalogFilter:SetText("") end
+    if find then main.searchLabel:SetText("Find item:"); main.searchBox:SetWidth(300) end
     main.ac:Hide()
     updateSharedSortHeaders()
     if index then
@@ -1723,13 +1728,14 @@ local function buildPostPanel()
     qtyBox:SetScript("OnTabPressed", function() priceBox:SetFocus(); priceBox:HighlightText() end)
     priceBox:SetScript("OnTabPressed", function() qtyBox:SetFocus(); qtyBox:HighlightText() end)
 
-    -- the price field follows the chosen format: label text, a live input restriction for the
-    -- decimal format, and reformatting the current value when the setting changes.
+    -- The input accepts BOTH notations (parsePrice reads coins and decimal alike), same as the
+    -- WTB field. The priceFormat setting only chooses the FILL format: the example in the label,
+    -- the edit prefill (priceToStr), and reformatting the current value when the setting changes.
     local function applyPriceFormat()
         if ns.GetSetting("priceFormat") == "currency" then
-            priceLabel:SetText("Price/unit: e.g. 3.50 = 3g50s (leave empty to take bids)")
+            priceLabel:SetText("Price/unit: e.g. 3.50 = 3g50s (also accepts 3g50s; empty to take bids)")
         else
-            priceLabel:SetText("Price/unit: e.g. 1g20s34c (leave empty to take bids)")
+            priceLabel:SetText("Price/unit: e.g. 1g20s34c (also accepts 3.50; empty to take bids)")
         end
         local cur = parsePrice(priceBox:GetText())
         if cur > 0 then priceBox:SetText(priceToStr(cur)) end
@@ -1737,23 +1743,6 @@ local function buildPostPanel()
     applyPriceFormat()
     ns.On("setting:priceFormat", applyPriceFormat)
 
-    -- decimal format: restrict typing to digits + one dot + two decimals, and pad to two
-    -- decimals (with a leading zero) when the field loses focus. The coin format is free text
-    -- (silver/copper are clamped to 0-99 in parsePrice).
-    priceBox:SetScript("OnTextChanged", function(self, user)
-        if not user or ns.GetSetting("priceFormat") ~= "currency" then return end
-        local t = self:GetText()
-        local dot = t:find("%.")
-        local intp = (dot and t:sub(1, dot - 1) or t):gsub("%D", "")
-        local frac = dot and t:sub(dot + 1):gsub("%D", ""):sub(1, 2)
-        local clean = intp .. (dot and ("." .. frac) or "")
-        if clean ~= t then self:SetText(clean) end
-    end)
-    priceBox:SetScript("OnEditFocusLost", function(self)
-        if ns.GetSetting("priceFormat") ~= "currency" then return end
-        local n = tonumber(self:GetText())
-        if n and n > 0 then self:SetText(string.format("%.2f", n)) end
-    end)
     local offerBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
     main.offerBtn = offerBtn
@@ -1895,13 +1884,13 @@ end
 
 local function buildBuyerWidgets()
     --==================== Buyers tab widgets (index + find + show) ====================
-    -- The item search reuses the shared main.searchBox / main.ac (see SelectTab). Here we add
-    -- the buyer-name filter, refresh, back, header, and the per-buyer "Find item:" filter.
+    -- Two explicit modes you toggle between: INDEX (search buyers by name) and FIND (search an
+    -- item, reusing the shared main.searchBox / main.ac). SHOW opens one buyer's want list.
     local buyerFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    buyerFilterLabel:SetPoint("TOPLEFT", 408, -68); buyerFilterLabel:SetText("Buyer:"); buyerFilterLabel:Hide()
+    buyerFilterLabel:SetPoint("TOPLEFT", 16, -68); buyerFilterLabel:SetText("Find buyer:"); buyerFilterLabel:Hide()
     main.buyerFilterLabel = buyerFilterLabel
     local buyerFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    buyerFilter:SetPoint("TOPLEFT", 452, -64); buyerFilter:SetSize(180, 22); buyerFilter:SetAutoFocus(false); buyerFilter:Hide()
+    buyerFilter:SetPoint("TOPLEFT", 100, -64); buyerFilter:SetSize(290, 22); buyerFilter:SetAutoFocus(false); buyerFilter:Hide()
     local function buyerFilterText() return (buyerFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower() end
     buyerFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshBuyers() end end)
     buyerFilter:SetScript("OnEnterPressed", function(self)
@@ -1913,11 +1902,35 @@ local function buildBuyerWidgets()
     buyerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanBuyers("") end)
     main.buyerFilter = buyerFilter
     local buyerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    buyerRefreshBtn:SetSize(80, 22); buyerRefreshBtn:SetPoint("TOPLEFT", 640, -64); buyerRefreshBtn:SetText("Refresh"); buyerRefreshBtn:Hide()
+    buyerRefreshBtn:SetSize(70, 22); buyerRefreshBtn:SetPoint("TOPLEFT", 398, -64); buyerRefreshBtn:SetText("Refresh"); buyerRefreshBtn:Hide()
     buyerRefreshBtn:SetScript("OnClick", function()
         local t = buyerFilterText(); ns.ScanBuyers((#t >= ns.FILTER_MIN) and t or "")
     end)
     main.buyerRefreshBtn = buyerRefreshBtn
+
+    -- mode toggles: INDEX shows "Search by item", FIND shows "Back to buyers". Each clears the
+    -- item query so the two modes start clean.
+    local function clearFind()
+        wipe(ns.buyers.find.results); ns.buyers.find.itemID = nil
+        if main.searchBox then main.searchBox:SetText("") end
+    end
+    local toItemBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    toItemBtn:SetSize(120, 22); toItemBtn:SetPoint("TOPLEFT", 474, -64); toItemBtn:SetText("Search by item »"); toItemBtn:Hide()
+    toItemBtn:SetScript("OnClick", function() clearFind(); ns.SetBuyersView("FIND"); main.searchBox:SetFocus() end)
+    main.buyerToItemBtn = toItemBtn
+    local toIndexBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    toIndexBtn:SetSize(120, 22); toIndexBtn:SetPoint("TOPLEFT", 474, -64); toIndexBtn:SetText("« Find buyer"); toIndexBtn:Hide()
+    toIndexBtn:SetScript("OnClick", function() clearFind(); ns.SetBuyersView("INDEX"); ns.ScanBuyers("") end)
+    main.buyerToIndexBtn = toIndexBtn
+
+    -- Refresh on the find view: re-run the item query for the current item
+    local findRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    findRefreshBtn:SetSize(64, 22); findRefreshBtn:SetPoint("TOPLEFT", 406, -64); findRefreshBtn:SetText("Refresh"); findRefreshBtn:Hide()
+    findRefreshBtn:SetScript("OnClick", function()
+        local id = ns.buyers.find.itemID
+        if id and ns.FindBuyersForItem then ns.FindBuyersForItem(id) end
+    end)
+    main.buyerFindRefreshBtn = findRefreshBtn
 
     local buyerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     buyerBackBtn:SetSize(70, 22); buyerBackBtn:SetPoint("TOPLEFT", 16, -64); buyerBackBtn:SetText("< Back"); buyerBackBtn:Hide()
@@ -2613,6 +2626,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.buyerBackBtn:Hide(); main.buyerHeader:Hide()
         main.buyerSortName:Hide(); main.buyerSortCount:Hide()
         main.buyerCatalogFilter:Hide(); main.buyerCatalogFilterLabel:Hide()
+        main.buyerToItemBtn:Hide(); main.buyerToIndexBtn:Hide(); main.buyerFindRefreshBtn:Hide()
     end
     main.modeToggle:SetShown(buy)
     if not buy then   -- leaving the Buy tab: hide all Browse widgets, restore the shared headers
@@ -2650,10 +2664,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.h1:SetText("Seller"); main.h2:SetText("Qty"); main.h3:SetText("Price/unit"); main.h4:SetText("Location")
         setBuyMode(buyMode)   -- apply Search vs Browse sub-mode (handles visibility + refresh)
     elseif buyers then
-        main.searchLabel:SetText("Item:"); main.searchBox:SetWidth(300); main.searchBox:SetText("")
+        main.searchBox:SetText("")
         main.buyerFilter:SetText("")
-        ns.SetBuyersView("INDEX")   -- sets headers + visibility + refresh
-        ns.ScanBuyers("")           -- auto-scan on entering (tab click = hardware event)
+        ns.SetBuyersView("FIND")    -- default to item search (the seller's "who wants this?"); the
+                                    -- buyer scan runs only when you toggle to "Find buyer"
     elseif sellers then
         main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.0
+
+- **WTB (Want To Buy) / Buyers.** The buy-side counterpart to selling. My Items now has two
+  sub-tabs: **Selling** (your listings) and **WTB** (items you're looking for, added via the
+  search picker with qty, an optional price, and a COD checkbox). A new **Buyers** tab opens on
+  **Search by item** ("who wants this?") and toggles to **Find buyer** (browse all buyers, open
+  one for their full wanted list); whisper buyers straight from the list. Each Selling row gets a
+  coin button that jumps to the buyers for that item. Same sort, filter and full-row-hover QoL as
+  the Sellers side. Compatible with 0.12.x: the buyer queries are new messages older clients just
+  don't answer, and the shared pause toggle hides both your selling and buying.
+- **Find buyers/sellers beyond the live cap.** Reminder surfaced in the UI: typing in a name
+  field filters the received list locally; pressing Enter (or Refresh) runs a network search that
+  reaches names not in the capped first scan.
+- **Compose tweaks.** Item pickers drop down with arrow-key navigation; Tab moves between fields
+  (Item → Qty → Price on WTB, Qty ↔ Price on Selling).
+- **Price format setting** is now a *fill* format only: you can always type either notation
+  (`2g3s44c` or `3.50`) in any price field; the setting just chooses how a price is filled back in
+  for you on edit.
+
 ## 0.12.0
 
 - **Sort the item lists.** Click a column header to sort Buy search, Buy browse, the seller
