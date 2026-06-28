@@ -89,6 +89,7 @@ local function priceToStr(c)
     local g, s, cc = math.floor(c / 10000), math.floor((c % 10000) / 100), c % 100
     return (g > 0 and (g .. "g") or "") .. (s > 0 and (s .. "s") or "") .. (cc > 0 and (cc .. "c") or "")
 end
+ns.PriceToStr = priceToStr   -- exposed for the price-tooltip (PriceDB.lua), which formats in the chosen format
 
 local function itemName(id)
     local name = GetItemInfo(id)

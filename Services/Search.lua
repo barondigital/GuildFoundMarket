@@ -48,6 +48,13 @@ function ns.Search(itemID)
             local n = 0; for _ in pairs(ns.search.results) do n = n + 1 end
             ns.Log(("SEARCH done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.search.start or GetTime())))
             if ns.RefreshBuy then ns.RefreshBuy() end
+            if ns.PriceDB then   -- snapshot the prices we just saw for this item (#13)
+                local list = {}
+                for _, o in pairs(ns.search.results) do
+                    list[#list + 1] = { id = ns.search.itemID, suffix = o.suffix, price = o.price }
+                end
+                ns.PriceDB.Record(list)
+            end
         end
     end)
 end

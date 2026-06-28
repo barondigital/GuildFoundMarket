@@ -29,7 +29,7 @@ ns.SettingsSchema = {
         label = "Alt-click an item to search it",
         tip = "Alt + left-click any item in your bags or bank to open Guild Found Market and instantly search for that item.\n\n"
             .. "Some bag addons also use Alt-click for their own features. Disable this option if it conflicts with another addon.",
-        default = false,
+        default = true,
     },
     {
         key = "auxSeed",
@@ -44,6 +44,15 @@ ns.SettingsSchema = {
             end
             return "aux addon not installed: this option currently has no effect.", 1, 0.82, 0
         end,
+        default = true,
+    },
+    {
+        key = "showPriceTooltip",
+        label = "Show recent prices on item tooltips",
+        tip = "Add a couple of lines to an item's tooltip showing the most recent prices GFM has "
+            .. "seen for it (seller count, range, and how long ago), built from your own searches, "
+            .. "browses and seller views.\n\n"
+            .. "Turn this off if you'd rather keep tooltips clean.",
         default = true,
     },
     {

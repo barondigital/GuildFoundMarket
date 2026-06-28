@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0
+
+- **Recent prices on item tooltips.** GFM keeps a small local snapshot of what it last saw for an
+  item (from your searches, browses and seller views) and shows it on the item tooltip: seller
+  count and price range, plus how long ago it was seen. Prices use a compact coloured
+  gold/silver/copper notation (e.g. `1.3.34`). Items with no data yet show "alt click to scan".
+  Toggle the whole thing in Options (on by default). No protocol change; data is keyed by itemID.
+- **Alt-click an item to search is now on by default.** Alt + left-click an item in your bags to
+  search it (and feed the price snapshot). Turn it off in Options if it clashes with a bag addon.
+
 ## 0.13.1
 
 - **Shop note on the Buyers side.** A player's note now shows on the Buyers tab too: a chat-bubble

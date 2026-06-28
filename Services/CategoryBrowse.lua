@@ -59,6 +59,13 @@ function ns.BrowseCategory(classID, subClassID, slot)
             local n = 0; for _ in pairs(ns.browseResults) do n = n + 1 end
             ns.Log(("BROWSE done: %d offer(s) in %.1fs"):format(n, GetTime() - (ns.browseStart or GetTime())))
             if ns.RefreshBrowse then ns.RefreshBrowse() end
+            if ns.PriceDB then   -- snapshot the prices from this browse (#13)
+                local list = {}
+                for _, o in pairs(ns.browseResults) do
+                    list[#list + 1] = { id = o.id, suffix = o.suffix, price = o.price }
+                end
+                ns.PriceDB.Record(list)
+            end
         end
     end)
 end

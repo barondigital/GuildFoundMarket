@@ -66,6 +66,17 @@ function ns.ScanSellers(filter)
     end)
 end
 
+-- Snapshot the open seller's catalog prices into the local price DB (#13). One seller, so each
+-- item lands as a count-1 observation (overwriting unless a richer search snapshot is newer).
+local function recordCatalogPrices()
+    if not ns.PriceDB or not ns.sellers.catalog then return end
+    local list = {}
+    for _, it in pairs(ns.sellers.catalog.items) do
+        list[#list + 1] = { id = it.id, suffix = it.suffix, price = it.price }
+    end
+    ns.PriceDB.Record(list)
+end
+
 -- Open one seller: request their full catalog (lazy). Replies arrive as K~ chunks.
 function ns.OpenSeller(seller, loc)
     if not seller then return end
@@ -82,10 +93,12 @@ function ns.OpenSeller(seller, loc)
             ns.sellers.catalog.items[ns.vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 5) + 1, price = (id % 90 + 1) * 1000 }
         end
         ns.sellers.catalog.loading = false
+        recordCatalogPrices()
     elseif ns.selfTest and seller == ns.playerName and not ns.IsPaused() then  -- can't whisper yourself
         for _, it in ipairs(ns.OfferList()) do ns.sellers.catalog.items[ns.vkey(it.id, it.suffix)] = it end
         ns.sellers.catalog.note = ns.GetShopNote and ns.GetShopNote() or ""
         ns.sellers.catalog.loading = false
+        recordCatalogPrices()
     else
         ns.EnqueueWhisper(("L~%s"):format(activeLid), seller)
         local thisLid = activeLid
@@ -177,6 +190,7 @@ ns.OnMessage("K", function(a, b, c)
         ns.sellers.catalog.loading = false
         local n = 0; for _ in pairs(ns.sellers.catalog.items) do n = n + 1 end
         ns.Log(("OPEN %s: %d items in %.1fs"):format(ns.sellers.catalog.seller, n, GetTime() - (ns.sellers.openStart or GetTime())))
+        recordCatalogPrices()
     end
     if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
 end)

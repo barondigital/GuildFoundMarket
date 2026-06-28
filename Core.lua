@@ -110,6 +110,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketDB = GuildFoundMarketDB or {}
         GuildFoundMarketDB.names = GuildFoundMarketDB.names or {}
         GuildFoundMarketDB.quals = GuildFoundMarketDB.quals or {}
+        GuildFoundMarketDB.prices = GuildFoundMarketDB.prices or {}   -- local price snapshots (#13)
         GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
         GuildFoundMarketCharDB.wants = GuildFoundMarketCharDB.wants or {}   -- WTB list (buy side)
