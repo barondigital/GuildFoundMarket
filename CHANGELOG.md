@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.1
+
+- **Shop note on the Buyers side.** A player's note now shows on the Buyers tab too: a chat-bubble
+  in the Buyers index (click to load, hover to read) and an outlined "Note" block under an opened
+  buyer's want list, mirroring the Sellers side. The note is fetched on demand and bundled with a
+  buyer's want-list reply.
+
 ## 0.13.0
 
 - **WTB (Want To Buy) / Buyers.** The buy-side counterpart to selling. My Items now has two

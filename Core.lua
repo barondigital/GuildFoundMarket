@@ -269,8 +269,8 @@ SlashCmdList.GFMARKET = function(msg)
         ns.Feedback("Injected 3 fake sellers (Aldorin has a note, Bigbags 'click to load'); open the Sellers tab.", false)
     elseif ns.dev and msg == "fakebuyers" then
         wipe(ns.buyers.results)
-        ns.buyers.results["Wantsalot"] = { count = 3,  loc = "Bank, Orgrimmar" }
-        ns.buyers.results["Maxbidder"] = { count = 12, loc = "Auction House, Orgrimmar" }
+        ns.buyers.results["Wantsalot"] = { count = 3,  loc = "Bank, Orgrimmar", hasNote = true, note = "Paying top gold for Black Lotus and Arcane Crystal. Whisper me!" }
+        ns.buyers.results["Maxbidder"] = { count = 12, loc = "Auction House, Orgrimmar", hasNote = true }
         ns.buyers.results["Pennypinch"] = { count = 1, loc = "The Crossroads" }
         local many = {}; for i = 1, 12 do many[i] = 760 + i end
         ns._fakeWant = { Wantsalot = { 2589, 2592, 4338 }, Pennypinch = { 6948 }, Maxbidder = many }

@@ -182,54 +182,59 @@ ns.OnMessage("K", function(a, b, c)
 end)
 
 --========================================================================
--- Shop note: fetched on demand (clicking a seller's bubble in the index), so the heavy text
--- never rides the scan. We whisper NQ to the seller; they answer NR with the note. The reply
--- is matched to the seller by the whisper's sender, so no id is needed.
+-- Shop note: a per-character note shown on BOTH the Sellers and Buyers sides. Fetched on demand
+-- (clicking a player's bubble in either index), so the heavy text never rides a scan. We whisper
+-- NQ to the player; they answer NR with the note, matched back by the whisper's sender.
 --========================================================================
 
--- Ask one seller for their shop note (directed whisper). Caches into the index result so a
--- second hover/click is free; a timeout clears the "loading" state if they don't answer.
-function ns.RequestSellerNote(seller)
-    if not seller or not ns.channelName then return end
-    local rec = ns.sellers.results[seller]
+-- Ask one player for their note (directed whisper). `store` is the index table to cache into
+-- (ns.sellers.results or ns.buyers.results); a timeout clears "loading" if they don't answer.
+function ns.RequestNote(name, store)
+    if not name or not ns.channelName then return end
+    local rec = store and store[name]
     if not rec or rec.note ~= nil or rec.noteLoading then return end   -- already have it / in flight
     rec.noteLoading = true
-    if ns.selfTest and seller == ns.playerName then                    -- can't whisper yourself
+    if ns.selfTest and name == ns.playerName then                      -- can't whisper yourself
         rec.note = ns.GetShopNote and ns.GetShopNote() or ""; rec.noteLoading = nil
         if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
-        if ns.NoteArrived then ns.NoteArrived(seller) end
+        if ns.RefreshBuyersSoon then ns.RefreshBuyersSoon() end
+        if ns.NoteArrived then ns.NoteArrived(name) end
         return
     end
-    ns.EnqueueWhisper("NQ", seller)
-    ns.Log("NOTE request -> " .. seller)
+    ns.EnqueueWhisper("NQ", name)
+    ns.Log("NOTE request -> " .. name)
     C_Timer.After(ns.QUERY_SETTLE, function()
         if rec.noteLoading then          -- no answer (offline / paused / no addon)
             rec.noteLoading = nil
-            ns.Feedback(("Couldn't fetch %s's note (offline?)."):format(seller), true)
-            if ns.NoteArrived then ns.NoteArrived(seller) end
+            ns.Feedback(("Couldn't fetch %s's note (offline?)."):format(name), true)
+            if ns.NoteArrived then ns.NoteArrived(name) end
         end
     end)
 end
 
--- NQ: a buyer wants my shop note. Answer with it (paused sellers stay silent).
+-- NQ: someone wants my note. Answer with it (paused clients stay silent).
 ns.OnMessage("NQ", function(_, _, _, _, _, _, sender)
     if ns.IsPaused() then return end
     ns.EnqueueWhisper("NR~" .. (ns.GetShopNote and ns.GetShopNote() or ""), sender)
 end)
 
--- NR~note: a seller's shop note. Arrives two ways: as the reply to an index NQ click, and
--- bundled with a catalog fetch (L). Updates whichever is live: the index record and/or the
--- open seller's catalog. Matched to the seller by the whisper's sender.
+-- NR~note: a player's note. Arrives as the reply to an index NQ click, or bundled with a catalog
+-- fetch (L / WL). Updates wherever that player appears: the seller/buyer index records and the
+-- open seller/buyer catalog. Matched to the player by the whisper's sender.
 ns.OnMessage("NR", function(a, _, _, _, _, _, sender)
     local s = Ambiguate(sender, "short")
     local note = a or ""
-    local rec = ns.sellers.results[s]
-    local cat = ns.sellers.catalog
-    local forCatalog = cat and cat.seller == s
-    if not rec and not forCatalog then return end   -- unsolicited / stale
-    if rec then rec.note = note; rec.noteLoading = nil end
-    if forCatalog then cat.note = note; if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end end
+    local srec = ns.sellers.results[s]
+    local brec = ns.buyers and ns.buyers.results[s]
+    local scat = ns.sellers.catalog;        local sForCat = scat and scat.seller == s
+    local bcat = ns.buyers and ns.buyers.catalog; local bForCat = bcat and bcat.buyer == s
+    if not (srec or brec or sForCat or bForCat) then return end   -- unsolicited / stale
+    if srec then srec.note = note; srec.noteLoading = nil end
+    if brec then brec.note = note; brec.noteLoading = nil end
+    if sForCat then scat.note = note; if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end end
+    if bForCat then bcat.note = note; if ns.RefreshBuyerCatalogSoon then ns.RefreshBuyerCatalogSoon() end end
     ns.Log(("NOTE recv <- %s (%d chars)"):format(s, #note))
     if ns.RefreshSellersSoon then ns.RefreshSellersSoon() end
+    if ns.RefreshBuyersSoon then ns.RefreshBuyersSoon() end
     if ns.NoteArrived then ns.NoteArrived(s) end
 end)

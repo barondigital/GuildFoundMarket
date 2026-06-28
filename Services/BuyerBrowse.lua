@@ -115,7 +115,7 @@ function ns.ScanBuyers(filter)
             C_Timer.After(0.2, function()
                 if activeWSid ~= thisSid then return end
                 if not ns.buyers.results[ns.playerName] then ns.buyers.count = (ns.buyers.count or 0) + 1 end
-                ns.buyers.results[ns.playerName] = { count = count, loc = loc }
+                ns.buyers.results[ns.playerName] = { count = count, loc = loc, hasNote = (ns.GetShopNote and ns.GetShopNote() ~= "") }
                 if ns.buyers.pendingOpen == ns.playerName then
                     ns.buyers.pendingOpen = nil
                     ns.OpenBuyer(ns.playerName, loc)
@@ -154,19 +154,21 @@ ns.OnMessage("W", function(a, b, c, _, _, _, sender)
     local sid, n, loc = a, #list, ns.LiveLoc()
     local jitter = (filter and filter ~= "") and 0.3 or ns.SCAN_JITTER
     C_Timer.After(math.random() * jitter, function()
-        ns.EnqueueWhisper(("WC~%s~%d~%s"):format(sid, n, loc), sender)
+        -- 4th field: 1-byte "have a note" flag (the note text is fetched on demand, NQ/NR)
+        local flag = (ns.GetShopNote and ns.GetShopNote() ~= "") and "1" or ""
+        ns.EnqueueWhisper(("WC~%s~%d~%s~%s"):format(sid, n, loc, flag), sender)
     end)
 end)
 
--- WC~sid~count~loc: a buyer's summary in reply to our scan.
-ns.OnMessage("WC", function(a, b, c, _, _, _, sender)
+-- WC~sid~count~loc~hasNote: a buyer's summary in reply to our scan (hasNote flag optional/last).
+ns.OnMessage("WC", function(a, b, c, d, _, _, sender)
     if a ~= activeWSid then return end
     local s = Ambiguate(sender, "short")
     if not ns.buyers.results[s] then
         if (ns.buyers.count or 0) >= ns.SELLER_CAP then ns.buyers.capped = true; return end
         ns.buyers.count = (ns.buyers.count or 0) + 1
     end
-    ns.buyers.results[s] = { count = tonumber(b) or 0, loc = c or "" }
+    ns.buyers.results[s] = { count = tonumber(b) or 0, loc = c or "", hasNote = (d == "1") }
     ns.Log(("  buyer %s: %s want(s) (%+.1fs)"):format(s, tostring(b), GetTime() - (ns.buyers.scanStart or GetTime())))
     if ns.buyers.pendingOpen and s == ns.buyers.pendingOpen then
         ns.buyers.pendingOpen = nil
@@ -185,7 +187,10 @@ function ns.OpenBuyer(buyer, loc)
     ns.Log("OPEN buyer " .. buyer .. ": requesting want list")
     seq = seq + 1
     activeWLid = ns.playerName .. "#WL" .. seq
-    ns.buyers.catalog = { buyer = buyer, loc = loc, items = {}, loading = true }
+    -- seed the note from the index cache (clicked there) or selftest; real buyers also bundle a
+    -- fresh note with their want-list reply (see the WL handler)
+    local seededNote = ns.buyers.results[buyer] and ns.buyers.results[buyer].note
+    ns.buyers.catalog = { buyer = buyer, loc = loc, items = {}, loading = true, note = seededNote }
     if ns._fakeWant and ns._fakeWant[buyer] then          -- dev: /gfm fakebuyers
         for _, id in ipairs(ns._fakeWant[buyer]) do
             ns.buyers.catalog.items[ns.vkey(id, 0)] = { id = id, suffix = 0, qty = (id % 4) + 1, price = (id % 50 + 1) * 1000, cod = (id % 2) == 0 }
@@ -193,6 +198,7 @@ function ns.OpenBuyer(buyer, loc)
         ns.buyers.catalog.loading = false
     elseif ns.selfTest and buyer == ns.playerName and not ns.IsPaused() then   -- can't whisper yourself
         for _, it in ipairs(ns.WantList()) do ns.buyers.catalog.items[ns.vkey(it.id, it.suffix)] = it end
+        ns.buyers.catalog.note = ns.GetShopNote and ns.GetShopNote() or ""
         ns.buyers.catalog.loading = false
     else
         ns.EnqueueWhisper(("WL~%s"):format(activeWLid), buyer)
@@ -219,6 +225,9 @@ ns.OnMessage("WL", function(a, _, _, _, _, _, sender)
         buf = (buf == "") and p or (buf .. ";" .. p)
     end
     flush(0)
+    -- bundle the shop note with the want list (same NR message the index bubble uses)
+    local note = ns.GetShopNote and ns.GetShopNote() or ""
+    if note ~= "" then ns.EnqueueWhisper("NR~" .. note, sender) end
     ns.Log(("sent my want list (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
 end)
 
