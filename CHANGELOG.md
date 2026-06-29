@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.2
+
+- **Channel monitor (`/gfm channelscan`).** A diagnostic that watches your marketplace channel for
+  traffic that isn't GFM's own protocol, to catch another addon (or a person) riding the same
+  channel. Toggle it on to see each non-GFM line live in the Debug view; toggle it off for a
+  summary (GFM vs foreign message counts, plus the busiest foreign senders and prefixes). It is
+  read-only (never sends anything), matches the real hashed channel you actually join (not the
+  config token or the trade-announce channel), and resets on reload.
+
 ## 0.15.1
 
 - **Bag sync now counts your bank and mailbox too.** A Bag-sync listing's quantity is the total of

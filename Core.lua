@@ -71,6 +71,51 @@ local function devEcho(msg)
     if ns.Log then ns.Log(msg) end
 end
 
+--========================================================================
+-- Channel monitor (diagnostic). Watches OUR marketplace channel for traffic that isn't our
+-- GFM protocol, to catch another addon (or a person) riding the same channel. Toggle with
+-- /gfm channelscan; every line goes to the Debug view. Read-only: it never sends anything, and
+-- it resets on /reload.
+--========================================================================
+local chanMon   -- nil = off; else { start, gfm, foreign, senders = {}, prefixes = {} }
+
+-- Is a CHAT_MSG_CHANNEL line on our marketplace channel? Match by base name (robust to the
+-- channel's slot number shifting), with the numeric index as a fallback.
+local function onOurChannel(chanIdx, chanName, chanBase)
+    local mine = ns.channelName and ns.channelName:lower()
+    if not mine then return false end
+    if chanBase and chanBase:lower() == mine then return true end
+    if chanName and chanName:lower() == mine then return true end
+    return ns.channelIndex ~= nil and chanIdx == ns.channelIndex
+end
+
+-- A short tag for a foreign line (leading non-space run, capped) so repeated traffic from one
+-- addon groups under one prefix in the summary.
+local function msgPrefix(text)
+    return ((text or ""):match("^(%S+)") or "(blank)"):sub(1, 12)
+end
+
+local function chanMonObserve(text, sender, isGFM, chanIdx, chanName, chanBase)
+    if not chanMon or not onOurChannel(chanIdx, chanName, chanBase) then return end
+    if isGFM then chanMon.gfm = chanMon.gfm + 1; return end
+    local who = (sender and Ambiguate(sender, "short")) or "?"
+    if who == ns.playerName then return end                       -- our own untagged line (shouldn't happen)
+    chanMon.foreign = chanMon.foreign + 1
+    chanMon.senders[who] = (chanMon.senders[who] or 0) + 1
+    local pfx = msgPrefix(text); chanMon.prefixes[pfx] = (chanMon.prefixes[pfx] or 0) + 1
+    -- live, truncated so a chatty addon can't flood the Debug view
+    devEcho(("|cffff8800channelscan|r FOREIGN #%d from %s: %s"):format(chanMon.foreign, who, (text or ""):sub(1, 60)))
+end
+
+-- Print the top few entries of a { key = count } map to the Debug view, busiest first.
+local function chanMonTop(label, map)
+    local arr = {}
+    for k, v in pairs(map) do arr[#arr + 1] = { k = k, v = v } end
+    table.sort(arr, function(a, b) return a.v > b.v end)
+    if #arr == 0 then devEcho("  " .. label .. ": none"); return end
+    for i = 1, math.min(5, #arr) do devEcho(("  %s: %s (%d)"):format(label, arr[i].k, arr[i].v)) end
+end
+
 -- Listings paused (e.g. while raiding/PvP): items are kept, but we stop answering
 -- other players' searches and seller-browse scans. Per-character, like the offers.
 local function isPaused() return GuildFoundMarketCharDB and GuildFoundMarketCharDB.paused end
@@ -166,11 +211,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if prefix == ns.PREFIX then ns.DispatchMessage(text, sender) end
 
     elseif event == "CHAT_MSG_CHANNEL" then
-        local text, sender = ...
-        if text and text:sub(1, #CHAT_TAG) == CHAT_TAG then
+        local text, sender, _, chanName, _, _, _, chanIdx, chanBase = ...
+        local isGFM = text and text:sub(1, #CHAT_TAG) == CHAT_TAG
+        if isGFM then
             if ns.dev then devEcho("|cff00ff96GFM|r received channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
             ns.DispatchMessage(text:sub(#CHAT_TAG + 1), sender)
         end
+        chanMonObserve(text, sender, isGFM, chanIdx, chanName, chanBase)   -- no-op unless /gfm channelscan is on
 
     elseif event == "CHAT_MSG_SYSTEM" then
         local msg = ...
@@ -266,6 +313,24 @@ SlashCmdList.GFMARKET = function(msg)
         local n = 0; for _ in pairs(GuildFoundMarketCharDB.offers) do n = n + 1 end
         devEcho(("  my offers: %d (%d active, rest parked at qty 0)"):format(n, #ns.OfferList()))
         if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
+    elseif msg == "channelscan" then
+        if chanMon then
+            local dur = math.max(1, math.floor(time() - chanMon.start))
+            devEcho(("|cff00ff96GFM channelscan|r stopped after %ds — GFM msgs: %d, foreign msgs: %d"):format(dur, chanMon.gfm, chanMon.foreign))
+            if chanMon.foreign == 0 then
+                devEcho("  No non-GFM traffic seen on the channel.")
+            else
+                chanMonTop("foreign sender", chanMon.senders)
+                chanMonTop("foreign prefix", chanMon.prefixes)
+            end
+            chanMon = nil
+        elseif not ns.channelName then
+            ns.Feedback("No marketplace channel configured yet, so there's nothing to scan.", true)
+        else
+            chanMon = { start = time(), gfm = 0, foreign = 0, senders = {}, prefixes = {} }
+            devEcho("|cff00ff96GFM channelscan|r ON — watching \"" .. ns.channelName .. "\" for non-GFM traffic. Run /gfm channelscan again to stop and summarise.")
+            if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
+        end
     elseif msg == "harvest" then
         ns.ItemDB.StartHarvest()
         local cur, max = ns.ItemDB.HarvestProgress()
