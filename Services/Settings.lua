@@ -33,12 +33,13 @@ ns.SettingsSchema = {
     },
     {
         key = "trackDefault",
-        label = "New listings follow my bags",
-        tip = "Sets the starting position of the \"Follow my bags\" switch when you create a NEW listing on the My Items tab. "
+        label = "New listings use Bag sync",
+        tip = "Sets the starting position of the \"Bag sync\" switch when you create a NEW listing on the My Items tab. "
             .. "It changes nothing for listings you already have; flip the switch per listing any time.\n\n"
-            .. "When a listing follows your bags, GFM keeps its quantity equal to how many you carry: it falls as you sell or use them and rises as you restock. "
+            .. "When Bag sync is on, GFM keeps the quantity in step with your stock: your bags, plus the last-seen contents of "
+            .. "this character's bank and mailbox. It falls as you sell or use them and rises as you restock. "
             .. "At 0 the listing is |cffffd100parked|r (hidden from buyers but kept in your My Items), never deleted.\n\n"
-            .. "Leave this off if you usually list stock kept on a bank alt: those copies aren't in your bags, so a following listing would park itself.",
+            .. "Stock on another character (a bank alt) isn't counted, so leave this off if you list from one.",
         default = false,
     },
     {

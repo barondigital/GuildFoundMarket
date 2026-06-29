@@ -303,6 +303,21 @@ local function wantPriceText(price, cod)
     return GetCoinTextureString(price) .. (cod and " |cffff8800COD|r" or " |cff888888max|r")
 end
 
+-- Append the Bag-sync cache freshness to a tooltip: that the count is bags(live) plus the bank
+-- and mail snapshots, when each was last seen, and a nudge to open the mailbox when unread mail
+-- is waiting (so the player knows that part of the count may be short until they do).
+local function appendStockReliability(tip)
+    if not ns.Stock then return end
+    local r = ns.Stock.Reliability()
+    local age = ns.PriceDB and ns.PriceDB.AgeString
+    local function seen(at) return (at and at > 0 and age) and (age(at) .. " ago") or "not yet" end
+    tip:AddLine(" ")
+    tip:AddLine(("Counts bags (live) + this character's bank (%s) + mail (%s)."):format(seen(r.bankAt), seen(r.mailAt)), 0.7, 0.7, 0.7, true)
+    if r.newMail then
+        tip:AddLine("New mail waiting: open your mailbox to update the count.", 1, 0.6, 0.2, true)
+    end
+end
+
 -- Reset a pooled row to a known baseline before a formatter fills in only its differences.
 -- Rows are shared across the Buy / My Items / Sellers tabs, so anything a previous row set
 -- (scripts, colour, the trailing buttons, the hover link) must be cleared here.
@@ -1542,8 +1557,9 @@ local function buildRows()
         r.track:RegisterForClicks("LeftButtonUp")
         r.track:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText("Follow my bags")
-            GameTooltip:AddLine("On: this listing's quantity tracks how many you carry (0 = parked, hidden but kept). Off: a manual claim, the right choice for stock on a bank alt.", 1, 1, 1, true)
+            GameTooltip:SetText("Bag sync")
+            GameTooltip:AddLine("On: this listing's quantity tracks your stock (0 = parked, hidden but kept). Off: a manual claim, the right choice for stock on another character.", 1, 1, 1, true)
+            appendStockReliability(GameTooltip)
             GameTooltip:Show()
         end)
         r.track:SetScript("OnLeave", GameTooltip_Hide)
@@ -1783,10 +1799,11 @@ local function buildPostPanel()
     trackCheck:SetHitRectInsets(0, -(trackLabel:GetStringWidth() + 6), 0, 0)
     trackCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Follow my bags")
-        GameTooltip:AddLine("Keep this listing's quantity equal to how many you carry: it falls as you sell or use them and rises as you restock. At 0 it is parked (hidden from buyers but kept here), never deleted.", 1, 1, 1, true)
+        GameTooltip:SetText("Bag sync")
+        GameTooltip:AddLine("Keep this listing's quantity in step with your stock: your bags right now, plus the last-seen contents of this character's bank and mailbox. It falls as you sell or use them and rises as you restock; at 0 it parks (hidden from buyers but kept here), never deleted.", 1, 1, 1, true)
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Leave it off for stock kept on a bank alt: those copies aren't in your bags, so a following listing would park itself.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Stock on another character (a bank alt) isn't counted, so leave it off for those listings.", 0.8, 0.8, 0.8, true)
+        appendStockReliability(GameTooltip)
         GameTooltip:Show()
     end)
     trackCheck:SetScript("OnLeave", GameTooltip_Hide)
@@ -1795,7 +1812,7 @@ local function buildPostPanel()
     -- box out (the engine owns the number). Off: a normal editable qty.
     function applyTrack()
         local on = trackCheck:GetChecked()
-        if on and draft.itemID then qtyBox:SetText(tostring(ns.BagCount(draft.itemID, draft.suffix or 0))) end
+        if on and draft.itemID and ns.Stock then qtyBox:SetText(tostring(ns.Stock.Count(draft.itemID, draft.suffix or 0))) end
         if on then qtyBox:Disable() else qtyBox:Enable() end
         qtyBox:SetTextColor(on and 0.6 or 1, on and 0.6 or 1, on and 0.6 or 1)
     end

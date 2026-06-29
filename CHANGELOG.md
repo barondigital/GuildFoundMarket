@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.1
+
+- **Bag sync now counts your bank and mailbox too.** A Bag-sync listing's quantity is the total of
+  your bags (live) plus the last-seen contents of this character's bank and mailbox, so stock you
+  keep in the bank no longer parks a listing the moment you walk away. GFM snapshots the bank and
+  mail whenever you open them, and never overwrites a snapshot while the source is closed, so
+  walking away can't wipe it. The Bag-sync tooltip shows when each snapshot was last seen and warns
+  you to open your mailbox when unread mail is waiting (it can't read mail it hasn't opened).
+  Random-enchant variants and multi-item mails (one "package" with several attachments) are counted
+  correctly. Stock on another character still isn't counted; leave Bag sync off for those listings.
+
 ## 0.15.0
 
 - **Park a listing instead of removing it.** Set a listing's quantity to 0 (edit it, or let Bag

@@ -104,6 +104,14 @@ frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("CHAT_MSG_SYSTEM")
+frame:RegisterEvent("BANKFRAME_OPENED")          -- bank/mail stock snapshots (ns.Stock)
+frame:RegisterEvent("BANKFRAME_CLOSED")
+frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+frame:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
+frame:RegisterEvent("MAIL_SHOW")
+frame:RegisterEvent("MAIL_CLOSED")
+frame:RegisterEvent("MAIL_INBOX_UPDATE")
+frame:RegisterEvent("UPDATE_PENDING_MAIL")
 
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -173,6 +181,28 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "BAG_UPDATE_DELAYED" then
         ns.ItemDB.LearnFromBags()
         if ns.SyncTrackedOffersSoon then ns.SyncTrackedOffersSoon() end   -- keep tracked listings in step with bags
+        if ns.Stock and ns.Stock.IsBankOpen() then ns.Stock.RefreshBankSoon() end   -- a bank-bag slot changed while open
+
+    elseif event == "BANKFRAME_OPENED" then
+        if ns.Stock then ns.Stock.SetBankOpen(true); ns.Stock.RefreshBankSoon() end
+
+    elseif event == "BANKFRAME_CLOSED" then
+        if ns.Stock then ns.Stock.SetBankOpen(false) end   -- last change was captured by a slot event while open
+
+    elseif event == "PLAYERBANKSLOTS_CHANGED" or event == "PLAYERBANKBAGSLOTS_CHANGED" then
+        if ns.Stock then ns.Stock.RefreshBankSoon() end
+
+    elseif event == "MAIL_SHOW" then
+        if ns.Stock then ns.Stock.SetMailOpen(true); ns.Stock.RefreshMailSoon() end
+
+    elseif event == "MAIL_CLOSED" then
+        if ns.Stock then ns.Stock.SetMailOpen(false) end
+
+    elseif event == "MAIL_INBOX_UPDATE" then
+        if ns.Stock then ns.Stock.RefreshMailSoon() end
+
+    elseif event == "UPDATE_PENDING_MAIL" then
+        if ns.RefreshMineSoon then ns.RefreshMineSoon() end   -- new-mail flag flipped: refresh the Bag-sync reliability hint
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         local itemID, success = ...

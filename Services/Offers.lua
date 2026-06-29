@@ -39,27 +39,6 @@ local function bagBoundState(itemID)
     return sawCopy, sawTradeable
 end
 
--- Count how many of an EXACT variant (itemID + suffix) sit in the player's bags (0-4).
--- Bags only, never the bank: "follow my bags" is the whole contract, and a bank read is
--- unreliable away from the bank (one of the transients behind #2). We read each slot's suffix
--- from its item link (field 8 of the itemString) so random-enchant variants count
--- separately, the same way offers are keyed.
-local function bagCount(itemID, suffix)
-    suffix = suffix or 0
-    local total = 0
-    for bag = 0, 4 do
-        for s = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
-            local info = C_Container.GetContainerItemInfo(bag, s)
-            if info and info.itemID == itemID then
-                local sfx, str = 0, info.hyperlink and info.hyperlink:match("item:[%-%d:]+")
-                if str then local p = { strsplit(":", str) }; sfx = tonumber(p[8]) or 0 end
-                if sfx == suffix then total = total + (info.stackCount or 1) end
-            end
-        end
-    end
-    return total
-end
-ns.BagCount = bagCount
 
 function ns.AddOffer(itemID, suffix, qty, price, track)
     if not ns.channelName then ns.Feedback("No confederation config in your guild info, can't offer.", true); return end
@@ -154,19 +133,23 @@ local function offerList()
 end
 ns.OfferList = offerList
 
--- Auto-sync every "tracked" listing to its live bag count. Only offers with track=true are
--- touched; a manual listing (track nil/false) is never read against inventory, so stock kept
--- on a bank alt is left exactly as the seller posted it. Two guards keep the transient bad
--- reads that caused #2 from doing harm: bail entirely while the cursor holds an item (mid
--- stack-split or move), and skip any item whose info isn't cached yet (just after a loading
--- screen). And since qty 0 now means "parked" (kept and hidden), never a delete, even a stray
--- 0 is fully recoverable on the next bag change.
+-- Auto-sync every "tracked" listing to its stock count. Only offers with track=true are
+-- touched; a manual listing (track nil/false) is never read against inventory. The count is
+-- ns.Stock.Count: live bags plus the bank and mail snapshots, so a tracked listing follows
+-- everything the player owns, not just what's in their bags right now. Two guards keep the
+-- transient bad reads that caused #2 from doing harm: bail entirely while the cursor holds an
+-- item (mid stack-split or move), and skip any item whose info isn't cached yet (just after a
+-- loading screen). And since qty 0 now means "parked" (kept and hidden), never a delete, even a
+-- stray 0 is fully recoverable on the next bag change.
 function ns.SyncTrackedOffers()
-    if CursorHasItem() then return end
+    if CursorHasItem() or not ns.Stock then return end
+    local bags = ns.Stock.BagTotals()
+    local bank, mail = ns.Stock.BankCounts(), ns.Stock.MailCounts()
     local changed = false
     for _, o in pairs(offers()) do
         if o.track and o.id and GetItemInfo(o.id) ~= nil then
-            local has = bagCount(o.id, o.suffix)
+            local k = vkey(o.id, o.suffix)
+            local has = (bags[k] or 0) + (bank[k] or 0) + (mail[k] or 0)
             if has ~= o.qty then o.qty = has; changed = true end
         end
     end
