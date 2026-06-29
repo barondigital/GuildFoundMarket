@@ -319,6 +319,7 @@ local function resetRow(r)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
+    r.track:Hide(); r.track:SetScript("OnClick", nil)
     r.itemID = nil
 end
 
@@ -354,9 +355,12 @@ end
 
 local function formatMineRow(r, d)
     resetRow(r)
+    local parked = (d.qty or 0) <= 0   -- qty 0 = hidden from others, shown only here
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
-    r.c1.tip = "Ctrl-click to find who else sells this · shift-click to drop into your open chat message"
+    r.c1.tip = parked
+        and "Parked (qty 0): hidden from others, only you see it. Edit and set a qty above 0 to go live. · Ctrl-click to find who else sells this"
+        or "Ctrl-click to find who else sells this · shift-click to drop into your open chat message"
     r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1:SetScript("OnClick", function()
         if IsModifiedClick("CHATLINK") then
@@ -364,7 +368,7 @@ local function formatMineRow(r, d)
             if link then ChatEdit_InsertLink(link) end
         elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
     end)
-    r.c2:SetText(d.qty or 0)
+    r.c2:SetText(parked and "|cffff88000|r" or (d.qty or 0))   -- orange 0 flags a parked (hidden) listing
     r.c3:SetText(priceText(d.price))
     r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
     r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
@@ -373,6 +377,8 @@ local function formatMineRow(r, d)
     r.findBtn:Show(); r.findBtn:SetScript("OnClick", function()
         ns.SelectTab("BUYERS"); selectSearchItem(d.id)
     end)
+    r.track:Show(); r.track:SetChecked(d.track and true or false)
+    r.track:SetScript("OnClick", function(self) ns.SetOfferTrack(d.key, self:GetChecked()) end)
     r.itemID = d.id
 end
 
@@ -631,14 +637,15 @@ end
 -- refresh: My Items
 --========================================================================
 function ns.RefreshMine()
-    local filter, hasOffers   -- shared by build (to match names) and status (to report empties)
+    local filter, hasOffers, parked   -- shared by build (to match names) and status (to report empties/parked)
     refreshList(currentTab == "MINE", function()
         filter = (main.mineFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
         for key, o in pairs(GuildFoundMarketCharDB.offers) do
             hasOffers = true
             local id, suffix = o.id or tonumber(key), o.suffix or 0
             if filter == "" or vName(id, suffix):lower():find(filter, 1, true) then
-                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, key = key, q = (itemQualLevel(id, suffix)) }
+                if (o.qty or 0) <= 0 then parked = (parked or 0) + 1 end
+                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, track = o.track, key = key, q = (itemQualLevel(id, suffix)) }
             end
         end
         applyItemHeaderArrows(mineSort, "Item", true)
@@ -653,6 +660,11 @@ function ns.RefreshMine()
         elseif #view == 0 then
             main.status:SetTextColor(0.7, 0.7, 0.7)
             main.status:SetText("No listed item matches \"" .. (filter or "") .. "\".")
+        elseif parked then
+            main.status:SetTextColor(1, 0.6, 0.2)
+            main.status:SetText(parked == 1
+                and "1 listing is parked (qty 0): hidden from others, only you see it. Edit it to set a qty above 0."
+                or (parked .. " listings are parked (qty 0): hidden from others, only you see them. Edit one to set a qty above 0."))
         else
             main.status:SetText("")
         end
@@ -1523,7 +1535,20 @@ local function buildRows()
         end)
         r.findBtn:SetScript("OnLeave", GameTooltip_Hide)
         r.findBtn:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn)
+        -- "Sync" column (My Items rows only): per-listing "follow my bags" toggle, under the h4
+        -- header. Wired per-row in formatMineRow; hidden by resetRow on every other tab.
+        r.track = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+        r.track:SetSize(24, 24); r.track:SetPoint("LEFT", 524, 0)
+        r.track:RegisterForClicks("LeftButtonUp")
+        r.track:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("Follow my bags")
+            GameTooltip:AddLine("On: this listing's quantity tracks how many you carry (0 = parked, hidden but kept). Off: a manual claim, the right choice for stock on a bank alt.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        r.track:SetScript("OnLeave", GameTooltip_Hide)
+        r.track:Hide()
+        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn, r.track)
         r:Hide(); rows[i] = r
     end
 end
@@ -1698,6 +1723,9 @@ local function buildPostPanel()
 
     -- key of the listing being edited; nil = composing a brand-new offer
     local editingKey = nil
+    -- forward decl: defined once the qty box + "Follow my bags" checkbox exist below. Mirrors
+    -- the checkbox onto the qty box (fills the live bag count and greys it out while tracking).
+    local applyTrack
 
     local slot = CreateFrame("Button", "GuildFoundMarketSlot", panel, "ItemButtonTemplate")
     slot:SetPoint("LEFT", 4, 0); slot:SetSize(36, 36)
@@ -1717,6 +1745,7 @@ local function buildPostPanel()
             end
             ns.ItemDB.Learn(id)
             SetItemButtonTexture(slot, GetItemIcon(id)); SetItemButtonCount(slot, GetItemCount(id, true))
+            if applyTrack then applyTrack() end   -- a tracked new offer shows the live bag count
         end
     end
     slot:SetScript("OnClick", setDraft); slot:SetScript("OnReceiveDrag", setDraft)
@@ -1743,6 +1772,41 @@ local function buildPostPanel()
     qtyBox:SetScript("OnTabPressed", function() priceBox:SetFocus(); priceBox:HighlightText() end)
     priceBox:SetScript("OnTabPressed", function() qtyBox:SetFocus(); qtyBox:HighlightText() end)
 
+    -- "Follow my bags": when ticked, this listing's qty tracks how many you carry (0 = parked,
+    -- hidden but kept, never deleted). Off = a manual claim, the right choice for stock you keep
+    -- on a bank alt. New offers start from the per-account default (the trackDefault setting).
+    local trackCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    trackCheck:SetPoint("BOTTOMLEFT", 300, 6); trackCheck:SetSize(26, 26)
+    main.trackCheck = trackCheck
+    local trackLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    trackLabel:SetPoint("LEFT", trackCheck, "RIGHT", 2, 1); trackLabel:SetText("Follow my bags")
+    trackCheck:SetHitRectInsets(0, -(trackLabel:GetStringWidth() + 6), 0, 0)
+    trackCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Follow my bags")
+        GameTooltip:AddLine("Keep this listing's quantity equal to how many you carry: it falls as you sell or use them and rises as you restock. At 0 it is parked (hidden from buyers but kept here), never deleted.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Leave it off for stock kept on a bank alt: those copies aren't in your bags, so a following listing would park itself.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    trackCheck:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Reflect the checkbox onto the qty box. Tracking on: show the live bag count and grey the
+    -- box out (the engine owns the number). Off: a normal editable qty.
+    function applyTrack()
+        local on = trackCheck:GetChecked()
+        if on and draft.itemID then qtyBox:SetText(tostring(ns.BagCount(draft.itemID, draft.suffix or 0))) end
+        if on then qtyBox:Disable() else qtyBox:Enable() end
+        qtyBox:SetTextColor(on and 0.6 or 1, on and 0.6 or 1, on and 0.6 or 1)
+    end
+    trackCheck:SetScript("OnClick", applyTrack)
+    trackCheck:SetChecked(ns.GetSetting("trackDefault") and true or false); applyTrack()   -- initial state
+    -- The trackDefault option only seeds NEW listings, so reflect a change in the Options panel
+    -- onto the compose checkbox live (but never stomp a checkbox we're showing for an edit).
+    ns.On("setting:trackDefault", function()
+        if not editingKey then trackCheck:SetChecked(ns.GetSetting("trackDefault") and true or false); applyTrack() end
+    end)
+
     -- The input accepts BOTH notations (parsePrice reads coins and decimal alike), same as the
     -- WTB field. The priceFormat setting only chooses the FILL format: the example in the label,
     -- the edit prefill (priceToStr), and reformatting the current value when the setting changes.
@@ -1768,16 +1832,19 @@ local function buildPostPanel()
         draft.itemID = nil; draft.suffix = 0; draft.link = nil
         SetItemButtonTexture(slot, nil); SetItemButtonCount(slot, 0)
         qtyBox:SetText("1"); priceBox:SetText("")
+        trackCheck:SetChecked(ns.GetSetting("trackDefault") and true or false)
+        applyTrack()
         offerBtn:SetText("Offer")
     end
 
     -- Place a new offer or apply an edit. Shared by the button and by Enter in either box.
     local function submitOffer()
         local qty, price = tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())
+        local track = trackCheck:GetChecked() and true or false
         if editingKey then
-            -- editing only changes qty/price; the item/variant stays the listing's own
-            if ns.EditOffer(editingKey, qty, price) then clearDraft() end
-        elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price) then
+            -- editing only changes qty/price/track; the item/variant stays the listing's own
+            if ns.EditOffer(editingKey, qty, price, track) then clearDraft() end
+        elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price, track) then
             clearDraft()
         end
     end
@@ -1798,6 +1865,8 @@ local function buildPostPanel()
         SetItemButtonTexture(slot, GetItemIcon(draft.itemID)); SetItemButtonCount(slot, GetItemCount(draft.itemID, true))
         qtyBox:SetText(tostring(o.qty or 1))
         priceBox:SetText(priceToStr(o.price))
+        trackCheck:SetChecked(o.track and true or false)
+        applyTrack()   -- if tracked, greys the qty box and shows the live bag count
         offerBtn:SetText("Update")
         priceBox:SetFocus(); priceBox:HighlightText()   -- price is the field most edits change
     end
@@ -2438,7 +2507,7 @@ local function buildWTB()
         if main.announceWAC then main.announceWAC:Hide() end
         main.mineFilter:SetShown(not wtb); main.wtbFilter:SetShown(wtb)
         ac:Hide()
-        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText("")
+        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
         updateSharedSortHeaders()
         wipe(view); FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
         if wtb then clearWant(); ns.RefreshWant() else ns.RefreshMine() end

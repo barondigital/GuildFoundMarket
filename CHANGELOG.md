@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0
+
+- **Park a listing instead of removing it.** Set a listing's quantity to 0 (edit it, or let Bag
+  sync empty it) to *park* it: the listing stays on your My Items tab but is hidden from everyone
+  else (it stops answering searches, seller browses and shop links, and no longer counts towards a
+  shop announce). Set a quantity above 0 to bring it back. Parked rows show an orange `0` and a
+  footer note. Local only; no protocol change.
+- **Optional per-listing "Bag sync".** Each listing has a Bag-sync toggle (a column on My Items and
+  a checkbox in the compose panel): when on, GFM keeps that listing's quantity equal to how many
+  you carry, falling as you sell or use them and rising as you restock; at 0 it parks, never
+  deleted. Off is a manual claim, the right choice for stock kept on a bank alt, so one character
+  can mix tracked and manual listings. A new Option sets the default for new listings (off by
+  default). Random-enchant variants are counted separately. Reads only on settled bag updates and
+  skips while the cursor holds an item or right after a loading screen, so a transient 0 can never
+  wipe a listing.
+
 ## 0.14.0
 
 - **Recent prices on item tooltips.** GFM keeps a small local snapshot of what it last saw for an

@@ -25,6 +25,12 @@ function ns.AnnounceShop(dest, name)
     if not ns.channelName then
         ns.Feedback("No marketplace config in your guild info, so a shop link wouldn't resolve for anyone.", true); return
     end
+    -- A shop link runs a seller-scan on click; with no live listings nobody would get an
+    -- answer, so the link would resolve to an empty shop. Block it (parked qty-0 listings
+    -- don't count, same as everywhere OfferList is read).
+    if #ns.OfferList() == 0 then
+        ns.Feedback("You have no active listings to show. Add one (or unhide a parked listing) before announcing your shop.", true); return
+    end
     local prefix = DEST_PREFIX[dest]
     if dest == "whisper" then
         if not name or name == "" then ns.Feedback("Enter a name to whisper your shop to.", true); return end

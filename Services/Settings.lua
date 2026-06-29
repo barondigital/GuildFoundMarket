@@ -32,6 +32,16 @@ ns.SettingsSchema = {
         default = true,
     },
     {
+        key = "trackDefault",
+        label = "New listings follow my bags",
+        tip = "Sets the starting position of the \"Follow my bags\" switch when you create a NEW listing on the My Items tab. "
+            .. "It changes nothing for listings you already have; flip the switch per listing any time.\n\n"
+            .. "When a listing follows your bags, GFM keeps its quantity equal to how many you carry: it falls as you sell or use them and rises as you restock. "
+            .. "At 0 the listing is |cffffd100parked|r (hidden from buyers but kept in your My Items), never deleted.\n\n"
+            .. "Leave this off if you usually list stock kept on a bank alt: those copies aren't in your bags, so a following listing would park itself.",
+        default = false,
+    },
+    {
         key = "auxSeed",
         label = "Import item names from the aux addon",
         tip = "Optional speed-up, only useful if you also run the |cffffd100aux|r auction addon.\n\n"

@@ -172,10 +172,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "BAG_UPDATE_DELAYED" then
         ns.ItemDB.LearnFromBags()
+        if ns.SyncTrackedOffersSoon then ns.SyncTrackedOffersSoon() end   -- keep tracked listings in step with bags
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         local itemID, success = ...
         ns.ItemDB.OnItemInfoReceived(itemID, success)
+        if ns.SyncTrackedOffersSoon then ns.SyncTrackedOffersSoon() end   -- cache just warmed: re-sync items skipped while cold
         if ns.RefreshBuySoon then ns.RefreshBuySoon() end
         if ns.RefreshMineSoon then ns.RefreshMineSoon() end
         if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end
@@ -232,7 +234,7 @@ SlashCmdList.GFMARKET = function(msg)
             ns.ItemDB.Count(), cur, max, ns.ItemDB.IsHarvesting() and "running" or "idle",
             tostring(GuildFoundMarketDB.auxSeeded), tostring(GuildFoundMarketDB.disableAux)))
         local n = 0; for _ in pairs(GuildFoundMarketCharDB.offers) do n = n + 1 end
-        devEcho("  my offers: " .. n)
+        devEcho(("  my offers: %d (%d active, rest parked at qty 0)"):format(n, #ns.OfferList()))
         if ns.ToggleDebug and not (_G.GuildFoundMarketDebug and _G.GuildFoundMarketDebug:IsShown()) then ns.ToggleDebug() end
     elseif msg == "harvest" then
         ns.ItemDB.StartHarvest()
