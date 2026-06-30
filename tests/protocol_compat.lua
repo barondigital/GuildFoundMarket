@@ -76,6 +76,9 @@ local ns = {
     Log = function() end,
     IsPaused = function() return false end,
     NotePeerVersion = function() end,
+    NoteGuild = function() end,
+    MyGuild = function() return "F R E S H IV" end,
+    LiveLoc = function() return "Bank, Orgrimmar" end,
     RefreshBrowse = function() end,
     RefreshBrowseSoon = function() end,
     EnqueueWhisper = function(msg, to) sentWhispers[#sentWhispers + 1] = { msg = msg, to = to } end,
@@ -116,16 +119,17 @@ end
 local function reset() sentWhispers = {} end
 
 --========================================================================
--- 1. Dispatcher invariant: unlimited split, trailing field dropped, sender appended
+-- 1. Dispatcher invariant: a..f positional, sender stays 7th, 7th wire field delivered 8th
 --========================================================================
 do
     local got
     ns.OnMessage("ZZ", function(...) got = { ... } end)
     ns.DispatchMessage("ZZ~A~B~C~D~E~F~G", "Sender-Realm")
     check("dispatch maps a..f positionally", got[1] == "A" and got[6] == "F")
-    check("dispatch drops the 7th wire field (G)", got[7] == "Sender-Realm")
+    check("dispatch keeps sender in the 7th slot", got[7] == "Sender-Realm")
+    check("dispatch delivers the 7th wire field (G) as the 8th arg", got[8] == "G")
     ns.DispatchMessage("ZZ~A", "S")
-    check("dispatch leaves missing fields nil", got[2] == nil)
+    check("dispatch leaves missing fields nil", got[2] == nil and got[8] == nil)
 end
 
 --========================================================================
@@ -175,11 +179,13 @@ do
     reset()
     ns.DispatchMessage("QC~q1~4~1~0.10.0~INVTYPE_HEAD", "Buyer-Realm")
     local w = sentWhispers[1]
-    local cmd, qid, more, rows = strsplit("~", w.msg)
+    local cmd, qid, more, rows, guild, loc = strsplit("~", w.msg)
     check("reply command is QR", cmd == "QR")
     check("reply echoes the query id", qid == "q1")
     check("reply carries the more flag", more == "0")
     check("reply row is id:qty:price:suffix", rows == "100:2:5000:0")
+    check("reply carries the responder's guild", guild == "F R E S H IV")
+    check("reply appends the responder's location last", loc == "Bank, Orgrimmar")
 end
 
 --========================================================================

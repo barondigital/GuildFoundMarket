@@ -62,8 +62,8 @@ ns.OnMessage("WQ", function(a, b, c, _, _, _, sender)
     local answered = 0
     for _, it in ipairs(ns.WantList()) do
         if it.id == itemID then
-            -- WR~qid~id~qty~price~loc~suffix:cod  (suffix+cod packed; six fields max on the wire)
-            ns.EnqueueWhisper(("WR~%s~%d~%d~%d~%s~%d:%d"):format(a, it.id, it.qty, it.price, ns.LiveLoc(), it.suffix, it.cod and 1 or 0), sender)
+            -- WR~qid~id~qty~price~loc~suffix:cod~guild  (suffix+cod packed into field 6; guild last)
+            ns.EnqueueWhisper(("WR~%s~%d~%d~%d~%s~%d:%d~%s"):format(a, it.id, it.qty, it.price, ns.LiveLoc(), it.suffix, it.cod and 1 or 0, ns.MyGuild() or ""), sender)
             answered = answered + 1
         end
     end
@@ -72,12 +72,13 @@ ns.OnMessage("WQ", function(a, b, c, _, _, _, sender)
     end
 end)
 
--- WR~qid~id~qty~price~loc~suffix:cod: a want in reply to our buyer search.
-ns.OnMessage("WR", function(a, b, c, d, e, f, sender)
+-- WR~qid~id~qty~price~loc~suffix:cod~guild: a want in reply to our buyer search.
+ns.OnMessage("WR", function(a, b, c, d, e, f, sender, g)
     if a ~= activeWQid or tonumber(b) ~= ns.buyers.find.itemID then return end
     local sfx, cod = strsplit(":", f or "0:0")
     local suffix = tonumber(sfx) or 0
     local s = Ambiguate(sender, "short")
+    ns.NoteGuild(sender, g)
     ns.buyers.find.results[s .. "#" .. suffix] =
         { buyer = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "", cod = (tonumber(cod) or 0) == 1 }
     ns.ItemDB.Learn(tonumber(b))
@@ -156,14 +157,16 @@ ns.OnMessage("W", function(a, b, c, _, _, _, sender)
     C_Timer.After(math.random() * jitter, function()
         -- 4th field: 1-byte "have a note" flag (the note text is fetched on demand, NQ/NR)
         local flag = (ns.GetShopNote and ns.GetShopNote() ~= "") and "1" or ""
-        ns.EnqueueWhisper(("WC~%s~%d~%s~%s"):format(sid, n, loc, flag), sender)
+        -- guild appended last so older clients read sid/count/loc/hasNote unchanged
+        ns.EnqueueWhisper(("WC~%s~%d~%s~%s~%s"):format(sid, n, loc, flag, ns.MyGuild() or ""), sender)
     end)
 end)
 
--- WC~sid~count~loc~hasNote: a buyer's summary in reply to our scan (hasNote flag optional/last).
-ns.OnMessage("WC", function(a, b, c, d, _, _, sender)
+-- WC~sid~count~loc~hasNote~guild: a buyer's summary in reply to our scan (hasNote + guild last).
+ns.OnMessage("WC", function(a, b, c, d, e, _, sender)
     if a ~= activeWSid then return end
     local s = Ambiguate(sender, "short")
+    ns.NoteGuild(sender, e)
     if not ns.buyers.results[s] then
         if (ns.buyers.count or 0) >= ns.SELLER_CAP then ns.buyers.capped = true; return end
         ns.buyers.count = (ns.buyers.count or 0) + 1

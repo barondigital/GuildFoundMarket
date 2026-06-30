@@ -328,7 +328,7 @@ local function resetRow(r)
     r.c1:EnableMouse(true)
     r.c1.fs:SetTextColor(1, 1, 1)
     r.c1.tip = nil
-    r.c1.itemID = nil; r.c1.itemLink = nil
+    r.c1.itemID = nil; r.c1.itemLink = nil; r.c1.player = nil
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
@@ -338,6 +338,32 @@ local function resetRow(r)
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
     r.itemID = nil
+end
+
+-- A transparent, mouse-only overlay on a header FontString (the open seller/buyer name). It
+-- stays empty until SetHeaderPlayer sizes it to the header text and shows it; on hover it
+-- reveals "Name <Guild>", so the guild appears on the header without taking any layout space.
+local function makeHeaderHover(header)
+    local b = CreateFrame("Button", nil, main)
+    b:SetPoint("LEFT", header, "LEFT", 0, 0); b:SetHeight(18); b:SetWidth(1); b:Hide()
+    b:SetScript("OnEnter", function(self)
+        if not self.player then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", GameTooltip_Hide)
+    return b
+end
+
+-- Point a header's hover overlay at `name`, size it to the current header text, and show it.
+-- The catalog refresh calls this right after writing the header; the view switches keep its
+-- shown state in step with the header itself.
+function ns.SetHeaderPlayer(hover, header, name)
+    if not hover then return end
+    hover.player = name
+    hover:SetWidth(math.max(1, header:GetStringWidth() or 1))
+    hover:Show()
 end
 
 local function formatBuyRow(r, d)
@@ -368,6 +394,7 @@ local function formatBuyRow(r, d)
     r.c4:SetText(d.loc or ""); r.c4:Show()
     -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
     r.c1.itemLink = vLink(ns.search.itemID, d.suffix)
+    r.c1.player = d.seller   -- seller name; the item hover adds a "Name <Guild>" line below
 end
 
 local function formatMineRow(r, d)
@@ -405,6 +432,7 @@ local function formatSellerRow(r, d)
     if d.kind == "seller" then
         r.c1.fs:SetText(d.seller)
         r.c1.fs:SetTextColor(0.4, 1, 0.4)        -- green: online right now
+        r.c1.player = d.seller                   -- hover tooltip titles with "Name <Guild>"
         r.c1.tip = "Click to see " .. d.seller .. "'s items"
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then showOrigin = { tab = "SELLERS", view = "INDEX" }; ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
@@ -458,6 +486,7 @@ local function formatBuyerRow(r, d)
     if d.kind == "buyer" then
         r.c1.fs:SetText(d.self and (d.buyer .. " (you)") or d.buyer)
         r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
+        r.c1.player = d.buyer                     -- hover tooltip titles with "Name <Guild>"
         r.c1.tip = "Click to see what " .. d.buyer .. " wants · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then ChatFrame_OpenChat("/w " .. d.buyer .. " ")
@@ -477,6 +506,7 @@ local function formatBuyerRow(r, d)
         r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
         r.c1.tip = "Click for their wants · right-click to whisper about this item"
         r.c1.itemLink = id and vLink(id, d.suffix)
+        r.c1.player = d.buyer                     -- the item hover adds a "Name <Guild>" line below
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.buyer, id, d.suffix, d.price)
             else showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
@@ -514,6 +544,11 @@ local function formatBrowseRow(r, d)
     r.qty:SetText(d.qty or 0)
     r.price:SetText(priceText(d.price))
     r.seller.fs:SetText(d.self and ("|cffffd100" .. d.seller .. " (you)|r") or d.seller)
+    r.seller.player = d.seller   -- hover shows "Name <Guild>" (the column is too narrow for it inline)
+    -- the seller's location below it: from this browse reply, else a location we already learned
+    -- for them in a Sellers scan (covers sellers on an older client that sent no loc on QR)
+    local sloc = ns.sellers.results[d.seller]
+    r.seller.loc = (d.loc and d.loc ~= "" and d.loc) or (sloc and sloc.loc) or nil
     if d.self then r.seller:SetScript("OnClick", function() ns.SelectTab("MINE") end)
     else r.seller:SetScript("OnClick", function() ns.SelectTab("SELLERS", d.seller) end) end
 end
@@ -759,6 +794,7 @@ function ns.RefreshSellerCatalog()
     refreshList(currentTab == "SELLERS" and sellersView == "SHOW", function()
         if cat then
             main.sellerHeader:SetText(cat.seller .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
+            ns.SetHeaderPlayer(main.sellerHeaderHover, main.sellerHeader, cat.seller)
             if cat.note and cat.note ~= "" then
                 main.sellerNoteText:SetText(cat.note)
                 main.sellerNotePanel:SetHeight(math.min(86, math.max(40, main.sellerNoteText:GetStringHeight() + 26)))
@@ -798,6 +834,7 @@ function ns.SetSellersView(v)
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
     main.sellerBackBtn:SetShown(not index); main.sellerHeader:SetShown(not index)
+    main.sellerHeaderHover:SetShown(not index)
     main.sellerWtsBtn:SetShown(not index); main.sellerWtbBtn:SetShown(not index)
     main.sellerWtsBtn.sel:SetShown(not index); main.sellerWtbBtn.sel:Hide()   -- WTS is the active facet here
     main.catalogFilter:SetShown(not index); main.catalogFilterLabel:SetShown(not index)
@@ -925,6 +962,7 @@ function ns.RefreshBuyerCatalog()
     refreshList(currentTab == "BUYERS" and buyersView == "SHOW", function()
         if cat then
             main.buyerHeader:SetText(cat.buyer .. ((cat.loc and cat.loc ~= "") and ("  |cff888888" .. cat.loc .. "|r") or ""))
+            ns.SetHeaderPlayer(main.buyerHeaderHover, main.buyerHeader, cat.buyer)
             if cat.note and cat.note ~= "" then
                 main.buyerNoteText:SetText(cat.note)
                 main.buyerNotePanel:SetHeight(math.min(86, math.max(40, main.buyerNoteText:GetStringHeight() + 26)))
@@ -971,6 +1009,7 @@ function ns.SetBuyersView(v)
     main.searchBox:SetShown(find); main.searchLabel:SetShown(find); main.buyerToIndexBtn:SetShown(find)
     main.buyerFindRefreshBtn:SetShown(find)
     main.buyerBackBtn:SetShown(show); main.buyerHeader:SetShown(show)
+    main.buyerHeaderHover:SetShown(show)
     main.buyerWtsBtn:SetShown(show); main.buyerWtbBtn:SetShown(show)
     main.buyerWtbBtn.sel:SetShown(show); main.buyerWtsBtn.sel:Hide()   -- WTB is the active facet here
     main.buyerCatalogFilter:SetShown(show); main.buyerCatalogFilterLabel:SetShown(show)
@@ -1119,7 +1158,7 @@ function ns.RefreshBrowse()
         local slotOK = (not browseSel.slot) or ns.EquipSlot(o.id) == browseSel.slot   -- drop old sellers' over-replies
         if nameOK and lvlOK and slotOK then
             total = total + 1
-            browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, self = o.self, q = q, lvl = lvl }
+            browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, loc = o.loc, self = o.self, q = q, lvl = lvl }
         end
     end
     local col, asc = browseSort.col, browseSort.asc
@@ -1505,6 +1544,14 @@ local function buildRows()
                 if self.itemLink then GameTooltip:SetHyperlink(self.itemLink)
                 else GameTooltip:SetItemByID(self.itemID) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
+                -- on an offer/want row the column is a player: add their name + guild below the item
+                if self.player then GameTooltip:AddLine(ns.PlayerTitle(self.player), 1, 1, 1) end
+                GameTooltip:Show()
+            elseif self.player then
+                -- a pure player cell (Sellers/Buyers index): name + guild as the title, tip below
+                GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+                GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+                if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 GameTooltip:Show()
             elseif self.tip then
                 GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
@@ -1717,6 +1764,16 @@ local function buildBrowse()
         r.price  = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.price:SetPoint("LEFT", 304, 0); r.price:SetWidth(105); r.price:SetJustifyH("LEFT")
         r.seller = CreateFrame("Button", nil, r); r.seller:SetPoint("LEFT", 414, 0); r.seller:SetSize(126, ROW_H); r.seller:RegisterForClicks("LeftButtonUp")
         r.seller.fs = r.seller:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.seller.fs:SetAllPoints(); r.seller.fs:SetJustifyH("LEFT")
+        -- the narrow seller column can't fit the guild inline, so reveal "Name <Guild>" on hover
+        r.seller:SetScript("OnEnter", function(self)
+            if not self.player then return end
+            GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+            GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+            if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
+            GameTooltip:AddLine("Click to see their items", 0.6, 0.6, 0.6, true)
+            GameTooltip:Show()
+        end)
+        r.seller:SetScript("OnLeave", GameTooltip_Hide)
         addRowHighlight(r, r.c1, r.seller)
         r:Hide(); browseRows[i] = r
     end
@@ -2039,6 +2096,9 @@ local function buildSellerWidgets()
     local sellerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     sellerHeader:SetPoint("LEFT", sellerWtbBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
     main.sellerHeader = sellerHeader
+    -- a transparent hover area over the header name, so the guild shows on the header too (sized
+    -- to the text and toggled with the header by SetHeaderPlayer / the view switches below)
+    main.sellerHeaderHover = makeHeaderHover(sellerHeader)
 
     -- the open seller's shop note (arrives bundled with their catalog): an outlined block at the
     -- bottom of the view, under the status line, with a "Shop note" title and the wrapped text.
@@ -2141,6 +2201,7 @@ local function buildBuyerWidgets()
     local buyerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     buyerHeader:SetPoint("LEFT", buyerWtbBtn, "RIGHT", 12, 0); buyerHeader:SetText(""); buyerHeader:Hide()
     main.buyerHeader = buyerHeader
+    main.buyerHeaderHover = makeHeaderHover(buyerHeader)
 
     local buyerCatalogFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     buyerCatalogFilterLabel:SetPoint("TOPRIGHT", -222, -70); buyerCatalogFilterLabel:SetText("Find item:"); buyerCatalogFilterLabel:Hide()
@@ -2843,7 +2904,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.dbPanel:SetShown(buy)
     if not sellers then   -- hide all seller widgets when on another tab
         main.sellerFilter:Hide(); main.sellerFilterLabel:Hide(); main.sellerRefreshBtn:Hide()
-        main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
+        main.sellerBackBtn:Hide(); main.sellerHeader:Hide(); main.sellerHeaderHover:Hide()
         main.sellerWtsBtn:Hide(); main.sellerWtbBtn:Hide()
         main.sortName:Hide(); main.sortCount:Hide()
         main.catalogFilter:Hide(); main.catalogFilterLabel:Hide()
@@ -2851,7 +2912,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     end
     if not buyers then   -- hide all buyer widgets when on another tab
         main.buyerFilter:Hide(); main.buyerFilterLabel:Hide(); main.buyerRefreshBtn:Hide()
-        main.buyerBackBtn:Hide(); main.buyerHeader:Hide()
+        main.buyerBackBtn:Hide(); main.buyerHeader:Hide(); main.buyerHeaderHover:Hide()
         main.buyerWtsBtn:Hide(); main.buyerWtbBtn:Hide()
         main.buyerSortName:Hide(); main.buyerSortCount:Hide()
         main.buyerCatalogFilter:Hide(); main.buyerCatalogFilterLabel:Hide()

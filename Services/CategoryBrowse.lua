@@ -48,7 +48,7 @@ function ns.BrowseCategory(classID, subClassID, slot)
         local cid, sub = itemCategory(it.id)
         if cid == classID and sub == subClassID and (not slot or ns.EquipSlot(it.id) == slot) then
             ns.browseResults[ns.playerName .. "#" .. it.id .. "#" .. it.suffix] =
-                { seller = ns.playerName, id = it.id, suffix = it.suffix, qty = it.qty, price = it.price, self = true }
+                { seller = ns.playerName, id = it.id, suffix = it.suffix, qty = it.qty, price = it.price, loc = ns.LiveLoc(), self = true }
         end
     end
     if ns.RefreshBrowse then ns.RefreshBrowse() end
@@ -92,11 +92,15 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     local qid = a
     C_Timer.After(math.random() * ns.SCAN_JITTER, function()
         local buf = ""
-        local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s"):format(qid, more, buf), sender); buf = "" end
+        -- guild + location appended last (per-seller, repeated on each chunk) so older clients
+        -- read qid/more/rows unchanged. The row budget drops to 150 to leave headroom for the
+        -- two trailing fields + header, keeping the whole line under the ~255-byte chat limit.
+        local guild, loc = ns.MyGuild() or "", ns.LiveLoc()
+        local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s~%s~%s"):format(qid, more, buf, guild, loc), sender); buf = "" end
         for i = 1, #matches do
             local it = matches[i]
             local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
-            if #buf + #p + 1 > 180 then flush(1) end
+            if #buf + #p + 1 > 150 then flush(1) end
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
         flush(0)
@@ -104,17 +108,19 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
 end)
 
--- QR~qid~rows: a category browse reply chunk (rows are id:qty:price:suffix;...).
-ns.OnMessage("QR", function(a, _, c, _, _, _, sender)
+-- QR~qid~more~rows~guild~loc: a category browse reply chunk (rows are id:qty:price:suffix;...).
+ns.OnMessage("QR", function(a, _, c, d, e, _, sender)
     if a ~= activeQCid then return end
     local s = Ambiguate(sender, "short")
+    ns.NoteGuild(sender, d)
+    local loc = e or ""
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix = strsplit(":", chunk)
         id = tonumber(id)
         if id then
             local sfx = tonumber(suffix) or 0
             ns.browseResults[s .. "#" .. id .. "#" .. sfx] =
-                { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+                { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0, loc = loc }
             ns.ItemDB.Learn(id)
         end
     end

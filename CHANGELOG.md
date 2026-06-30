@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.1
+
+- **A player's guild shows on hover.** Hover a name wherever it appears, the Buy results, the
+  Sellers and Buyers lists, "who wants this", the Browse results, and the header of an opened seller
+  or buyer, and the tooltip's title reads `Name <Guild>`. It stays a hover so it never costs list
+  space and needs no setting. A guild fills in once that player has answered one of your searches or
+  scans this session, and only for players on this version or newer.
+- **The Browse hover shows location too.** The narrow Browse seller column now reveals the seller's
+  location under the name on hover, like the other lists, falling back to a location already learned
+  in a Sellers scan when an older client sends none.
+- **Protocol (backward compatible).** The replies whose sender we show, search (`R`), category
+  browse (`QR`), the seller/buyer summaries (`C`/`WC`) and the buyer-find reply (`WR`), now append
+  the responder's guild, and `QR` also appends the seller's location. The fields are append-only, so
+  0.16.0 and older clients read the existing fields unchanged and keep interoperating.
+
 ## 0.16.0
 
 - **Shop links no longer flash a Hearthstone tooltip.** The clickable "browse my shop" link used to
