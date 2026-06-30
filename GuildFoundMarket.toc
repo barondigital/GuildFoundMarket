@@ -2,7 +2,7 @@
 ## Title: Guild Found |cff00ff96Market|r
 ## Notes: Private cross-guild marketplace for guild-locked communities. Search live offers; trade face-to-face.
 ## Author: Soepel
-## Version: 0.15.2
+## Version: 0.16.0
 ## SavedVariables: GuildFoundMarketDB
 ## SavedVariablesPerCharacter: GuildFoundMarketCharDB
 ## X-Curse-Project-ID: 1584683

@@ -12,7 +12,9 @@ local sellerSort = { col = "count", asc = false }  -- Sellers index sort: col "n
 -- Buyers tab (buy-side mirror of Sellers): "INDEX" (browse buyers), "FIND" (buyers wanting a
 -- picked item), "SHOW" (one buyer's want list). My Items has two sub-modes: "SELLING" | "WTB".
 local buyersView = "INDEX"
-local buyerShowFrom = "INDEX"   -- which Buyers view to return to from a buyer's want list
+-- Where a player-detail session began, so "< Back" returns correctly even after WTS/WTB toggles
+-- cross-navigate between the Sellers and Buyers tabs. { tab = "SELLERS"|"BUYERS", view = "INDEX"|"FIND" }
+local showOrigin = { tab = "SELLERS", view = "INDEX" }
 local mineMode = "SELLING"
 local buyerSort = { col = "count", asc = false }   -- Buyers index sort, mirrors sellerSort
 local tabButtons = {}
@@ -405,7 +407,7 @@ local function formatSellerRow(r, d)
         r.c1.fs:SetTextColor(0.4, 1, 0.4)        -- green: online right now
         r.c1.tip = "Click to see " .. d.seller .. "'s items"
         r.c1:SetScript("OnClick", function(_, button)
-            if button ~= "RightButton" then ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
+            if button ~= "RightButton" then showOrigin = { tab = "SELLERS", view = "INDEX" }; ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
         end)
         r.c2:SetText(d.count or 0)
         r.c4:SetText(d.loc or ""); r.c4:Show()
@@ -459,7 +461,7 @@ local function formatBuyerRow(r, d)
         r.c1.tip = "Click to see what " .. d.buyer .. " wants · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then ChatFrame_OpenChat("/w " .. d.buyer .. " ")
-            else buyerShowFrom = "INDEX"; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
+            else showOrigin = { tab = "BUYERS", view = "INDEX" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
         end)
         r.c2:SetText(d.count or 0)
         r.c4:SetText(d.loc or ""); r.c4:Show()
@@ -477,7 +479,7 @@ local function formatBuyerRow(r, d)
         r.c1.itemLink = id and vLink(id, d.suffix)
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.buyer, id, d.suffix, d.price)
-            else buyerShowFrom = "FIND"; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
+            else showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
         end)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
@@ -738,6 +740,7 @@ end
 -- A seller's note just arrived (NR): if its bubble is on screen and the cursor is over it,
 -- re-show the tooltip so a note clicked a moment ago appears without moving the mouse.
 function ns.NoteArrived(seller)
+    if ns.RefreshShopLinkTooltip then ns.RefreshShopLinkTooltip(seller) end   -- chat-link hover, no window needed
     if not main or not main:IsShown() then return end
     for i = 1, ROWS do
         local b = rows[i].noteBtn
@@ -795,6 +798,8 @@ function ns.SetSellersView(v)
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
     main.sellerBackBtn:SetShown(not index); main.sellerHeader:SetShown(not index)
+    main.sellerWtsBtn:SetShown(not index); main.sellerWtbBtn:SetShown(not index)
+    main.sellerWtsBtn.sel:SetShown(not index); main.sellerWtbBtn.sel:Hide()   -- WTS is the active facet here
     main.catalogFilter:SetShown(not index); main.catalogFilterLabel:SetShown(not index)
     if not index then main.catalogFilter:SetText("") end   -- fresh seller: drop any leftover filter
     if index then main.sellerNotePanel:Hide() end          -- shown again by the catalog refresh when a note loads
@@ -966,6 +971,8 @@ function ns.SetBuyersView(v)
     main.searchBox:SetShown(find); main.searchLabel:SetShown(find); main.buyerToIndexBtn:SetShown(find)
     main.buyerFindRefreshBtn:SetShown(find)
     main.buyerBackBtn:SetShown(show); main.buyerHeader:SetShown(show)
+    main.buyerWtsBtn:SetShown(show); main.buyerWtbBtn:SetShown(show)
+    main.buyerWtbBtn.sel:SetShown(show); main.buyerWtsBtn.sel:Hide()   -- WTB is the active facet here
     main.buyerCatalogFilter:SetShown(show); main.buyerCatalogFilterLabel:SetShown(show)
     if not show then main.buyerNotePanel:Hide() end   -- the catalog refresh re-shows it when a note loads
     if show then main.buyerCatalogFilter:SetText("") end
@@ -1513,27 +1520,32 @@ local function buildRows()
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
         -- chat-bubble icon for a player's note (Sellers and Buyers index rows). Positioned after
         -- the location by the formatter, which also sets self.store (the index table to read/cache
-        -- in). The note text is fetched on click, then shown on hover; state read live by name.
+        -- in). The note text is fetched on hover (click to retry a failed load); state read live by name.
         r.noteBtn = CreateFrame("Button", nil, r); r.noteBtn:SetSize(16, 16)
         r.noteBtn:SetNormalTexture("Interface\\GossipFrame\\GossipGossipIcon")
         r.noteBtn:RegisterForClicks("LeftButtonUp")
         r.noteBtn:SetScript("OnEnter", function(self)
+            -- hovering pulls the note on demand (RequestNote dedupes/guards); NoteArrived refreshes
+            -- this tooltip in place when the answer lands, so no click is needed.
+            if self.seller and self.store and ns.RequestNote then ns.RequestNote(self.seller, self.store) end
             local rec = self.seller and self.store and self.store[self.seller]
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText("Note", 1, 0.82, 0)
             if rec and rec.note and rec.note ~= "" then
-                GameTooltip:AddLine(rec.note, 1, 1, 1, true)
+                ns.AddShopNoteLines(GameTooltip, rec.note)   -- same blurb + bulleted-items format as the link hover
             elseif rec and rec.note == "" then
                 GameTooltip:AddLine("This player has no note.", 0.7, 0.7, 0.7, true)
-            elseif rec and rec.noteLoading then
-                GameTooltip:AddLine("Loading...", 0.7, 0.7, 0.7, true)
+            elseif rec and rec.noteFailed then
+                GameTooltip:AddLine("Couldn't load (offline?). Click to retry.", 0.7, 0.7, 0.7, true)
             else
-                GameTooltip:AddLine("Click to load this player's note.", 0.7, 0.7, 0.7, true)
+                GameTooltip:AddLine("Loading...", 0.7, 0.7, 0.7, true)
             end
             GameTooltip:Show()
         end)
         r.noteBtn:SetScript("OnLeave", GameTooltip_Hide)
         r.noteBtn:SetScript("OnClick", function(self)
+            local rec = self.seller and self.store and self.store[self.seller]
+            if rec then rec.noteFailed = nil end   -- explicit retry after a failed hover-load
             if self.seller and self.store and ns.RequestNote then ns.RequestNote(self.seller, self.store) end
             local onEnter = self:GetScript("OnEnter"); if onEnter then onEnter(self) end   -- reflect new state
         end)
@@ -1722,8 +1734,24 @@ local function buildPostPanel()
     local noteLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     noteLabel:SetPoint("TOPLEFT", 4, -3); noteLabel:SetText("Shop note:")
     local noteBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-    noteBox:SetPoint("TOPLEFT", noteLabel, "TOPRIGHT", 12, 3); noteBox:SetPoint("TOPRIGHT", -8, 0); noteBox:SetHeight(16)
+    noteBox:SetPoint("TOPLEFT", noteLabel, "TOPRIGHT", 12, 3); noteBox:SetHeight(16)
     noteBox:SetAutoFocus(false); noteBox:SetMaxBytes(240)
+    -- Preview: hover to see your own note exactly as readers do (same renderer + the format setting).
+    local previewBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    previewBtn:SetSize(62, 18); previewBtn:SetPoint("TOPRIGHT", -6, 1); previewBtn:SetText("Preview")
+    noteBox:SetPoint("TOPRIGHT", previewBtn, "TOPLEFT", -6, -1)
+    previewBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Note preview", 1, 0.82, 0)
+        local note = noteBox:GetText() or ""
+        if note ~= "" then ns.AddShopNoteLines(GameTooltip, note)
+        else GameTooltip:AddLine("Your note is empty.", 0.7, 0.7, 0.7, true) end
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("How your note looks to readers.", 0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+    end)
+    previewBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.notePreviewBtn = previewBtn
     local function saveNote() noteBox:SetText(ns.SetShopNote(noteBox:GetText())) end
     noteBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); saveNote() end)
     noteBox:SetScript("OnEditFocusLost", saveNote)
@@ -1732,9 +1760,21 @@ local function buildPostPanel()
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:SetText("Shop note")
         GameTooltip:AddLine("A short line buyers see next to your name in the Sellers list (chat-bubble icon). Leave empty for none.", 1, 1, 1, true)
+        GameTooltip:AddLine("Shift-click an item to add its link to the note.", 0.7, 1, 0.7, true)
         GameTooltip:Show()
     end)
     noteBox:SetScript("OnLeave", GameTooltip_Hide)
+    -- Shift-click an item anywhere to drop its link into the note (buyers see the items you sell).
+    -- Honour the 240-byte cap: refuse a link that won't fit rather than letting it be silently cut.
+    hooksecurefunc("ChatEdit_InsertLink", function(link)
+        if link and noteBox:HasFocus() then
+            if #(noteBox:GetText() or "") + #link > 240 then
+                ns.Feedback("That item link won't fit in your shop note.", true)
+            else
+                noteBox:Insert(link)
+            end
+        end
+    end)
     main.noteBox = noteBox
 
     -- key of the listing being edited; nil = composing a brand-new offer
@@ -1917,6 +1957,41 @@ local function buildDbPanel()
     end)
 end
 
+-- A small highlighted sub-tab button, shared by the My Items WTS/WTB tabs and the WTS/WTB toggle
+-- on a player's detail view, so both look identical (one builder, no duplication).
+local function subTabButton(x, text)
+    local b = CreateFrame("Button", nil, main); b:SetSize(56, 22); b:SetPoint("TOPLEFT", x, -64); b:Hide()
+    local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
+    local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
+    local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
+    return b
+end
+
+-- Attach an explanatory tooltip (title + wrapped body) to a sub-tab button.
+local function attachSubTip(btn, title, body)
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:SetText(title)
+        GameTooltip:AddLine(body, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", GameTooltip_Hide)
+end
+
+-- "< Back" from a player's detail view returns to wherever the session began (seller index, buyer
+-- index, or buyer find results), even after toggling WTS/WTB across the Sellers/Buyers tabs.
+local function goBackToOrigin()
+    local o = showOrigin or { tab = "SELLERS", view = "INDEX" }
+    if o.tab == "BUYERS" then
+        if currentTab ~= "BUYERS" then ns.SelectTab("BUYERS") end
+        ns.SetBuyersView(o.view or "INDEX")
+    elseif currentTab ~= "SELLERS" then
+        ns.SelectTab("SELLERS")
+    else
+        ns.SetSellersView("INDEX")
+    end
+end
+
 local function buildSellerWidgets()
     --==================== Sellers tab widgets (index + show) ====================
     local sellerFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1946,10 +2021,23 @@ local function buildSellerWidgets()
 
     local sellerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     sellerBackBtn:SetSize(70, 22); sellerBackBtn:SetPoint("TOPLEFT", 16, -64); sellerBackBtn:SetText("< Back"); sellerBackBtn:Hide()
-    sellerBackBtn:SetScript("OnClick", function() ns.SetSellersView("INDEX") end)
+    sellerBackBtn:SetScript("OnClick", goBackToOrigin)
     main.sellerBackBtn = sellerBackBtn
+    -- WTS/WTB toggle for the open seller: WTS is this view; WTB cross-navigates to the SAME player's
+    -- want list on the Buyers tab (origin preserved, so "< Back" still returns where you started).
+    local sellerWtsBtn = subTabButton(92, "WTS"); main.sellerWtsBtn = sellerWtsBtn
+    local sellerWtbBtn = subTabButton(150, "WTB"); main.sellerWtbBtn = sellerWtbBtn
+    attachSubTip(sellerWtsBtn, "WTS - Want To Sell", "What this player is offering for sale (this view).")
+    attachSubTip(sellerWtbBtn, "WTB - Want To Buy", "What this player wants to buy. Opens their want list.")
+    sellerWtbBtn:SetScript("OnClick", function()
+        local cat = ns.sellers.catalog
+        if not (cat and cat.seller) then return end
+        local origin, p, loc = showOrigin, cat.seller, cat.loc
+        ns.SelectTab("BUYERS"); ns.OpenBuyer(p, loc); ns.SetBuyersView("SHOW")
+        showOrigin = origin
+    end)
     local sellerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    sellerHeader:SetPoint("LEFT", sellerBackBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
+    sellerHeader:SetPoint("LEFT", sellerWtbBtn, "RIGHT", 12, 0); sellerHeader:SetText(""); sellerHeader:Hide()
     main.sellerHeader = sellerHeader
 
     -- the open seller's shop note (arrives bundled with their catalog): an outlined block at the
@@ -2035,12 +2123,23 @@ local function buildBuyerWidgets()
 
     local buyerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     buyerBackBtn:SetSize(70, 22); buyerBackBtn:SetPoint("TOPLEFT", 16, -64); buyerBackBtn:SetText("< Back"); buyerBackBtn:Hide()
-    buyerBackBtn:SetScript("OnClick", function()
-        if buyersView == "SHOW" then ns.SetBuyersView(buyerShowFrom or "INDEX") else ns.SetBuyersView("INDEX") end
-    end)
+    buyerBackBtn:SetScript("OnClick", goBackToOrigin)
     main.buyerBackBtn = buyerBackBtn
+    -- WTS/WTB toggle for the open buyer: WTB is this view; WTS cross-navigates to the SAME player's
+    -- shop on the Sellers tab (origin preserved, so "< Back" still returns where you started).
+    local buyerWtsBtn = subTabButton(92, "WTS"); main.buyerWtsBtn = buyerWtsBtn
+    local buyerWtbBtn = subTabButton(150, "WTB"); main.buyerWtbBtn = buyerWtbBtn
+    attachSubTip(buyerWtsBtn, "WTS - Want To Sell", "What this player is offering for sale. Opens their shop.")
+    attachSubTip(buyerWtbBtn, "WTB - Want To Buy", "What this player wants to buy (this view).")
+    buyerWtsBtn:SetScript("OnClick", function()
+        local cat = ns.buyers.catalog
+        if not (cat and cat.buyer) then return end
+        local origin, p, loc = showOrigin, cat.buyer, cat.loc
+        ns.SelectTab("SELLERS"); ns.SetSellersView("SHOW"); ns.OpenSeller(p, loc)
+        showOrigin = origin
+    end)
     local buyerHeader = main:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    buyerHeader:SetPoint("LEFT", buyerBackBtn, "RIGHT", 12, 0); buyerHeader:SetText(""); buyerHeader:Hide()
+    buyerHeader:SetPoint("LEFT", buyerWtbBtn, "RIGHT", 12, 0); buyerHeader:SetText(""); buyerHeader:Hide()
     main.buyerHeader = buyerHeader
 
     local buyerCatalogFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -2336,15 +2435,10 @@ local HELP_SETUP = table.concat({
 local function buildWTB()
     --==================== My Items: Selling/WTB sub-tabs + WTB compose ====================
     -- two small sub-tab buttons at the far left (the pause button moved right to make room)
-    local function subTabBtn(x, text)
-        local b = CreateFrame("Button", nil, main); b:SetSize(56, 22); b:SetPoint("TOPLEFT", x, -64); b:Hide()
-        local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
-        local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
-        local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
-        return b
-    end
-    main.mineSellBtn = subTabBtn(16, "Selling")
-    main.mineWtbBtn  = subTabBtn(74, "WTB")
+    main.mineSellBtn = subTabButton(16, "WTS")
+    main.mineWtbBtn  = subTabButton(74, "WTB")
+    attachSubTip(main.mineSellBtn, "WTS - Want To Sell", "Items you're offering for sale.")
+    attachSubTip(main.mineWtbBtn,  "WTB - Want To Buy", "Items you want to buy.")
     main.mineSellBtn:SetScript("OnClick", function() setMineMode("SELLING") end)
     main.mineWtbBtn:SetScript("OnClick", function() setMineMode("WTB") end)
 
@@ -2601,13 +2695,14 @@ local function buildOptionsPanel()
     end
 
     local optChecks, optRadios = {}, {}
-    local oy = -48
-    for _, s in ipairs(ns.SettingsSchema) do
+
+    -- Render one schema entry as a control at column x, starting at vertical oy; return next oy.
+    local function renderOption(s, x, oy)
         if s.type == "choice" then
             local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            lbl:SetPoint("TOPLEFT", 8, oy); lbl:SetText(s.label)
+            lbl:SetPoint("TOPLEFT", x + 4, oy); lbl:SetText(s.label)
             oy = oy - 22
-            local rx = 12
+            local rx = x + 8
             for _, opt in ipairs(s.options) do
                 local rb = CreateFrame("CheckButton", nil, optPanel, "UIRadioButtonTemplate")
                 rb:SetPoint("TOPLEFT", rx, oy); rb.key = s.key; rb.value = opt.value
@@ -2620,20 +2715,31 @@ local function buildOptionsPanel()
                 optRadios[#optRadios + 1] = rb
                 rx = rx + 24 + rl:GetStringWidth() + 18
             end
-            oy = oy - 30
+            return oy - 30
+        end
+        local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", x, oy); cb:SetSize(26, 26); cb.key = s.key
+        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
+        -- extend the click/hover area rightward over the label, so hovering or clicking the
+        -- text behaves the same as the checkbox itself (tooltip + toggle)
+        cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
+        cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
+        cb:SetScript("OnEnter", function(self) showTip(self, s) end)
+        cb:SetScript("OnLeave", GameTooltip_Hide)
+        optChecks[#optChecks + 1] = cb
+        return oy - 30
+    end
+
+    -- Two columns so the list never runs past the panel: general feature checkboxes on the left;
+    -- the format choices (price fill, shop-note items) and the hide-shop-link toggles on the right.
+    local LEFT_X, RIGHT_X, TOP_Y = 4, 340, -48
+    local lY, rY = TOP_Y, TOP_Y
+    for _, s in ipairs(ns.SettingsSchema) do
+        if s.type == "choice" or s.key:find("^hideShop") then
+            rY = renderOption(s, RIGHT_X, rY)
         else
-            local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
-            cb:SetPoint("TOPLEFT", 4, oy); cb:SetSize(26, 26); cb.key = s.key
-            local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
-            -- extend the click/hover area rightward over the label, so hovering or clicking the
-            -- text behaves the same as the checkbox itself (tooltip + toggle)
-            cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
-            cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
-            cb:SetScript("OnEnter", function(self) showTip(self, s) end)
-            cb:SetScript("OnLeave", GameTooltip_Hide)
-            optChecks[#optChecks + 1] = cb
-            oy = oy - 30
+            lY = renderOption(s, LEFT_X, lY)
         end
     end
 
@@ -2738,6 +2844,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not sellers then   -- hide all seller widgets when on another tab
         main.sellerFilter:Hide(); main.sellerFilterLabel:Hide(); main.sellerRefreshBtn:Hide()
         main.sellerBackBtn:Hide(); main.sellerHeader:Hide()
+        main.sellerWtsBtn:Hide(); main.sellerWtbBtn:Hide()
         main.sortName:Hide(); main.sortCount:Hide()
         main.catalogFilter:Hide(); main.catalogFilterLabel:Hide()
         main.sellerNotePanel:Hide()
@@ -2745,6 +2852,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not buyers then   -- hide all buyer widgets when on another tab
         main.buyerFilter:Hide(); main.buyerFilterLabel:Hide(); main.buyerRefreshBtn:Hide()
         main.buyerBackBtn:Hide(); main.buyerHeader:Hide()
+        main.buyerWtsBtn:Hide(); main.buyerWtbBtn:Hide()
         main.buyerSortName:Hide(); main.buyerSortCount:Hide()
         main.buyerCatalogFilter:Hide(); main.buyerCatalogFilterLabel:Hide()
         main.buyerToItemBtn:Hide(); main.buyerToIndexBtn:Hide(); main.buyerFindRefreshBtn:Hide()
@@ -2793,6 +2901,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     elseif sellers then
         main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then
+            showOrigin = { tab = "SELLERS", view = "INDEX" }   -- a direct jump: Back goes to the seller index
             ns.SetSellersView("SHOW")    -- jump straight to one seller (e.g. from a Buy result)
             ns.OpenSeller(goSeller, goLoc)
             ns.ScanSellers("")           -- also populate the index so "< Back" has the full list

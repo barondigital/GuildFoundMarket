@@ -50,12 +50,13 @@ function ns.AnnounceShop(dest, name)
 end
 
 -- Rewrite our plain-text marker into a clickable link on the receiving client.
--- The link DATA is a benign real item (Hearthstone), not a custom type: NovaWorldBuffs and
--- Questie securehook SetItemRef and call ItemRefTooltip:SetHyperlink(link) unconditionally,
--- which raises "Unknown link type" on a custom type. A real item link parses fine there; the
--- seller name rides in the visible text and we recover it in the SetItemRef hook below.
--- The capture excludes braces and pipes, so a crafted message can't inject escape codes.
-local SHOP_LINK_ITEM = "item:6948"   -- Hearthstone: universally valid, shown briefly then hidden
+-- The link uses Blizzard's sanctioned "addon:" hyperlink type, not a real item: clicking it
+-- fires SetItemRef WITHOUT popping a tooltip, and hovering shows nothing by default, so there
+-- is no stray placeholder to chase. (The old code carried a Hearthstone item and had to hide
+-- its tooltip on click; that leaked through on hover, and on any error before the hide.) The
+-- seller name rides in the link payload AND the visible text. The capture excludes braces and
+-- pipes, and we strip colons, so a crafted message can't inject escape codes or extra fields.
+local SHOP_LINK_NS = "addon:GuildFoundMarket"   -- custom link type; no item, no placeholder tooltip
 
 -- Per-surface spam filter: each chat event maps to a "hide" setting. When that setting is on
 -- the whole shop-link line is suppressed for this player only (local, changes nothing for
@@ -84,8 +85,9 @@ local function shareFilter(_, event, msg, ...)
     end
     local changed = false
     local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
+        name = name:gsub(":", "")   -- colon is our payload delimiter; real names never contain one
         changed = true
-        return ("|cff00ff96|H%s|h[GFM: browse %s's shop]|h|r"):format(SHOP_LINK_ITEM, name)
+        return ("|cff00ff96|H%s:%s|h[%s's shop]|h|r"):format(SHOP_LINK_NS, name, name)
     end)
     if changed then return false, out, ... end
 end
@@ -101,22 +103,102 @@ local SHARE_EVENTS = {
     "CHAT_MSG_CHANNEL",
 }
 
--- Open a clicked shop link. Taint-safe: a post-hook on SetItemRef, never writing the global
--- (the old code REPLACED SetItemRef, which tainted it and leaked into Blizzard's secure
--- menu/clipboard path, blocking CopyToClipboard). We recognise our link by the seller name
--- in its visible text (the link data is a plain Hearthstone, see shareFilter), open the shop,
--- and hide the placeholder item tooltip that Blizzard/NWB/Questie put up for it.
+-- Recover the seller name from a clicked/hovered shop link's payload ("addon:GuildFoundMarket:Name").
+local function linkSeller(link)
+    return type(link) == "string" and link:match("^addon:GuildFoundMarket:(.+)$") or nil
+end
+
+-- Open a clicked shop link. Taint-safe and placeholder-free: the "addon:" link fires SetItemRef
+-- with no tooltip, and we never write the global SetItemRef (the old code REPLACED it, tainting
+-- the secure menu/clipboard path and blocking CopyToClipboard). EventRegistry is Blizzard's own
+-- callback, so nothing leaks and there is no placeholder to hide.
+local function openClickedLink(link)
+    local name = linkSeller(link)
+    if name and ns.OpenShopLink then ns.OpenShopLink(name) end
+end
+
+-- Hover tooltip on the link itself. The "addon:" link shows nothing by default, so this is
+-- entirely ours: the seller name, a call to action, and their shop note. We actively pull the
+-- note the moment you hover (same NQ/NR whisper the Sellers-list bubble uses), so you no longer
+-- have to open the seller first; when it lands, NoteArrived re-shows this tooltip in place.
+ns.shopLinkNotes = ns.shopLinkNotes or {}   -- seller -> {note=, noteLoading=}, our own note store
+local linkTipShown, activeLink = false, nil
+
+-- The seller's note from wherever we already hold it: a hover-pull, or a prior Sellers-list scan.
+local function linkNote(name)
+    local l = ns.shopLinkNotes[name]
+    if l and l.note and l.note ~= "" then return l.note end
+    local s = ns.sellers and ns.sellers.results and ns.sellers.results[name]
+    if s and s.note and s.note ~= "" then return s.note end
+    return nil
+end
+
+-- Render a shop note into a tooltip, exactly as written (wrapped on one line). Item links carry
+-- their own colour and name, so they render with or without item data cached.
+local function addNoteLines(tt, note)
+    note = note:gsub("^%s+", ""):gsub("%s+$", "")
+    if note ~= "" then tt:AddLine(note, 0.95, 0.85, 0.6, true) end
+end
+ns.AddShopNoteLines = addNoteLines   -- reused by the Sellers/Buyers note bubbles for one consistent look
+
+local function showLinkTooltip(owner, link)
+    local name = linkSeller(link)
+    if not name then return end   -- not our link: leave other tooltips untouched
+    GameTooltip:SetOwner(owner or UIParent, "ANCHOR_CURSOR")
+    GameTooltip:AddLine("GFM Shop", 1, 0.82, 0)   -- GFM gold title, distinct from GFC's green
+    -- name picked out in the link's own mint so it reads as "this seller"; rest stays quiet
+    GameTooltip:AddLine(("Click to browse |cff00ff96%s|r's shop"):format(name), 0.9, 0.9, 0.9)
+    local note = linkNote(name)
+    if note and note ~= "" then
+        GameTooltip:AddLine(" ")
+        addNoteLines(GameTooltip, note)
+    end
+    GameTooltip:Show()
+    linkTipShown = true
+    activeLink = { owner = owner, name = name, link = link }
+    -- don't have the note yet? pull it now, exactly like clicking the bubble would (dup/loading
+    -- guards live in RequestNote). NoteArrived will refresh this tooltip when the answer lands.
+    if not note and ns.RequestNote then
+        ns.shopLinkNotes[name] = ns.shopLinkNotes[name] or {}
+        ns.RequestNote(name, ns.shopLinkNotes)
+    end
+end
+local function hideLinkTooltip()
+    if linkTipShown then GameTooltip:Hide() end   -- only our own tooltip, never someone else's
+    linkTipShown, activeLink = false, nil
+end
+
+-- A hovered seller's note just arrived: re-render the tooltip in place, but only if it's still
+-- ours and still up (the cursor hasn't left and nothing else has claimed GameTooltip).
+function ns.RefreshShopLinkTooltip(name)
+    if not (linkTipShown and activeLink and activeLink.name == name) then return end
+    if GameTooltip:GetOwner() ~= activeLink.owner then return end
+    showLinkTooltip(activeLink.owner, activeLink.link)
+end
+
 local shareInstalled = false
 local function installShareLinks()
     if shareInstalled then return end
     shareInstalled = true
     for _, e in ipairs(SHARE_EVENTS) do ChatFrame_AddMessageEventFilter(e, shareFilter) end
-    hooksecurefunc("SetItemRef", function(_, text)
-        local name = type(text) == "string" and text:match("|h%[GFM: browse (.-)'s shop%]|h")
-        if name and ns.OpenShopLink then
-            ns.OpenShopLink(name)
-            if ItemRefTooltip then ItemRefTooltip:Hide() end   -- drop the placeholder tooltip
+
+    -- Click: prefer EventRegistry (Blizzard's taint-safe callback for "addon:" links); fall back
+    -- to a post-hook on SetItemRef on any client without it. Only one path is installed per run.
+    if EventRegistry and type(EventRegistry.RegisterCallback) == "function" then
+        EventRegistry:RegisterCallback("SetItemRef", function(_, link) openClickedLink(link) end)
+    else
+        hooksecurefunc("SetItemRef", function(link) openClickedLink(link) end)
+    end
+
+    -- Hover: our own tooltip on each chat frame's hyperlinks.
+    local frames = tonumber(NUM_CHAT_WINDOWS) or 10
+    for i = 1, frames do
+        local frame = _G["ChatFrame" .. i]
+        if frame and frame.HookScript and not frame.gfmShopLinkHooked then
+            frame.gfmShopLinkHooked = true
+            frame:HookScript("OnHyperlinkEnter", function(self, link) showLinkTooltip(self, link) end)
+            frame:HookScript("OnHyperlinkLeave", hideLinkTooltip)
         end
-    end)
+    end
 end
 ns.InstallShareLinks = installShareLinks

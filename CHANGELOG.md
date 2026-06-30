@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.16.0
+
+- **Shop links no longer flash a Hearthstone tooltip.** The clickable "browse my shop" link used to
+  carry a real Hearthstone item as a safe placeholder, which could leave its tooltip on screen (on
+  hover, or if opening the shop hit an error before it was hidden). The link now uses a proper
+  `addon:` hyperlink type that shows no item tooltip at all and clicks through a taint-safe
+  EventRegistry callback, so the stray tooltip is gone by construction. The visible link text is
+  shorter too: `[Name's shop]`.
+- **Hovering a shop link previews the shop.** Hover a "browse X's shop" link in chat and GFM shows
+  the seller's name and, when known, their shop note, pulling the note on demand the same way the
+  Sellers list does, so you no longer have to click first.
+- **Shop notes can list items, with a preview.** Shift-click an item into the Shop note field to add
+  its link (within the note's length limit), and use the new Preview button to see your note exactly
+  as buyers read it. Notes are shown as written.
+- **A player's note loads on hover.** The chat-bubble note in the Sellers and Buyers lists now
+  fetches on hover instead of needing a click; if a fetch fails (player offline) it says so, and a
+  click retries.
+- **WTS / WTB tabs on a player.** Opening a seller or buyer now has WTS/WTB sub-tabs (like My Items),
+  so you can toggle the same player between what they sell and what they want to buy. "< Back"
+  returns to wherever you started. My Items' "Selling" tab is renamed "WTS", and every WTS/WTB tab
+  carries a tooltip explaining the terms.
+
 ## 0.15.2
 
 - **Channel monitor (`/gfm channelscan`).** A diagnostic that watches your marketplace channel for

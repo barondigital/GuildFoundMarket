@@ -206,7 +206,7 @@ end)
 function ns.RequestNote(name, store)
     if not name or not ns.channelName then return end
     local rec = store and store[name]
-    if not rec or rec.note ~= nil or rec.noteLoading then return end   -- already have it / in flight
+    if not rec or rec.note ~= nil or rec.noteLoading or rec.noteFailed then return end   -- have it / in flight / gave up
     rec.noteLoading = true
     if ns.selfTest and name == ns.playerName then                      -- can't whisper yourself
         rec.note = ns.GetShopNote and ns.GetShopNote() or ""; rec.noteLoading = nil
@@ -220,6 +220,7 @@ function ns.RequestNote(name, store)
     C_Timer.After(ns.QUERY_SETTLE, function()
         if rec.noteLoading then          -- no answer (offline / paused / no addon)
             rec.noteLoading = nil
+            rec.noteFailed = true         -- stop hover/refresh from re-firing the request in a loop
             ns.Feedback(("Couldn't fetch %s's note (offline?)."):format(name), true)
             if ns.NoteArrived then ns.NoteArrived(name) end
         end
@@ -240,11 +241,13 @@ ns.OnMessage("NR", function(a, _, _, _, _, _, sender)
     local note = a or ""
     local srec = ns.sellers.results[s]
     local brec = ns.buyers and ns.buyers.results[s]
+    local lrec = ns.shopLinkNotes and ns.shopLinkNotes[s]   -- pulled by hovering a shop link
     local scat = ns.sellers.catalog;        local sForCat = scat and scat.seller == s
     local bcat = ns.buyers and ns.buyers.catalog; local bForCat = bcat and bcat.buyer == s
-    if not (srec or brec or sForCat or bForCat) then return end   -- unsolicited / stale
-    if srec then srec.note = note; srec.noteLoading = nil end
-    if brec then brec.note = note; brec.noteLoading = nil end
+    if not (srec or brec or lrec or sForCat or bForCat) then return end   -- unsolicited / stale
+    if srec then srec.note = note; srec.noteLoading = nil; srec.noteFailed = nil end
+    if brec then brec.note = note; brec.noteLoading = nil; brec.noteFailed = nil end
+    if lrec then lrec.note = note; lrec.noteLoading = nil; lrec.noteFailed = nil end
     if sForCat then scat.note = note; if ns.RefreshSellerCatalogSoon then ns.RefreshSellerCatalogSoon() end end
     if bForCat then bcat.note = note; if ns.RefreshBuyerCatalogSoon then ns.RefreshBuyerCatalogSoon() end end
     ns.Log(("NOTE recv <- %s (%d chars)"):format(s, #note))
