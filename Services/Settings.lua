@@ -83,6 +83,13 @@ ns.SettingsSchema = {
         },
     },
     {
+        key = "announceShopNote",
+        label = "Announce your shop note",
+        tip = "When you press Announce and you have a shop note set, post that note (followed by your clickable shop link) instead of the default \"Shop is open!\" line.\n\n"
+            .. "With no shop note, or this turned off, the default announce line is used.",
+        default = false,
+    },
+    {
         key = "hideShopGuild",
         label = "Hide shop links in guild chat",
         tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",

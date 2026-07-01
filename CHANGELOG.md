@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.2
+
+- **Announce your shop note.** A new option (off by default) makes the Announce button post your
+  shop note instead of the plain "Shop is open!" line. When it's on and you have a note set, the
+  composed line reads `<your note> @[Name's shop]`, with the clickable shop link trailing exactly
+  as before. With the option off, or no note set, the default line is unchanged. Nothing is sent
+  automatically: the line still lands in your chat box for you to send yourself.
+
 ## 0.16.1
 
 - **A player's guild shows on hover.** Hover a name wherever it appears, the Buy results, the

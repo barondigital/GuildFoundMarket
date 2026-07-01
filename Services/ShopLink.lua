@@ -44,8 +44,16 @@ function ns.AnnounceShop(dest, name)
         ns.Feedback("You're not in a guild, so there's no guild chat to announce in.", true); return
     end
     if not prefix then ns.Feedback("Pick where to announce your shop.", true); return end
+    -- With the option on and a note set, announce the note followed by the shop-link marker
+    -- (same as the default line: the clickable link trails). No option / no note falls back
+    -- to "Shop is open!".
     -- trailing space so the cursor sits clear of the marker, ready to shift-click items in
-    ChatFrame_OpenChat(("%s Shop is open! {{GFM:%s}} "):format(prefix, ns.playerName))
+    local note = ns.GetSetting("announceShopNote") and ns.GetShopNote()
+    if note and note ~= "" then
+        ChatFrame_OpenChat(("%s %s @{{GFM:%s}} "):format(prefix, note, ns.playerName))
+    else
+        ChatFrame_OpenChat(("%s Shop is open! {{GFM:%s}} "):format(prefix, ns.playerName))
+    end
     ns.Log("ANNOUNCE composed for " .. dest .. " (not sent, your call)")
 end
 
