@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.3
+
+- **Opening a shop from an item jumps straight to that item.** When you open a seller from a Buy
+  result or a Browse row, their shop now opens pre-filtered to the item you were looking at, instead
+  of showing their whole catalogue. The same happens on the Buyers side: opening a buyer from a "who
+  wants this?" hit filters their want list to that item. Clear the filter box to see everything, and
+  opening a seller/buyer from the plain index still shows their full list. This replaces the idea of
+  scrolling-and-highlighting, which was awkward while a catalogue is still loading in.
+- **A one-click reset on every search and filter box.** Each search, find, and filter field now
+  shows a small clear button once you've typed in it. Clicking it empties the field and resets what
+  it was showing, the same as pressing Escape in the box.
+
 ## 0.16.2
 
 - **Announce your shop note.** A new option (off by default) makes the Announce button post your

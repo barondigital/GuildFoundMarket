@@ -20,6 +20,11 @@ local buyerSort = { col = "count", asc = false }   -- Buyers index sort, mirrors
 local tabButtons = {}
 local draft = { itemID = nil }     -- item being composed in the My Items post panel
 local selectedSearchID = nil
+-- When you open a seller/buyer from a place that already knows which item you care about
+-- (a Buy result, a Browse row, a "who wants this" hit), we stash that item's name here so the
+-- catalog opens pre-filtered to it instead of showing their whole list. Consumed (and cleared)
+-- by SetSellersView / SetBuyersView the moment the catalog view is shown.
+local pendingCatFilter = nil
 
 -- Buy tab has two sub-modes: item Search (existing) and category Browse (#3).
 local buyMode = "BROWSE"   -- "SEARCH" | "BROWSE" (Browse is the default view)
@@ -386,7 +391,10 @@ local function formatBuyRow(r, d)
         r.c1.tip = "Click for items · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, ns.search.itemID, d.suffix, d.price)
-            else ns.SelectTab("SELLERS", d.seller, d.loc) end
+            else
+                pendingCatFilter = itemName(ns.search.itemID)   -- open their shop filtered to the item you searched
+                ns.SelectTab("SELLERS", d.seller, d.loc)
+            end
         end)
     end
     r.c2:SetText(d.qty or 0)
@@ -509,7 +517,10 @@ local function formatBuyerRow(r, d)
         r.c1.player = d.buyer                     -- the item hover adds a "Name <Guild>" line below
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.buyer, id, d.suffix, d.price)
-            else showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
+            else
+                pendingCatFilter = id and itemName(id)   -- open their wants filtered to the item you searched
+                showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW")
+            end
         end)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
@@ -550,7 +561,10 @@ local function formatBrowseRow(r, d)
     local sloc = ns.sellers.results[d.seller]
     r.seller.loc = (d.loc and d.loc ~= "" and d.loc) or (sloc and sloc.loc) or nil
     if d.self then r.seller:SetScript("OnClick", function() ns.SelectTab("MINE") end)
-    else r.seller:SetScript("OnClick", function() ns.SelectTab("SELLERS", d.seller) end) end
+    else r.seller:SetScript("OnClick", function()
+        pendingCatFilter = itemName(d.id)   -- open their shop filtered to this browsed item
+        ns.SelectTab("SELLERS", d.seller)
+    end) end
 end
 
 -- Sidebar tree row: a class header (click to expand/collapse) or a subclass (click to query).
@@ -838,7 +852,9 @@ function ns.SetSellersView(v)
     main.sellerWtsBtn:SetShown(not index); main.sellerWtbBtn:SetShown(not index)
     main.sellerWtsBtn.sel:SetShown(not index); main.sellerWtbBtn.sel:Hide()   -- WTS is the active facet here
     main.catalogFilter:SetShown(not index); main.catalogFilterLabel:SetShown(not index)
-    if not index then main.catalogFilter:SetText("") end   -- fresh seller: drop any leftover filter
+    -- fresh seller: drop any leftover filter, unless we were opened "for" a specific item
+    -- (a Buy result / Browse row), in which case pre-filter their shop to it
+    if not index then main.catalogFilter:SetText(pendingCatFilter or ""); pendingCatFilter = nil end
     if index then main.sellerNotePanel:Hide() end          -- shown again by the catalog refresh when a note loads
     updateSharedSortHeaders()
     if index then
@@ -1014,7 +1030,9 @@ function ns.SetBuyersView(v)
     main.buyerWtbBtn.sel:SetShown(show); main.buyerWtsBtn.sel:Hide()   -- WTB is the active facet here
     main.buyerCatalogFilter:SetShown(show); main.buyerCatalogFilterLabel:SetShown(show)
     if not show then main.buyerNotePanel:Hide() end   -- the catalog refresh re-shows it when a note loads
-    if show then main.buyerCatalogFilter:SetText("") end
+    -- fresh buyer: clear the filter, unless we were opened "for" a specific item (a "who wants
+    -- this" hit), in which case pre-filter their want list to it
+    if show then main.buyerCatalogFilter:SetText(pendingCatFilter or ""); pendingCatFilter = nil end
     if find then main.searchLabel:SetText("Find item:"); main.searchBox:SetWidth(300) end
     main.ac:Hide()
     updateSharedSortHeaders()
@@ -1334,6 +1352,26 @@ local function buildTabs()
     end
 end
 
+-- A one-click reset "x" pinned inside the right edge of a search/find/filter box. It shows only
+-- while the box holds text and, on click, runs `onClear` (the same reset the box's Escape key
+-- does). Hooking OnTextChanged means the "x" also appears/disappears when we set the text in code
+-- (e.g. pre-filtering a catalog), not just on typing.
+local function addClearButton(box, onClear)
+    local btn = CreateFrame("Button", nil, box)
+    btn:SetSize(14, 14); btn:SetPoint("RIGHT", -3, 0)
+    btn:SetNormalTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Up")   -- a small red x, present in Classic
+    btn:SetPushedTexture("Interface\\Buttons\\UI-GroupLoot-Pass-Down")
+    btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    btn:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText("Clear"); GameTooltip:Show() end)
+    btn:SetScript("OnLeave", GameTooltip_Hide)
+    btn:SetScript("OnClick", function() onClear(box); box:ClearFocus() end)
+    local function sync() btn:SetShown((box:GetText() or "") ~= "") end
+    box:HookScript("OnTextChanged", sync)
+    sync()
+    box.clearBtn = btn
+    return btn
+end
+
 local function buildSearchBox()
     -- search box (Buy)
     local searchLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1438,6 +1476,18 @@ local function buildAutocomplete()
     main.searchBox:SetScript("OnReceiveDrag", function(self)
         local t, id = GetCursorInfo()
         if t == "item" and id then ClearCursor(); ns.ItemDB.Learn(id); selectItem(id, itemName(id)) end
+    end)
+    -- reset: empty the box, drop the picked item, and clear whatever it was showing (Buy sellers
+    -- or, on the Buyers tab, the "who wants this" hits)
+    addClearButton(main.searchBox, function(b)
+        b:SetText(""); ac:Hide(); selectedSearchID = nil
+        if currentTab == "BUYERS" then
+            ns.buyers.find.itemID = nil; wipe(ns.buyers.find.results)
+            if ns.RefreshFindBuyers then ns.RefreshFindBuyers() end
+        else
+            ns.search.itemID = nil; wipe(ns.search.results)
+            if ns.RefreshBuy then ns.RefreshBuy() end
+        end
     end)
 end
 
@@ -1685,6 +1735,7 @@ local function buildBrowse()
     browseFilter:SetScript("OnTextChanged", function() if ns.RefreshBrowse then ns.RefreshBrowse() end end)
     browseFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus() end)
     main.browseFilter = browseFilter
+    addClearButton(browseFilter, function(b) b:SetText(""); if ns.RefreshBrowse then ns.RefreshBrowse() end end)
 
     -- level-range filter (required level, matching the Lvl column), to narrow a big category
     local function smallLabel(x, text) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -68); fs:SetText(text); fs:Hide(); return fs end
@@ -2069,6 +2120,7 @@ local function buildSellerWidgets()
     end)
     sellerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanSellers("") end)
     main.sellerFilter = sellerFilter
+    addClearButton(sellerFilter, function(b) b:SetText(""); ns.ScanSellers("") end)
     local sellerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     sellerRefreshBtn:SetSize(80, 22); sellerRefreshBtn:SetPoint("TOPLEFT", 410, -64); sellerRefreshBtn:SetText("Refresh"); sellerRefreshBtn:Hide()
     sellerRefreshBtn:SetScript("OnClick", function()
@@ -2129,6 +2181,7 @@ local function buildSellerWidgets()
     catalogFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshSellerCatalog() end end)
     catalogFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshSellerCatalog() end)
     main.catalogFilter = catalogFilter
+    addClearButton(catalogFilter, function(b) b:SetText(""); ns.RefreshSellerCatalog() end)
 end
 
 local function buildBuyerWidgets()
@@ -2150,6 +2203,7 @@ local function buildBuyerWidgets()
     end)
     buyerFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.ScanBuyers("") end)
     main.buyerFilter = buyerFilter
+    addClearButton(buyerFilter, function(b) b:SetText(""); ns.ScanBuyers("") end)
     local buyerRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     buyerRefreshBtn:SetSize(70, 22); buyerRefreshBtn:SetPoint("TOPLEFT", 398, -64); buyerRefreshBtn:SetText("Refresh"); buyerRefreshBtn:Hide()
     buyerRefreshBtn:SetScript("OnClick", function()
@@ -2211,6 +2265,7 @@ local function buildBuyerWidgets()
     buyerCatalogFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshBuyerCatalog() end end)
     buyerCatalogFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshBuyerCatalog() end)
     main.buyerCatalogFilter = buyerCatalogFilter
+    addClearButton(buyerCatalogFilter, function(b) b:SetText(""); ns.RefreshBuyerCatalog() end)
 
     -- the open buyer's note (bundled with their want list): an outlined block at the bottom, mirror
     -- of the seller note panel
@@ -2269,6 +2324,7 @@ local function buildPauseAnnounce()
     mineFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshMine() end end)
     mineFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshMine() end)
     main.mineFilter = mineFilter
+    addClearButton(mineFilter, function(b) b:SetText(""); ns.RefreshMine() end)
 
     -- Announce: a chat/note icon, right-aligned. Disabled while listings are paused.
     local announceBtn = CreateFrame("Button", nil, main)
@@ -2509,6 +2565,7 @@ local function buildWTB()
     wtbFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshWant() end end)
     wtbFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshWant() end)
     main.wtbFilter = wtbFilter
+    addClearButton(wtbFilter, function(b) b:SetText(""); ns.RefreshWant() end)
 
     --==================== WTB compose panel (item via autocomplete, qty, price, COD) ====
     local panel = CreateFrame("Frame", nil, main)
