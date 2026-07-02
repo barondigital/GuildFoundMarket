@@ -6,7 +6,7 @@ A private, cross-guild marketplace for **guild-locked communities** in World of 
 The real Auction House can't restrict who you buy from or sell to. Guild Found Market
 keeps everything inside your **confederation**, a set of guilds you define in your guild
 information, and lets you find live offers from other members. The actual handover happens
-face-to-face through the normal trade window.
+face-to-face through the normal trade window, or by COD mail through a mail order.
 
 ## How it works
 
@@ -19,6 +19,10 @@ face-to-face through the normal trade window.
 - **No central catalog, no spam:** searches go out over a hidden channel, and answers come
   straight back to the searcher only. This scales to large confederations without the lag
   that broadcast-everything addons cause.
+- **Mail orders:** on a fixed-price offer, click the mail icon to order it by COD mail. The
+  seller accepts under My Items › Orders, and at any mailbox one click fills in the whole
+  mail (recipient, items, price as COD). The buyer pays on collection, so the handover no
+  longer needs both players online at once.
 
 It does **not** depend on any other addon and is not tied to any specific game mode or
 community: any group of guilds can use it.

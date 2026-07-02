@@ -167,6 +167,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
         GuildFoundMarketCharDB.wants = GuildFoundMarketCharDB.wants or {}   -- WTB list (buy side)
+        GuildFoundMarketCharDB.ordersIn = GuildFoundMarketCharDB.ordersIn or {}     -- mail orders placed with me
+        GuildFoundMarketCharDB.ordersOut = GuildFoundMarketCharDB.ordersOut or {}   -- mail orders I placed
         -- migrate legacy offers keyed by a bare numeric itemID to the "itemID:suffix" form
         do
             local off, legacy = GuildFoundMarketCharDB.offers, {}
@@ -179,6 +181,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         ns.StartTransport()   -- register the addon prefix and start the whisper send queue
+        ns.StartOrders()      -- watch outgoing mail to mark accepted orders as sent
         -- hide our hidden-channel protocol chatter from every chat frame
         ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", function(_, _, msg)
             if msg and msg:sub(1, #CHAT_TAG) == CHAT_TAG then return true end
@@ -241,6 +244,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "MAIL_SHOW" then
         if ns.Stock then ns.Stock.SetMailOpen(true); ns.Stock.RefreshMailSoon() end
+        if ns.UpdateMailOrderPanel then ns.UpdateMailOrderPanel() end   -- accepted mail orders helper
 
     elseif event == "MAIL_CLOSED" then
         if ns.Stock then ns.Stock.SetMailOpen(false) end
@@ -261,6 +265,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if ns.RefreshWantSoon then ns.RefreshWantSoon() end
         if ns.RefreshBuyerCatalogSoon then ns.RefreshBuyerCatalogSoon() end
         if ns.RefreshFindBuyersSoon then ns.RefreshFindBuyersSoon() end
+        if ns.RefreshOrdersSoon then ns.RefreshOrdersSoon() end
     end
 end)
 

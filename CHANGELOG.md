@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Order items by COD mail.** Fixed-price offers (Buy results and seller shops) show a mail icon:
+  pick a quantity and the order lands with the seller, who accepts or declines it under the new
+  **My Items > Orders** sub-tab. At any mailbox, GFM lists a seller's accepted orders and one click
+  fills in the whole mail: recipient, subject, the items from your bags, and the price as COD. The
+  seller checks it and presses Send; the buyer pays on collection, so the handover no longer needs
+  both players online at once. Both sides track their orders (with status) under My Items > Orders.
+
 ## 0.16.3
 
 - **Opening a shop from an item jumps straight to that item.** When you open a seller from a Buy

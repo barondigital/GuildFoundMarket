@@ -195,6 +195,39 @@ local function whisperItem(name, itemID, suffix, price)
     ChatFrame_OpenChat("/w " .. name .. " " .. body)
 end
 
+-- Qty prompt for a mail order (mail icon on a Buy result / seller-catalog row). The buyer
+-- commits to qty x price; on accept ns.PlaceOrder whispers the seller and tracks the order
+-- under My Items > Orders. Native StaticPopup: one field is all this needs.
+StaticPopupDialogs["GFM_MAIL_ORDER"] = {
+    text = "Order %s\nfrom %s by COD mail. Quantity:",
+    button1 = "Order",
+    button2 = CANCEL,
+    hasEditBox = 1,
+    maxLetters = 4,
+    timeout = 0, whileDead = 1, hideOnEscape = 1,
+    OnShow = function(self)
+        self.editBox:SetNumeric(true)
+        self.editBox:SetText(tostring(self.data.qty))
+        self.editBox:HighlightText()
+    end,
+    OnAccept = function(self)
+        local d = self.data
+        local q = math.min(d.qty, math.max(1, tonumber(self.editBox:GetText()) or 1))
+        ns.PlaceOrder(d.seller, d.id, d.suffix, q, d.price)
+    end,
+    EditBoxOnEnterPressed = function(self)
+        local parent = self:GetParent()
+        StaticPopupDialogs["GFM_MAIL_ORDER"].OnAccept(parent)
+        parent:Hide()
+    end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+}
+
+local function promptOrder(seller, id, suffix, qty, price)
+    StaticPopup_Show("GFM_MAIL_ORDER", vLink(id, suffix) or vName(id, suffix), seller,
+        { seller = seller, id = id, suffix = suffix or 0, qty = qty or 1, price = price })
+end
+
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
 local function selectSearchItem(id, name)
     if not main then return end
@@ -337,8 +370,10 @@ local function resetRow(r)
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
+    r.c4:SetWidth(190)
     r.x:Hide(); r.x:SetScript("OnClick", nil)
-    r.edit:Hide(); r.edit:SetScript("OnClick", nil)
+    r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit")
+    r.orderBtn:Hide(); r.orderBtn:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
@@ -396,6 +431,11 @@ local function formatBuyRow(r, d)
                 ns.SelectTab("SELLERS", d.seller, d.loc)
             end
         end)
+        -- mail-order icon: only on fixed-price offers (COD needs a price; bids are whispers)
+        if (d.price or 0) > 0 then
+            r.orderBtn:Show()
+            r.orderBtn:SetScript("OnClick", function() promptOrder(d.seller, ns.search.itemID, d.suffix, d.qty, d.price) end)
+        end
     end
     r.c2:SetText(d.qty or 0)
     r.c3:SetText(priceText(d.price))
@@ -465,7 +505,50 @@ local function formatSellerRow(r, d)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(priceText(d.price))
         r.c1.itemLink = vLink(d.id, d.suffix)
+        if (d.price or 0) > 0 and d.seller ~= playerName then
+            r.orderBtn:Show()
+            r.orderBtn:SetScript("OnClick", function() promptOrder(d.seller, d.id, d.suffix, d.qty, d.price) end)
+        end
     end
+end
+
+-- Orders view row: one mail order, incoming ("from Buyer") or outgoing ("to Seller").
+-- The price column shows the order's TOTAL (that's the COD amount on the mail).
+local ORDER_STATUS = {   -- [dir .. status] = display text
+    innew       = "|cffffd100New order|r",
+    inaccepted  = "Accepted: mail it COD",
+    insent      = "|cff40ff40Mailed|r",
+    outpending  = "Sending ...",
+    outnoreply  = "|cffff5555Not delivered (offline?)|r",
+    outreceived = "Awaiting seller",
+    outaccepted = "|cff40ff40Accepted: mail incoming|r",
+    outdeclined = "|cffff5555Declined|r",
+    outmailed   = "|cff40ff40Mailed: check your mailbox|r",
+}
+local function formatOrderRow(r, d)
+    resetRow(r)
+    local incoming = d.dir == "in"
+    r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
+    r.c1.fs:SetText((vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+        .. " |cff888888" .. (incoming and "from " or "to ") .. d.who .. "|r")
+    r.c1.itemLink = vLink(d.id, d.suffix)
+    r.c1.player = d.who
+    r.c1.tip = "Right-click to whisper " .. d.who
+    r.c1:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then ChatFrame_OpenChat("/w " .. d.who .. " ") end
+    end)
+    r.c2:SetText(d.qty or 0)
+    r.c3:SetText(GetCoinTextureString((d.qty or 0) * (d.price or 0)))
+    r.c4:SetWidth(120)   -- keep clear of the Accept/X buttons on the right
+    r.c4:SetText(ORDER_STATUS[d.dir .. d.status] or d.status); r.c4:Show()
+    if incoming and d.status == "new" then
+        r.edit:SetText("Accept"); r.edit:Show()
+        r.edit:SetScript("OnClick", function() ns.AcceptOrder(d.oid) end)
+    end
+    r.x:Show()
+    r.x:SetScript("OnClick", function()
+        if incoming then ns.DeclineOrder(d.oid) else ns.CancelOrder(d.oid) end
+    end)
 end
 
 -- My WTB list row: like a Selling row but for a wanted item (Remove + Edit, no Find buyers).
@@ -587,6 +670,7 @@ local function renderRows()
             elseif currentTab == "SELLERS" then formatSellerRow(r, d)
             elseif currentTab == "BUYERS" then formatBuyerRow(r, d)
             elseif currentTab == "MINE" and mineMode == "WTB" then formatWantRow(r, d)
+            elseif currentTab == "MINE" and mineMode == "ORDERS" then formatOrderRow(r, d)
             else formatMineRow(r, d) end
             r:Show()
         else
@@ -644,7 +728,10 @@ end
 
 -- The sort state of whichever shared item list is on screen (nil if none is).
 function activeItemSort()
-    if currentTab == "MINE" then return mineMode == "WTB" and wantSort or mineSort end
+    if currentTab == "MINE" then
+        if mineMode == "ORDERS" then return nil end   -- orders come newest-first, no column sort
+        return mineMode == "WTB" and wantSort or mineSort
+    end
     if currentTab == "BUY" and buyMode == "SEARCH" then return buySort end
     if currentTab == "SELLERS" and sellersView == "SHOW" then return catalogSort end
     if currentTab == "BUYERS" then
@@ -654,7 +741,10 @@ function activeItemSort()
 end
 
 function refreshActiveItemView()
-    if currentTab == "MINE" then if mineMode == "WTB" then ns.RefreshWant() else ns.RefreshMine() end
+    if currentTab == "MINE" then
+        if mineMode == "WTB" then ns.RefreshWant()
+        elseif mineMode == "ORDERS" then ns.RefreshOrders()
+        else ns.RefreshMine() end
     elseif currentTab == "BUY" then ns.RefreshBuy()
     elseif currentTab == "SELLERS" then ns.RefreshSellerCatalog()
     elseif currentTab == "BUYERS" then if buyersView == "SHOW" then ns.RefreshBuyerCatalog() else ns.RefreshFindBuyers() end end
@@ -664,7 +754,7 @@ end
 -- shared item lists, the index overlays for the Sellers/Buyers index, neither elsewhere.
 function updateSharedSortHeaders()
     if not main or not main.itemSort1 then return end
-    local itemView  = (currentTab == "MINE")
+    local itemView  = (currentTab == "MINE" and mineMode ~= "ORDERS")
         or (currentTab == "BUY" and buyMode == "SEARCH")
         or (currentTab == "SELLERS" and sellersView == "SHOW")
         or (currentTab == "BUYERS" and (buyersView == "SHOW" or buyersView == "FIND"))
@@ -895,6 +985,28 @@ function ns.RefreshWant()
             main.status:SetText("No wanted item matches \"" .. (filter or "") .. "\".")
         else
             main.status:SetText("")
+        end
+    end)
+end
+
+--========================================================================
+-- refresh: Orders (My Items sub-tab): incoming and outgoing mail orders, newest first
+--========================================================================
+function ns.RefreshOrders()
+    -- badge on the sub-tab: how many incoming orders await a decision. Updated even when the
+    -- view itself isn't on screen, so an order arriving mid-session shows up on the tab.
+    if main and main.mineOrdersBtn then
+        local n = ns.NewOrderCount()
+        main.mineOrdersBtn.fs:SetText(n > 0 and ("Orders |cffff8800(" .. n .. ")|r") or "Orders")
+    end
+    refreshList(currentTab == "MINE" and mineMode == "ORDERS", function()
+        for _, d in ipairs(ns.OrderRows()) do view[#view + 1] = d end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        if #view == 0 then
+            main.status:SetText("No mail orders. Buyers order from your shop with the mail icon; your orders to sellers land here too.")
+        else
+            main.status:SetText("Accept an incoming order, then mail it COD from any mailbox (GFM fills in the mail for you).")
         end
     end)
 end
@@ -1263,6 +1375,7 @@ local function scheduleRefresh(which)
         if p.buyers  and ns.RefreshBuyers         then ns.RefreshBuyers() end
         if p.findbuy and ns.RefreshFindBuyers     then ns.RefreshFindBuyers() end
         if p.bcat    and ns.RefreshBuyerCatalog   then ns.RefreshBuyerCatalog() end
+        if p.orders  and ns.RefreshOrders         then ns.RefreshOrders() end
     end)
 end
 function ns.RefreshBuySoon()           scheduleRefresh("buy") end
@@ -1274,6 +1387,7 @@ function ns.RefreshWantSoon()          scheduleRefresh("want") end
 function ns.RefreshBuyersSoon()        scheduleRefresh("buyers") end
 function ns.RefreshFindBuyersSoon()    scheduleRefresh("findbuy") end
 function ns.RefreshBuyerCatalogSoon()  scheduleRefresh("bcat") end
+function ns.RefreshOrdersSoon()        scheduleRefresh("orders") end
 
 function ns.UpdateVersionDisplay()
     if not main or not main.versionFS then return end
@@ -1659,6 +1773,21 @@ local function buildRows()
         end)
         r.findBtn:SetScript("OnLeave", GameTooltip_Hide)
         r.findBtn:Hide()
+        -- "Order by mail" icon (Buy results + seller-catalog rows with a fixed price): sits in
+        -- the X button's spot, which those views never show. OnClick wired per-row.
+        r.orderBtn = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.orderBtn:SetSize(24, 20); r.orderBtn:SetPoint("RIGHT", -2, 0)
+        r.orderBtn:RegisterForClicks("LeftButtonUp")
+        local ob = r.orderBtn:CreateTexture(nil, "ARTWORK"); ob:SetSize(14, 14); ob:SetPoint("CENTER")
+        ob:SetTexture("Interface\\Icons\\INV_Letter_15")
+        r.orderBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("Order by mail")
+            GameTooltip:AddLine("Ask the seller to mail you this item COD (you pay the listed price when you collect it).", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        r.orderBtn:SetScript("OnLeave", GameTooltip_Hide)
+        r.orderBtn:Hide()
         -- "Sync" column (My Items rows only): per-listing "follow my bags" toggle, under the h4
         -- header. Wired per-row in formatMineRow; hidden by resetRow on every other tab.
         r.track = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
@@ -1673,7 +1802,7 @@ local function buildRows()
         end)
         r.track:SetScript("OnLeave", GameTooltip_Hide)
         r.track:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn, r.track)
+        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn, r.track, r.orderBtn)
         r:Hide(); rows[i] = r
     end
 end
@@ -2067,11 +2196,12 @@ end
 
 -- A small highlighted sub-tab button, shared by the My Items WTS/WTB tabs and the WTS/WTB toggle
 -- on a player's detail view, so both look identical (one builder, no duplication).
-local function subTabButton(x, text)
-    local b = CreateFrame("Button", nil, main); b:SetSize(56, 22); b:SetPoint("TOPLEFT", x, -64); b:Hide()
+local function subTabButton(x, text, w)
+    local b = CreateFrame("Button", nil, main); b:SetSize(w or 56, 22); b:SetPoint("TOPLEFT", x, -64); b:Hide()
     local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
     local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
     local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
+    b.fs = fs
     return b
 end
 
@@ -2296,7 +2426,7 @@ local function buildPauseAnnounce()
     pauseLabel:SetPoint("TOPLEFT", 16, -70); pauseLabel:SetText(""); pauseLabel:Hide()
     main.pauseLabel = pauseLabel
     local pauseBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    pauseBtn:SetSize(120, 22); pauseBtn:SetPoint("TOPLEFT", 142, -64); pauseBtn:Hide()
+    pauseBtn:SetSize(104, 22); pauseBtn:SetPoint("TOPLEFT", 204, -64); pauseBtn:Hide()
     pauseBtn:SetScript("OnClick", function() ns.ToggleListings() end)
     pauseBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -2317,10 +2447,10 @@ local function buildPauseAnnounce()
     -- substring filter over your listed items (client-side), sitting between the pause button
     -- and the announce controls
     local mineFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    mineFilterLabel:SetPoint("TOPLEFT", 268, -68); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
+    mineFilterLabel:SetPoint("TOPLEFT", 316, -68); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
     main.mineFilterLabel = mineFilterLabel
     local mineFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    mineFilter:SetPoint("TOPLEFT", 332, -64); mineFilter:SetSize(120, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
+    mineFilter:SetPoint("TOPLEFT", 380, -64); mineFilter:SetSize(100, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
     mineFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshMine() end end)
     mineFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshMine() end)
     main.mineFilter = mineFilter
@@ -2522,6 +2652,12 @@ local HELP_USAGE = table.concat({
     "• |cffffffffOnline / Offline|r: pause answering while you raid or PvP. Your items are kept.",
     "• |cffffffffAnnounce|r: drop a \"shop is open\" line into the chat you pick (guild, party, raid, whisper, or your guild's trade channel). You send it yourself; GFM users who click it browse your shop live.",
     " ",
+    "|cffffd100Mail orders|r",
+    "On a fixed-price offer (a Buy result or a seller's shop), click the |cffffffffmail icon|r to order it by COD mail: pick a quantity and the seller gets the order.",
+    "• The seller reviews it under |cffffffffMy Items > Orders|r and accepts or declines.",
+    "• At any mailbox, GFM lists your accepted orders and one click fills in the mail: recipient, the items, and the price as COD. Check it and press Send.",
+    "• The buyer pays when collecting the mail, so neither side needs to be online at the same time after the order is accepted.",
+    " ",
     "|cffffd100Spam filter|r",
     "In Options you can hide incoming shop links per surface (guild, party, whispers, channels). It only changes what you see, nothing for anyone else.",
     " ",
@@ -2554,14 +2690,17 @@ local function buildWTB()
     -- two small sub-tab buttons at the far left (the pause button moved right to make room)
     main.mineSellBtn = subTabButton(16, "WTS")
     main.mineWtbBtn  = subTabButton(74, "WTB")
+    main.mineOrdersBtn = subTabButton(132, "Orders", 64)
     attachSubTip(main.mineSellBtn, "WTS - Want To Sell", "Items you're offering for sale.")
     attachSubTip(main.mineWtbBtn,  "WTB - Want To Buy", "Items you want to buy.")
+    attachSubTip(main.mineOrdersBtn, "Mail orders", "Orders placed with you and orders you placed with sellers, settled by COD mail.")
     main.mineSellBtn:SetScript("OnClick", function() setMineMode("SELLING") end)
     main.mineWtbBtn:SetScript("OnClick", function() setMineMode("WTB") end)
+    main.mineOrdersBtn:SetScript("OnClick", function() setMineMode("ORDERS") end)
 
     -- substring filter over your WTB list (shares the "Find item:" label with Selling)
     local wtbFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    wtbFilter:SetPoint("TOPLEFT", 332, -64); wtbFilter:SetSize(120, 22); wtbFilter:SetAutoFocus(false); wtbFilter:Hide()
+    wtbFilter:SetPoint("TOPLEFT", 380, -64); wtbFilter:SetSize(100, 22); wtbFilter:SetAutoFocus(false); wtbFilter:Hide()
     wtbFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshWant() end end)
     wtbFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshWant() end)
     main.wtbFilter = wtbFilter
@@ -2727,19 +2866,27 @@ local function buildWTB()
     setMineMode = function(mode)
         mineMode = mode
         if not main then return end
-        local wtb = (mode == "WTB")
-        main.mineSellBtn.sel:SetShown(not wtb); main.mineWtbBtn.sel:SetShown(wtb)
-        main.postPanel:SetShown(not wtb); main.wtbPanel:SetShown(wtb)
-        main.announceBtn:SetShown(not wtb); main.announceDestBtn:SetShown(not wtb)
-        main.announceWhisper:SetShown(not wtb and GuildFoundMarketCharDB.announceDest == "whisper")
+        local wtb, orders = (mode == "WTB"), (mode == "ORDERS")
+        local selling = not wtb and not orders
+        main.mineSellBtn.sel:SetShown(selling); main.mineWtbBtn.sel:SetShown(wtb); main.mineOrdersBtn.sel:SetShown(orders)
+        main.postPanel:SetShown(selling); main.wtbPanel:SetShown(wtb)
+        main.announceBtn:SetShown(selling); main.announceDestBtn:SetShown(selling)
+        main.announceWhisper:SetShown(selling and GuildFoundMarketCharDB.announceDest == "whisper")
         if main.announceDestPopup then main.announceDestPopup:Hide() end
         if main.announceWAC then main.announceWAC:Hide() end
-        main.mineFilter:SetShown(not wtb); main.wtbFilter:SetShown(wtb)
+        main.mineFilter:SetShown(selling); main.wtbFilter:SetShown(wtb)
+        main.mineFilterLabel:SetShown(not orders)
         ac:Hide()
-        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
+        if orders then
+            main.h1:SetText("Order"); main.h2:SetText("Qty"); main.h3:SetText("COD total"); main.h4:SetText("Status")
+        else
+            main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
+        end
         updateSharedSortHeaders()
         wipe(view); FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
-        if wtb then clearWant(); ns.RefreshWant() else ns.RefreshMine() end
+        if wtb then clearWant(); ns.RefreshWant()
+        elseif selling then ns.RefreshMine() end
+        ns.RefreshOrders()   -- the orders list when in Orders mode; otherwise just the sub-tab badge
     end
 end
 
@@ -2986,7 +3133,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.h1:Show(); main.h2:Show(); main.h3:Show(); main.h4:Show()
     end
     main.pauseBtn:SetShown(mine)
-    main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine)
+    main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine); main.mineOrdersBtn:SetShown(mine)
     main.mineFilterLabel:SetShown(mine)
     if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbPanel:Hide() end
     main.announceBtn:SetShown(mine)
@@ -3077,6 +3224,113 @@ function ns.OpenAndSearch(itemID)
     if ns.ItemDB then ns.ItemDB.Learn(itemID) end
     ns.SelectTab("BUY")
     selectSearchItem(itemID)
+end
+
+--========================================================================
+-- Mailbox helper: while the mailbox is open and you have accepted orders, a side panel
+-- lists them; clicking one fills in the Send Mail form (recipient, subject, COD amount)
+-- and attaches the items from your bags. The seller checks it and presses Send themselves;
+-- the SendMail hook in Orders.lua then marks the order sent and tells the buyer.
+--========================================================================
+local mailPanel
+
+-- Attach up to `qty` of the order's exact variant from the bags. Whole stacks attach via
+-- UseContainerItem; a final partial stack is split onto the cursor and dropped into the next
+-- open attachment slot. Returns how many were attached.
+-- ponytail: at most 12 attachment slots; an order needing more stacks attaches short and the
+-- seller tops it up (or sends a second mail) by hand.
+local function attachOrderItems(o)
+    local remaining = o.qty
+    for bag = 0, 4 do
+        for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
+            if remaining <= 0 then return o.qty end
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID == o.id and not info.isBound
+                and ns.Stock.LinkSuffix(info.hyperlink) == (o.suffix or 0) then
+                local n = info.stackCount or 1
+                if n <= remaining then
+                    C_Container.UseContainerItem(bag, slot)   -- attaches while Send Mail is open
+                    remaining = remaining - n
+                else
+                    C_Container.SplitContainerItem(bag, slot, remaining)
+                    ClickSendMailItemButton()                 -- drop the split stack into an open slot
+                    remaining = 0
+                end
+            end
+        end
+    end
+    return o.qty - remaining
+end
+
+local function fillOrderMail(o)
+    if MailFrameTab2 then MailFrameTab2:Click() end   -- switch to the Send Mail tab
+    SendMailNameEditBox:SetText(o.buyer)
+    SendMailSubjectEditBox:SetText(("GFM order: %s x%d"):format(itemName(o.id), o.qty):sub(1, 64))
+    MoneyInputFrame_SetCopper(SendMailMoney, o.qty * o.price)
+    if SendMailCODButton and not SendMailCODButton:GetChecked() then SendMailCODButton:Click() end
+    local attached = attachOrderItems(o)
+    if attached < o.qty then
+        ns.Feedback(("Attached %d of %d: not enough %s in your bags."):format(attached, o.qty, itemName(o.id)), true)
+    else
+        ns.Feedback("Order filled in. Check the attachments and COD amount, then press Send.", false)
+    end
+end
+
+local function buildMailPanel()
+    mailPanel = CreateFrame("Frame", "GuildFoundMarketMailOrders", MailFrame, "BackdropTemplate")
+    mailPanel:SetPoint("TOPLEFT", MailFrame, "TOPRIGHT", 2, -12)
+    mailPanel:SetWidth(260)
+    mailPanel:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    mailPanel:SetBackdropColor(0, 0, 0, 0.8); mailPanel:SetBackdropBorderColor(0.5, 0.5, 0.5)
+    local title = mailPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    title:SetPoint("TOPLEFT", 8, -8); title:SetText("GFM: accepted mail orders"); title:SetTextColor(1, 0.82, 0)
+    local hint = mailPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("BOTTOMLEFT", 8, 8); hint:SetPoint("BOTTOMRIGHT", -8, 8)
+    hint:SetJustifyH("LEFT")
+    hint:SetText("Click an order to fill in the mail, check it, then press Send.")
+    mailPanel.rows = {}
+end
+
+local MAIL_ORDER_ROWS = 8
+function ns.UpdateMailOrderPanel()
+    if not (MailFrame and MailFrame:IsShown()) then
+        if mailPanel then mailPanel:Hide() end
+        return
+    end
+    local list = ns.AcceptedOrders()
+    if #list == 0 then
+        if mailPanel then mailPanel:Hide() end
+        return
+    end
+    if not mailPanel then buildMailPanel() end
+    for i = 1, MAIL_ORDER_ROWS do
+        local r = mailPanel.rows[i]
+        if not r then
+            r = CreateFrame("Button", nil, mailPanel)
+            r:SetSize(244, 18); r:SetPoint("TOPLEFT", 8, -24 - (i - 1) * 18)
+            local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.12)
+            r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            r.fs:SetAllPoints(); r.fs:SetJustifyH("LEFT")
+            mailPanel.rows[i] = r
+        end
+        local rec = list[i]
+        if rec then
+            local o = rec.o
+            r.fs:SetText(("%s: %s x%d - %s"):format(o.buyer, itemName(o.id), o.qty, coinShort(o.qty * o.price)))
+            r:SetScript("OnClick", function() fillOrderMail(o) end)
+            r:Show()
+        else
+            r:Hide()
+        end
+    end
+    local shown = math.min(#list, MAIL_ORDER_ROWS)
+    mailPanel:SetHeight(24 + shown * 18 + 30)
+    mailPanel:Show()
 end
 
 -- Open a shop from a clicked announce link. Routed through a name-filtered seller
