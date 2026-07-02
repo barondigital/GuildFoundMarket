@@ -114,6 +114,51 @@ ns.OnMessage("MOD", function(a, b, _, _, _, _, sender)
 end)
 
 --========================================================================
+-- WTB fulfilment: the sell-side mirror. A COD want is the buyer's standing commitment to
+-- pay its price on delivery, so there is no accept round-trip: the seller commits by
+-- initiating, the order lands on both sides already "accepted", and the usual mailbox /
+-- sent / cancel machinery settles it.
+--   MW~oid~id~qty~price~sfx   seller -> buyer   "I'll mail your want COD" (suffix last)
+--========================================================================
+function ns.FulfillWant(buyer, itemID, suffix, qty, price)
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't fulfil a want.", true); return end
+    if not (buyer and itemID) or buyer == ns.playerName then return end
+    qty = math.max(1, qty or 1)
+    suffix = suffix or 0
+    price = price or 0
+    if price <= 0 then ns.Feedback("That want has no COD price; whisper the buyer instead.", true); return end
+    orderSeq = orderSeq + 1
+    local oid = ("%s#%d.%d"):format(ns.playerName, time(), orderSeq)
+    ordersIn()[oid] = { buyer = buyer, id = itemID, suffix = suffix, qty = qty, price = price, t = time(), status = "accepted" }
+    ns.EnqueueWhisper(("MW~%s~%d~%d~%d~%d"):format(oid, itemID, qty, price, suffix), buyer)
+    ns.ItemDB.Learn(itemID)
+    ns.Feedback(("Committed to mail %s x%d to %s for %s COD. Fill it in at any mailbox."):format(
+        orderItemName(ordersIn()[oid]), qty, buyer, GetCoinTextureString(qty * price)), false)
+    ns.Log(("ORDER fulfil -> %s: item %d x%d @ %dc (%s)"):format(buyer, itemID, qty, price, oid))
+    refreshOrders()
+    return true
+end
+
+-- MW~oid~id~qty~price~sfx: a seller will mail one of our COD wants. Track it so the Orders
+-- tab shows the incoming mail. Validated against the want itself (right variant, COD, the
+-- posted price, no more than we asked for), so a stray MW can't invent a commitment we
+-- never made; an offline/mismatched buyer just gets the COD mail untracked, which is fine.
+ns.OnMessage("MW", function(a, b, c, d, e, _, sender)
+    local itemID, qty, price = tonumber(b), tonumber(c), tonumber(d)
+    if not (a and itemID and qty and price) or qty < 1 or price < 1 then return end
+    local seller = Ambiguate(sender, "short")
+    if seller == ns.playerName then return end
+    if ordersOut()[a] then return end   -- duplicate
+    local w = GuildFoundMarketCharDB.wants[ns.vkey(itemID, tonumber(e) or 0)]
+    if not (w and w.cod and price == (w.price or 0) and qty <= (w.qty or 0)) then return end
+    ordersOut()[a] = { seller = seller, id = itemID, suffix = tonumber(e) or 0, qty = qty, price = price, t = time(), status = "accepted" }
+    chatNote(("%s will mail you %s x%d for %s COD (your WTB). Collect it from your mailbox."):format(
+        seller, GetItemInfo(itemID) or ("item:" .. itemID), qty, GetCoinTextureString(qty * price)))
+    ns.Log(("ORDER fulfil <- %s: item %d x%d @ %dc (%s)"):format(seller, itemID, qty, price, a))
+    refreshOrders()
+end)
+
+--========================================================================
 -- Seller side
 --========================================================================
 

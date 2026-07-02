@@ -8,6 +8,10 @@
   fills in the whole mail: recipient, subject, the items from your bags, and the price as COD. The
   seller checks it and presses Send; the buyer pays on collection, so the handover no longer needs
   both players online at once. Both sides track their orders (with status) under My Items > Orders.
+- **Fulfil a COD want by mail.** The sell-side mirror: COD rows on the Buyers tab (a "who wants
+  this?" hit or an open buyer's want list) show the same mail icon. Since a COD want is already the
+  buyer's commitment to pay that price on delivery, there is no accept step: committing puts the
+  order straight into your mailbox panel, and the buyer is told to expect the mail.
 
 ## 0.16.3
 

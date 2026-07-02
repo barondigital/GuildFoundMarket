@@ -57,7 +57,7 @@ local printed = {}
 local rawprint = print
 function print(msg) printed[#printed + 1] = msg end
 
-GuildFoundMarketCharDB = { ordersIn = {}, ordersOut = {} }
+GuildFoundMarketCharDB = { ordersIn = {}, ordersOut = {}, wants = {} }
 
 local sentWhispers = {}
 local ns = {
@@ -68,6 +68,7 @@ local ns = {
     Log = function() end,
     EnqueueWhisper = function(msg, to) sentWhispers[#sentWhispers + 1] = { msg = msg, to = to } end,
     ItemDB = { Learn = function() end },
+    vkey = function(id, suffix) return id .. ":" .. (suffix or 0) end,
 }
 local function reset() sentWhispers = {} end
 local function lastMsg() return sentWhispers[#sentWhispers] end
@@ -193,6 +194,47 @@ do
     check("MOX from the wrong sender ignored", GuildFoundMarketCharDB.ordersIn["Alice#2.1"] ~= nil)
     ns.DispatchMessage("MOX~Alice#2.1", "Alice-Realm")
     check("MOX drops the seller's half", GuildFoundMarketCharDB.ordersIn["Alice#2.1"] == nil)
+end
+
+--========================================================================
+-- 9. WTB fulfilment (MW): seller commits, both sides land "accepted", no round-trip
+--========================================================================
+do
+    reset()
+    check("a want without a COD price can't be fulfilled", not ns.FulfillWant("Cara", 300, 0, 2, 0))
+    check("FulfillWant succeeds", ns.FulfillWant("Cara", 300, 5, 2, 700))
+    local w = lastMsg()
+    check("fulfilment whispered to the buyer", w and w.to == "Cara")
+    local cmd, oid, id, qty, price, sfx = strsplit("~", w.msg)
+    check("MW carries id/qty/price", cmd == "MW" and id == "300" and qty == "2" and price == "700")
+    check("MW keeps suffix last", sfx == "5")
+    check("seller half lands directly accepted", GuildFoundMarketCharDB.ordersIn[oid].status == "accepted")
+    reset()
+    sendMailHook("Cara-Realm", "x", "y")   -- the usual mailbox flow settles it unchanged
+    check("mailing the fulfilment marks it sent", GuildFoundMarketCharDB.ordersIn[oid].status == "sent")
+    check("buyer told the fulfilment was mailed", lastMsg().msg == "MOD~" .. oid .. "~S")
+end
+
+--========================================================================
+-- 10. Buyer's MW handler: validated against the want itself
+--========================================================================
+do
+    GuildFoundMarketCharDB.wants["400:0"] = { id = 400, suffix = 0, qty = 10, price = 900, cod = true }
+    GuildFoundMarketCharDB.wants["401:0"] = { id = 401, suffix = 0, qty = 10, price = 900, cod = false }
+    ns.DispatchMessage("MW~Dan#1.1~400~3~900~0", "Dan-Realm")
+    local o = GuildFoundMarketCharDB.ordersOut["Dan#1.1"]
+    check("valid MW tracked as accepted", o and o.status == "accepted" and o.seller == "Dan" and o.qty == 3)
+    ns.DispatchMessage("MW~Dan#1.1~400~3~900~0", "Dan-Realm")
+    check("duplicate MW ignored", GuildFoundMarketCharDB.ordersOut["Dan#1.1"].qty == 3)
+    ns.DispatchMessage("MW~Dan#2.1~400~3~950~0", "Dan-Realm")     -- wrong price
+    ns.DispatchMessage("MW~Dan#3.1~400~11~900~0", "Dan-Realm")    -- more than asked
+    ns.DispatchMessage("MW~Dan#4.1~401~3~900~0", "Dan-Realm")     -- want is not COD
+    ns.DispatchMessage("MW~Dan#5.1~999~3~900~0", "Dan-Realm")     -- no such want
+    check("MW not matching the want is dropped",
+        not GuildFoundMarketCharDB.ordersOut["Dan#2.1"] and not GuildFoundMarketCharDB.ordersOut["Dan#3.1"]
+        and not GuildFoundMarketCharDB.ordersOut["Dan#4.1"] and not GuildFoundMarketCharDB.ordersOut["Dan#5.1"])
+    ns.DispatchMessage("MOD~Dan#1.1~S", "Dan-Realm")
+    check("MOD~S applies to a fulfilment too", GuildFoundMarketCharDB.ordersOut["Dan#1.1"].status == "mailed")
 end
 
 print = rawprint

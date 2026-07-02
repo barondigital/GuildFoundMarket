@@ -22,7 +22,8 @@ face-to-face through the normal trade window, or by COD mail through a mail orde
 - **Mail orders:** on a fixed-price offer, click the mail icon to order it by COD mail. The
   seller accepts under My Items › Orders, and at any mailbox one click fills in the whole
   mail (recipient, items, price as COD). The buyer pays on collection, so the handover no
-  longer needs both players online at once.
+  longer needs both players online at once. Sellers can fulfil a COD want the same way,
+  straight from the Buyers tab.
 
 It does **not** depend on any other addon and is not tied to any specific game mode or
 community: any group of guilds can use it.

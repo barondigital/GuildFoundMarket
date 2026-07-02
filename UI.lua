@@ -228,6 +228,34 @@ local function promptOrder(seller, id, suffix, qty, price)
         { seller = seller, id = id, suffix = suffix or 0, qty = qty or 1, price = price })
 end
 
+-- The sell-side mirror: commit to mail someone's COD want. Same one-field prompt; the
+-- buyer already committed to the price, so ns.FulfillWant needs no acceptance step.
+StaticPopupDialogs["GFM_MAIL_FULFILL"] = {
+    text = "Mail %s\nto %s COD (they pay on delivery). Quantity:",
+    button1 = "Commit",
+    button2 = CANCEL,
+    hasEditBox = 1,
+    maxLetters = 4,
+    timeout = 0, whileDead = 1, hideOnEscape = 1,
+    OnShow = StaticPopupDialogs["GFM_MAIL_ORDER"].OnShow,
+    OnAccept = function(self)
+        local d = self.data
+        local q = math.min(d.qty, math.max(1, tonumber(self.editBox:GetText()) or 1))
+        ns.FulfillWant(d.buyer, d.id, d.suffix, q, d.price)
+    end,
+    EditBoxOnEnterPressed = function(self)
+        local parent = self:GetParent()
+        StaticPopupDialogs["GFM_MAIL_FULFILL"].OnAccept(parent)
+        parent:Hide()
+    end,
+    EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+}
+
+local function promptFulfill(buyer, id, suffix, qty, price)
+    StaticPopup_Show("GFM_MAIL_FULFILL", vLink(id, suffix) or vName(id, suffix), buyer,
+        { buyer = buyer, id = id, suffix = suffix or 0, qty = qty or 1, price = price })
+end
+
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
 local function selectSearchItem(id, name)
     if not main then return end
@@ -373,7 +401,7 @@ local function resetRow(r)
     r.c4:SetWidth(190)
     r.x:Hide(); r.x:SetScript("OnClick", nil)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit")
-    r.orderBtn:Hide(); r.orderBtn:SetScript("OnClick", nil)
+    r.orderBtn:Hide(); r.orderBtn:SetScript("OnClick", nil); r.orderBtn.fulfill = nil
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
@@ -608,6 +636,11 @@ local function formatBuyerRow(r, d)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
         r.c4:SetText(d.loc or ""); r.c4:Show()
+        -- fulfil-by-mail icon: only on COD wants (the buyer committed to that price on delivery)
+        if d.cod and (d.price or 0) > 0 and not d.self then
+            r.orderBtn:Show(); r.orderBtn.fulfill = true
+            r.orderBtn:SetScript("OnClick", function() promptFulfill(d.buyer, id, d.suffix, d.qty, d.price) end)
+        end
     else   -- "wantitem": one item the open buyer wants
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -619,6 +652,10 @@ local function formatBuyerRow(r, d)
         end)
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
+        if d.cod and (d.price or 0) > 0 and d.buyer ~= playerName then
+            r.orderBtn:Show(); r.orderBtn.fulfill = true
+            r.orderBtn:SetScript("OnClick", function() promptFulfill(d.buyer, d.id, d.suffix, d.qty, d.price) end)
+        end
     end
 end
 
@@ -1782,8 +1819,13 @@ local function buildRows()
         ob:SetTexture("Interface\\Icons\\INV_Letter_15")
         r.orderBtn:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText("Order by mail")
-            GameTooltip:AddLine("Ask the seller to mail you this item COD (you pay the listed price when you collect it).", 1, 1, 1, true)
+            if self.fulfill then
+                GameTooltip:SetText("Fulfil by mail")
+                GameTooltip:AddLine("Commit to mail this COD; the buyer already committed to pay the posted price on delivery.", 1, 1, 1, true)
+            else
+                GameTooltip:SetText("Order by mail")
+                GameTooltip:AddLine("Ask the seller to mail you this item COD (you pay the listed price when you collect it).", 1, 1, 1, true)
+            end
             GameTooltip:Show()
         end)
         r.orderBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -2657,6 +2699,7 @@ local HELP_USAGE = table.concat({
     "• The seller reviews it under |cffffffffMy Items > Orders|r and accepts or declines.",
     "• At any mailbox, GFM lists your accepted orders and one click fills in the mail: recipient, the items, and the price as COD. Check it and press Send.",
     "• The buyer pays when collecting the mail, so neither side needs to be online at the same time after the order is accepted.",
+    "• Sellers can fulfil a |cffffffffCOD want|r the same way: the mail icon on a WTB row commits you to mail it. No acceptance needed; the buyer already committed to that price.",
     " ",
     "|cffffd100Spam filter|r",
     "In Options you can hide incoming shop links per surface (guild, party, whispers, channels). It only changes what you see, nothing for anyone else.",
