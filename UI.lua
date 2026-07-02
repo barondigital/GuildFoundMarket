@@ -3277,29 +3277,70 @@ end
 --========================================================================
 local mailPanel
 
--- Attach up to `qty` of the order's exact variant from the bags. Whole stacks attach via
--- UseContainerItem; a final partial stack is split onto the cursor and dropped into the next
--- open attachment slot. Returns how many were attached.
+-- Attach up to `qty` of the order's exact variant from the bags, largest stacks first so
+-- the fewest attachment slots are used; at most one final split. Returns how many were
+-- (or will shortly be) attached.
 -- ponytail: at most 12 attachment slots; an order needing more stacks attaches short and the
 -- seller tops it up (or sends a second mail) by hand.
 local function attachOrderItems(o)
-    local remaining = o.qty
+    -- Collect matching stacks. isLocked skips stacks already sitting in an attachment slot
+    -- (they stay in the bags, locked, until the mail is sent), so re-clicking can't
+    -- double-attach.
+    local stacks = {}
     for bag = 0, 4 do
         for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
-            if remaining <= 0 then return o.qty end
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.itemID == o.id and not info.isBound
+            if info and info.itemID == o.id and not info.isBound and not info.isLocked
                 and ns.Stock.LinkSuffix(info.hyperlink) == (o.suffix or 0) then
-                local n = info.stackCount or 1
-                if n <= remaining then
-                    C_Container.UseContainerItem(bag, slot)   -- attaches while Send Mail is open
-                    remaining = remaining - n
+                stacks[#stacks + 1] = { bag = bag, slot = slot, n = info.stackCount or 1 }
+            end
+        end
+    end
+    table.sort(stacks, function(a, b) return a.n > b.n end)
+
+    local remaining = o.qty
+    for _, st in ipairs(stacks) do
+        if remaining <= 0 then break end
+        if st.n <= remaining then
+            ns.Log(("order attach: whole stack of %d from bag %d slot %d"):format(st.n, st.bag, st.slot))
+            C_Container.UseContainerItem(st.bag, st.slot)   -- attaches while Send Mail is open
+            remaining = remaining - st.n
+        else
+            -- Stack is bigger than what's left: one split covers the rest. Placing a split
+            -- straight from the cursor into a mail slot attaches the WHOLE source stack on
+            -- the Era client (ClickSendMailItemButton bug), so: split into an empty bag
+            -- slot, wait for the server to confirm the new stack, then attach that stack
+            -- whole via the UseContainerItem path.
+            local eb, es
+            for b = 0, 4 do
+                for s = 1, (C_Container.GetContainerNumSlots(b) or 0) do
+                    if not C_Container.GetContainerItemInfo(b, s) then eb, es = b, s; break end
+                end
+                if eb then break end
+            end
+            if not eb then
+                ns.Log("order attach: no empty bag slot to split into; attaching short")
+                return o.qty - remaining
+            end
+            ns.Log(("order attach: splitting %d off bag %d slot %d into bag %d slot %d"):format(remaining, st.bag, st.slot, eb, es))
+            C_Container.SplitContainerItem(st.bag, st.slot, remaining)
+            C_Container.PickupContainerItem(eb, es)   -- drop the split into the empty slot
+            local tries = 0
+            local function attachSplit()
+                tries = tries + 1
+                if not (SendMailFrame and SendMailFrame:IsShown()) then return end
+                local si = C_Container.GetContainerItemInfo(eb, es)
+                if si and si.itemID == o.id and not si.isLocked then
+                    ns.Log(("order attach: attaching the split stack of %d"):format(si.stackCount or 0))
+                    C_Container.UseContainerItem(eb, es)
+                elseif tries < 10 then
+                    C_Timer.After(0.2, attachSplit)   -- new stack not confirmed yet
                 else
-                    C_Container.SplitContainerItem(bag, slot, remaining)
-                    ClickSendMailItemButton()                 -- drop the split stack into an open slot
-                    remaining = 0
+                    ns.Log("order attach: split stack never settled; attach it by hand")
                 end
             end
+            C_Timer.After(0.2, attachSplit)
+            remaining = 0
         end
     end
     return o.qty - remaining
@@ -3339,6 +3380,12 @@ local function buildMailPanel()
     mailPanel.rows = {}
 end
 
+-- MAIL_SHOW can fire before MailFrame is actually shown (order depends on other
+-- addons' hooks), so the panel is driven off the frame's own OnShow instead.
+if MailFrame then
+    MailFrame:HookScript("OnShow", function() ns.UpdateMailOrderPanel() end)
+end
+
 local MAIL_ORDER_ROWS = 8
 function ns.UpdateMailOrderPanel()
     if not (MailFrame and MailFrame:IsShown()) then
@@ -3365,7 +3412,13 @@ function ns.UpdateMailOrderPanel()
         if rec then
             local o = rec.o
             r.fs:SetText(("%s: %s x%d - %s"):format(o.buyer, itemName(o.id), o.qty, coinShort(o.qty * o.price)))
-            r:SetScript("OnClick", function() fillOrderMail(o) end)
+            r:SetScript("OnClick", function()
+                local ok, err = pcall(fillOrderMail, o)
+                if not ok then
+                    ns.Log("mail-order fill FAILED: " .. tostring(err))
+                    ns.Feedback("Filling the mail failed; see the GFM Debug log.", true)
+                end
+            end)
             r:Show()
         else
             r:Hide()

@@ -58,6 +58,7 @@ read_globals = {
     "StaticPopupDialogs", "StaticPopup_Show", "CANCEL", "time",
     "MailFrame", "MailFrameTab2", "SendMailNameEditBox", "SendMailSubjectEditBox",
     "SendMailCODButton", "SendMailMoney", "MoneyInputFrame_SetCopper", "ClickSendMailItemButton",
+    "SendMailFrame",
 }
 
 -- The standalone regression test stubs the WoW API, so it writes globals the addon
