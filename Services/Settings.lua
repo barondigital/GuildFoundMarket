@@ -123,6 +123,13 @@ ns.SettingsSchema = {
         default = true,
     },
     {
+        key = "codCreateLink",
+        label = "Add a Create COD link to buyer whispers",
+        tip = "When a buyer whispers you an item link for one of your listings, append a clickable [Create COD] to the message. Click it to place a COD order for that buyer and item (a small popup asks the quantity).\n\n"
+            .. "Only affects what you see, and only for items you currently list.",
+        default = true,
+    },
+    {
         key = "announceChangelog",
         label = "Share changelog with out-of-date players",
         tip = "When you're on the newest version, answer other GFM users who are behind with this build's changelog, so they see what's new in an overlay.\n\n"

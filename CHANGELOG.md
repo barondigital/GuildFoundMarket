@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.17.4
+
+- **One-click COD from a whisper.** When a buyer whispers you an item link for one of your listings,
+  a clickable `[Create COD]` is appended to their message. Click it and a small popup asks the
+  quantity, then the COD order is placed at your listed price (with the usual flash and confirmation
+  whisper). Turn it off with "Add a Create COD link to buyer whispers" in Options.
+- **The quantity popup opens above the chat line**, out of the way, and now has a close button.
+- **Buyer confirmations show in chat.** Requesting a COD, and the result of the Cancel COD link
+  (cancelled / nothing to cancel), now print to chat rather than only the window status line, and are
+  worded more clearly so it's obvious they are your confirmation.
+- **Changelog history link.** The changelog overlay now shows a link to the full changelog history on
+  GitHub at the bottom (click, then Ctrl+C to copy).
+
 ## 0.17.3
 
 - **Just whisper "cod".** A COD order is now captured straight from a plain whisper, so buyers don't

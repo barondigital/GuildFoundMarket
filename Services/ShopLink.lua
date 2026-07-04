@@ -74,6 +74,13 @@ local function codLink(seller, itemID, suffix)
     return ("|cffff6060|H%s:cod:%s:%d:%d|h[Cancel COD]|h|r"):format(SHOP_LINK_NS, seller, itemID, suffix or 0)
 end
 
+-- A "[Create COD]" link the seller clicks on a buyer's whisper to place a COD for that buyer + item
+-- (a qty popup follows). Appended to incoming whispers by the codCreateLink chat filter.
+local function codMakeLink(buyer, itemID, suffix)
+    return ("|cff40ff40|H%s:mkcod:%s:%d:%d|h[Create COD]|h|r"):format(SHOP_LINK_NS, buyer, itemID, suffix or 0)
+end
+function ns.CODMakeLink(buyer, itemID, suffix) return codMakeLink(buyer, itemID, suffix) end
+
 -- Wire marker (plain text; the chat server strips real hyperlinks). ns.playerName = the seller, so
 -- a click knows who to send the cancel to. The recipient's shareFilter rewrites it into codLink.
 function ns.CODCancelMarker(itemID, suffix)
@@ -156,10 +163,21 @@ local function linkCancel(link)
     return link:match("^addon:GuildFoundMarket:cod:([^:]+):(%d+):(%d+)$")
 end
 
+-- Recover a make-COD link's payload ("addon:GuildFoundMarket:mkcod:Buyer:itemID:suffix").
+local function linkMakeCOD(link)
+    if type(link) ~= "string" then return nil end
+    return link:match("^addon:GuildFoundMarket:mkcod:([^:]+):(%d+):(%d+)$")
+end
+
 local function openClickedLink(link)
     local seller, id, sfx = linkCancel(link)   -- a "Cancel COD" link: send a cancel (qty 0) for it
     if seller then
         if ns.RequestCOD then ns.RequestCOD(seller, tonumber(id), tonumber(sfx), 0, 0) end
+        return
+    end
+    local buyer, mid, msfx = linkMakeCOD(link)   -- a "[Create COD]" link: place a COD (a qty popup follows)
+    if buyer then
+        if ns.PromptCreateCOD then ns.PromptCreateCOD(buyer, tonumber(mid), tonumber(msfx)) end
         return
     end
     local name = linkSeller(link)
@@ -195,6 +213,14 @@ local function showLinkTooltip(owner, link)
         GameTooltip:SetOwner(owner or UIParent, "ANCHOR_CURSOR")
         GameTooltip:AddLine("Cancel COD", 1, 0.4, 0.4)
         GameTooltip:AddLine("Click to cancel this order with the seller.", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+        linkTipShown = true; activeLink = nil
+        return
+    end
+    if linkMakeCOD(link) then   -- a "[Create COD]" link on a buyer's whisper
+        GameTooltip:SetOwner(owner or UIParent, "ANCHOR_CURSOR")
+        GameTooltip:AddLine("Create COD", 0.3, 1, 0.4)
+        GameTooltip:AddLine("Click to add a COD order for this buyer and item (asks the quantity).", 0.9, 0.9, 0.9, true)
         GameTooltip:Show()
         linkTipShown = true; activeLink = nil
         return

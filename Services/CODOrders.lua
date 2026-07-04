@@ -304,6 +304,13 @@ local function selfTestCOD(itemID, suffix, qty, buyerUnit, name, cancel)
     ns.DispatchMessage(("OA~%s~%s~%d~%d"):format(status, reason or "", itemID, suffix), buyer)
 end
 
+-- Buyer-facing COD result. Reaches chat (you often act from a chat link with the GFM window closed)
+-- as well as the window status line, so a request/cancel always gives visible feedback.
+local function codBuyerNotify(msg, isError)
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff96GFM|r " .. msg) end
+    ns.Feedback(msg, isError)
+end
+
 -- Buyer side: ask `seller` to COD one of their listings. Optimistic (no capability handshake):
 -- if the seller isn't accepting, they answer OA~no and we tell the buyer.
 function ns.RequestCOD(seller, itemID, suffix, qty, unit)
@@ -316,14 +323,21 @@ function ns.RequestCOD(seller, itemID, suffix, qty, unit)
     qty = cancel and 0 or math.max(1, qty or 1)
     local name = GetItemInfo(itemID) or ("item:" .. itemID)
     if seller == ns.playerName then
+        if cancel then
+            -- the "seller" is you: this is your own order (self-test, or a COD captured from your own
+            -- whisper). Cancel it locally and confirm through the same OA path a wire cancel would.
+            local removed = ns.RemoveCODOrderFor(ns.playerName, itemID, suffix)
+            ns.DispatchMessage(("OA~%s~~%d~%d"):format(removed and "cancelled" or "nocancel", itemID, suffix), ns.playerName)
+            return
+        end
         if ns.selfTest then return selfTestCOD(itemID, suffix, qty, unit, name, cancel) end
         ns.Feedback("That's your own listing.", true); return
     end
     ns.EnqueueWhisper(("CO~%d~%d~%d~%d"):format(itemID, suffix, qty, unit), seller)
     if cancel then
-        ns.Feedback(("Asked %s to cancel your COD for %s..."):format(seller, name), false)
+        codBuyerNotify(("Asked %s to cancel your COD for %s..."):format(seller, name), false)
     else
-        ns.Feedback(("Asked %s to COD %s x%d. Waiting for their shop to confirm..."):format(seller, name, qty), false)
+        codBuyerNotify(("Asked %s to COD %s x%d. Waiting for their shop to confirm..."):format(seller, name, qty), false)
     end
     ns.Log(("COD %s -> %s: %s x%d @ %s"):format(cancel and "cancel" or "request", seller, name, qty, coin(unit)))
     local k = pkey(seller, itemID, suffix)
@@ -333,9 +347,9 @@ function ns.RequestCOD(seller, itemID, suffix, qty, unit)
             local wasCancel = pending[k] == "cancel"
             pending[k] = nil
             if wasCancel then
-                ns.Feedback(("%s's shop didn't confirm the cancel (offline, or not running COD requests)."):format(seller), true)
+                codBuyerNotify(("%s's shop didn't confirm the cancel (offline, or not running COD requests)."):format(seller), true)
             else
-                ns.Feedback(("%s's shop didn't confirm your COD (offline, or not running COD requests). Try a normal whisper."):format(seller), true)
+                codBuyerNotify(("%s's shop didn't confirm your COD (offline, or not running COD requests). Try a normal whisper."):format(seller), true)
             end
         end
     end)
@@ -382,16 +396,16 @@ ns.OnMessage("OA", function(a, b, c, d, _, _, sender)
     if itemID then pending[pkey(seller, itemID, suffix)] = nil end
     local name = itemID and (GetItemInfo(itemID) or ("item:" .. itemID)) or "that item"
     if a == "ok" then
-        ns.Feedback(("%s accepted your COD for %s. They'll mail it when they're next at a mailbox."):format(seller, name), false)
+        codBuyerNotify(("%s accepted your COD for %s. They'll mail it when they're next at a mailbox."):format(seller, name), false)
     elseif a == "cancelled" then
-        ns.Feedback(("%s cancelled your COD for %s."):format(seller, name), false)
+        codBuyerNotify(("Your COD for %s with %s is cancelled."):format(name, seller), false)
     elseif a == "nocancel" then
-        ns.Feedback(("%s had no open COD for %s to cancel."):format(seller, name), false)
+        codBuyerNotify(("You had no open COD for %s with %s to cancel."):format(name, seller), false)
     else
         local why = (b == "stock" and "they don't currently list it")
             or (b == "price" and "that listing takes bids; whisper them to agree a price first")
             or "they're not taking COD orders right now"
-        ns.Feedback(("%s couldn't take your COD for %s: %s."):format(seller, name, why), true)
+        codBuyerNotify(("%s couldn't take your COD for %s: %s."):format(seller, name, why), true)
     end
     ns.Log(("COD reply <- %s: %s %s"):format(seller, tostring(a), tostring(b or "")))
 end)

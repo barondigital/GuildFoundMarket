@@ -16,12 +16,13 @@ local ADDON, ns = ...
 -- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.17.3
-Just whisper "cod"
+ns.CHANGELOG = [[Guild Found Market 0.17.4
+One-click COD from a whisper, clearer confirmations
 
-- A COD order is captured straight from a plain whisper. When a buyer whispers you "cod", "cod me 3", "cod 20", or "[Item] cod 5" about one of your listings, it's added to your COD list automatically at your listed price. The item is read from a link in the whisper, or from the last item linked in your conversation, so a "cod 5 then" after some haggling still works. No more Alt-click needed. Toggle it with "Capture COD from whispers" (on by default).
-- Marking an order Done now whispers the buyer that it's mailed (configurable, "COD mailed whisper"), and each COD row has an X to drop an order without mailing.
-- Click the version text (top right) any time to read the changelog: the newer version's notes if you're behind, or your own build's notes.]]
+- New: when a buyer whispers you an item link for one of your listings, a clickable [Create COD] is added to the message. Click it and a small popup asks the quantity, then the order is placed. Turn it off with "Add a Create COD link to buyer whispers".
+- The quantity popup now opens above the chat line (out of the way) with a close button.
+- Buyer confirmations (request accepted / cancelled, and the Cancel COD link result) now show in chat, not just the window, and read more clearly.
+- The changelog overlay has a link to the full changelog history on GitHub at the bottom.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

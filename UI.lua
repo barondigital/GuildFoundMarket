@@ -224,7 +224,10 @@ local function buildCODQtyPopup()
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 16,
         insets = { left = 4, right = 4, top = 4, bottom = 4 } })
     f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetPoint("TOPRIGHT", -12, -10); f.title:SetJustifyH("LEFT")
+    f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetPoint("TOPRIGHT", -26, -10); f.title:SetJustifyH("LEFT")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetSize(26, 26); close:SetPoint("TOPRIGHT", 1, 1)
+    close:SetScript("OnClick", function() f:Hide() end)
     f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     f.hint:SetPoint("TOPLEFT", 12, -28); f.hint:SetPoint("TOPRIGHT", -12, -28); f.hint:SetJustifyH("LEFT")
     local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
@@ -247,7 +250,8 @@ local function buildCODQtyPopup()
         local qty = tonumber(eb:GetText()) or 0
         if f.maxQty and qty > f.maxQty then qty = f.maxQty end
         f:Hide()
-        ns.RequestCOD(f.seller, f.itemID, f.suffix, qty, f.price)
+        if f.onSubmit then f.onSubmit(qty)   -- seller placing a COD (Create COD link)
+        else ns.RequestCOD(f.seller, f.itemID, f.suffix, qty, f.price) end   -- buyer requesting one
     end
     ok:SetScript("OnClick", submit)
     eb:SetScript("OnEnterPressed", submit)
@@ -298,20 +302,46 @@ local function promptCODQty(seller, itemID, suffix, price)
     local g = codQtyGen
     local f = codQtyPopup or buildCODQtyPopup()
     codQtyPopup = f
-    f.seller, f.itemID, f.suffix, f.price, f.maxQty, f.userEdited = seller, itemID, suffix or 0, price, nil, false
+    f.seller, f.itemID, f.suffix, f.price, f.maxQty, f.userEdited, f.onSubmit = seller, itemID, suffix or 0, price, nil, false, nil
     f.title:SetText(("COD %s"):format(itemName(itemID) or "item"))
     f.hint:SetText(("|cffaaaaaaChecking your order with %s...|r"):format(seller))
     f.ok:SetText("Request")
     f:ClearAllPoints()
     local scale = UIParent:GetEffectiveScale()
     local cx, cy = GetCursorPosition()
-    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", cx / scale + 8, cy / scale - 8)
+    f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", cx / scale + 8, cy / scale + 8)   -- above the cursor / chat line
     f:Show()
     f.eb:SetText("1"); f.eb:HighlightText(); f.eb:SetFocus()
     ns.QueryCOD(seller, itemID, suffix, function(outstanding, cap)
         if g ~= codQtyGen then return end   -- the buyer switched view / reopened before the answer
         resolveCODQtyPopup(outstanding, cap)
     end)
+end
+
+-- Seller side: the [Create COD] link on a buyer's whisper. A plain qty popup (default 1, capped to
+-- your free stock on a bag-synced listing), then CaptureCOD places it at your listed price.
+function ns.PromptCreateCOD(buyer, itemID, suffix)
+    if not (buyer and itemID) then return end
+    suffix = suffix or 0
+    codQtyGen = codQtyGen + 1   -- drop any pending buyer-side query callback
+    local f = codQtyPopup or buildCODQtyPopup()
+    codQtyPopup = f
+    f.userEdited = false
+    f.onSubmit = function(qty)
+        if ns.CaptureCOD then ns.CaptureCOD(buyer, itemID, suffix, math.max(1, qty)) end
+    end
+    local stock, track = ns.OfferInfo(itemID, suffix)
+    f.maxQty = (track and ns.CODCap) and ns.CODCap(buyer, itemID, suffix) or nil
+    f.title:SetText(("COD %s for %s"):format(itemName(itemID) or "item", buyer))
+    f.hint:SetText("How many?" .. (f.maxQty and (" |cff888888(max %d)|r"):format(f.maxQty) or ""))
+    f.ok:SetText("Create")
+    f:ClearAllPoints()
+    local scale = UIParent:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", cx / scale + 8, cy / scale + 8)   -- above the cursor / chat line
+    f:Show()
+    local prefill = (f.maxQty and f.maxQty < 1) and 0 or 1
+    f.eb:SetText(tostring(prefill)); f.eb:HighlightText(); f.eb:SetFocus()
 end
 
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
@@ -1557,7 +1587,7 @@ local function buildChangelogOverlay()
     o.sub:SetText("Update on CurseForge to get it. Your version keeps working meanwhile.")
     o.sub:SetTextColor(0.7, 0.7, 0.7)
     local scroll = CreateFrame("ScrollFrame", nil, o, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 22, -60); scroll:SetPoint("BOTTOMRIGHT", -36, 58)
+    scroll:SetPoint("TOPLEFT", 22, -60); scroll:SetPoint("BOTTOMRIGHT", -36, 86)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local maxs = self:GetVerticalScrollRange()
@@ -1567,8 +1597,24 @@ local function buildChangelogOverlay()
     o.text = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     o.text:SetPoint("TOPLEFT"); o.text:SetWidth(660); o.text:SetJustifyH("LEFT"); o.text:SetJustifyV("TOP"); o.text:SetSpacing(3)
     o.content = content
+    -- changelog history link. Addons can't open URLs, so it's a read-only box: click to select, then
+    -- Ctrl+C to copy and paste into a browser.
+    local CHANGELOG_URL = "https://github.com/barondigital/GuildFoundMarket/tree/main/changelogs"
+    local histLabel = o:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    histLabel:SetPoint("BOTTOMLEFT", 26, 60); histLabel:SetText("Full changelog history (click, then Ctrl+C to copy):")
+    histLabel:SetTextColor(0.7, 0.7, 0.7)
+    local url = CreateFrame("EditBox", nil, o, "InputBoxTemplate")
+    url:SetPoint("BOTTOMLEFT", 26, 38); url:SetPoint("BOTTOMRIGHT", -26, 38); url:SetHeight(20)
+    url:SetAutoFocus(false); url:SetFontObject("GameFontHighlightSmall")
+    url:SetText(CHANGELOG_URL); url:SetCursorPosition(0)
+    url:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    url:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    url:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    url:SetScript("OnTextChanged", function(self, user)   -- keep it read-only
+        if user then self:SetText(CHANGELOG_URL); self:SetCursorPosition(0) end
+    end)
     local close = CreateFrame("Button", nil, o, "UIPanelButtonTemplate")
-    close:SetSize(260, 26); close:SetPoint("BOTTOM", 0, 18); close:SetText("Close and continue to the addon")
+    close:SetSize(260, 26); close:SetPoint("BOTTOM", 0, 8); close:SetText("Close and continue to the addon")
     close:SetScript("OnClick", function() o:Hide() end)
     return o
 end
@@ -3477,7 +3523,7 @@ local function buildOptionsPanel()
     local GROUPS = {
         { title = "General",             keys = { "minimapButton", "altClickSearch", "showPriceTooltip", "priceFormat", "auxSeed" } },
         { title = "Selling",             keys = { "trackDefault", "announceShopNote" } },
-        { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codReplyText", "codSentText" } },
+        { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codCreateLink", "codReplyText", "codSentText" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
         { title = "Updates",             keys = { "announceChangelog" } },
     }

@@ -182,8 +182,8 @@ ns.RequestCOD("Me", 100, 0, 2, 20000)
 check("selftest: order queued locally", ns.CODCount() == 1 and ns.CODList()[1].source == "request")
 check("selftest: nothing put on the wire", #wire == 0)
 check("selftest: nothing sent as a real self-whisper", #sentWhispers == 0)
-check("selftest: confirmation echoed to chat as a simulated whisper",
-    chatMessages[#chatMessages] and chatMessages[#chatMessages]:find("Got Item 100 x2 (40000c) for Me", 1, true) ~= nil)
+local function chatHas(sub) for _, m in ipairs(chatMessages) do if m:find(sub, 1, true) then return true end end end
+check("selftest: confirmation echoed to chat as a simulated whisper", chatHas("Got Item 100 x2 (40000c) for Me") == true)
 check("selftest: buyer feedback fired (OA dispatched locally)", feedback[#feedback] and feedback[#feedback].isError == false)
 ns.selfTest = false
 
@@ -277,6 +277,16 @@ ns.RequestCOD("Me", 100, 0, 0, 15000)
 check("selftest cancel: order removed locally", ns.CODCount() == 0)
 check("selftest cancel: nothing on the wire", #wire == 0)
 ns.selfTest = false
+
+-- clicking your OWN Cancel COD link (not in self-test): cancels the local order and confirms it,
+-- so the buyer sees the cancel came through even solo
+resetAll()
+ns.AddCODOrder("Me", 100, 0, 3, 15000, "request")
+ns.RequestCOD("Me", 100, 0, 0, 15000)
+check("self-cancel: order removed without self-test", ns.CODCount() == 0)
+check("self-cancel: nothing on the wire", #wire == 0)
+check("self-cancel: buyer sees a cancelled confirmation", feedback[#feedback]
+    and feedback[#feedback].isError == false and feedback[#feedback].msg:find("cancelled", 1, true) ~= nil)
 
 --========================================================================
 -- 13. Bag-synced cap: seller clamps to available stock and reports the free amount in CQR

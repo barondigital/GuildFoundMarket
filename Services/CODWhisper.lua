@@ -73,3 +73,30 @@ f:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
 f:SetScript("OnEvent", function(_, event, msg, author)
     ns.HandleCODWhisper(msg, author, event == "CHAT_MSG_WHISPER")
 end)
+
+-- Append a clickable [Create COD] link to an incoming whisper that links one of your listed items,
+-- so a buyer's "[Item] still in stock?" becomes a one-click COD (a qty popup follows). Returns the
+-- new text, or nil to leave the message unchanged. Only items you list at a real price qualify.
+function ns.AppendCreateCODLink(msg, author)
+    if not ns.GetSetting("codCreateLink") then return end
+    if type(msg) ~= "string" then return end
+    if msg:find("{{GFMCOD", 1, true) then return end          -- our own confirmation whisper
+    local id = tonumber(msg:match("|Hitem:(%d+)"))
+    if not id then return end
+    local suffix = (ns.Stock and ns.Stock.LinkSuffix and ns.Stock.LinkSuffix(msg)) or 0
+    local _, _, price = ns.OfferInfo(id, suffix)
+    if not price or price <= 0 then return end               -- not a listing you can COD
+    local buyer = Ambiguate(author or "", "short")
+    if buyer == "" then return end
+    local link = ns.CODMakeLink and ns.CODMakeLink(buyer, id, suffix)
+    if not link then return end
+    return msg .. "  " .. link
+end
+
+-- Chat filter: rewrite the shown whisper to carry the [Create COD] link (recipient's client only).
+if ChatFrame_AddMessageEventFilter then
+    ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", function(_, _, msg, author, ...)
+        local out = ns.AppendCreateCODLink(msg, author)
+        if out then return false, out, author, ... end
+    end)
+end

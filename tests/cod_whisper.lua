@@ -29,9 +29,10 @@ local fakeNow = 1000
 function time() return fakeNow end
 function CreateFrame() return { RegisterEvent = function() end, SetScript = function() end } end
 
-local settings = { codAccept = true, codWhisperCapture = true }
+local settings = { codAccept = true, codWhisperCapture = true, codCreateLink = true }
 local paused = false
 local captured = {}   -- { buyer, id, suffix, qty }
+local listed = { [100] = 15000 }   -- itemID -> listed price (0/absent = not listed)
 local ns = {
     Stock = { LinkSuffix = function(link)
         local str = link and link:match("item:[%-%d:]+"); if not str then return 0 end
@@ -40,6 +41,8 @@ local ns = {
     GetSetting = function(k) return settings[k] end,
     IsPaused = function() return paused end,
     CaptureCOD = function(buyer, id, suffix, qty) captured[#captured + 1] = { buyer = buyer, id = id, suffix = suffix, qty = qty } end,
+    OfferInfo = function(id) local p = listed[id]; if not p then return nil end; return 1, false, p end,
+    CODMakeLink = function(buyer, id, suffix) return ("[MKCOD:%s:%d:%d]"):format(buyer, id, suffix or 0) end,
 }
 assert(loadfile("Services/CODWhisper.lua"))("GuildFoundMarket", ns)
 
@@ -166,6 +169,31 @@ ns.HandleCODWhisper(link(8117), "Timed", true)   -- seeded at t=5000
 fakeNow = 5000 + 601                              -- just past the 600s window
 ns.HandleCODWhisper("cod 2", "Timed", true)
 check("expired context: no capture", #captured == 0)
+
+--========================================================================
+-- 3. AppendCreateCODLink: append [Create COD] to whispers linking a listed item
+--========================================================================
+local function itemLink(id, suffix) return ("|Hitem:%d:0:0:0:0:0:%d:0|h[Thing]|h"):format(id, suffix or 0) end
+
+-- a listed item link -> the message gets the make-COD link appended (for that buyer + item)
+local out = ns.AppendCreateCODLink(itemLink(100) .. " still in stock?", "Citra")
+check("create link: appended for a listed item", out ~= nil and out:find("[MKCOD:Citra:100:0]", 1, true) ~= nil)
+check("create link: original text kept", out and out:find("still in stock?", 1, true) ~= nil)
+
+-- an item you don't list -> nothing appended
+check("create link: unlisted item gets nothing", ns.AppendCreateCODLink(itemLink(999) .. " hi", "Citra") == nil)
+
+-- no item link -> nothing
+check("create link: no item link gets nothing", ns.AppendCreateCODLink("hey are you there", "Citra") == nil)
+
+-- option off -> nothing
+settings.codCreateLink = false
+check("create link: disabled gets nothing", ns.AppendCreateCODLink(itemLink(100) .. " ?", "Citra") == nil)
+settings.codCreateLink = true
+
+-- our own confirmation whisper (carries the marker) never gets a Create link
+check("create link: skips our confirmation marker",
+    ns.AppendCreateCODLink(itemLink(100) .. " {{GFMCOD:Me:100:0}}", "Citra") == nil)
 
 io.write(failures == 0 and "\nALL PASS\n" or ("\n" .. failures .. " FAILURE(S)\n"))
 os.exit(failures == 0 and 0 or 1)
