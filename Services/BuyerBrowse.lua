@@ -54,7 +54,7 @@ end
 
 -- WQ~qid~itemID~ver: someone is looking for buyers of an item. Answer every variant we want.
 ns.OnMessage("WQ", function(a, b, c, _, _, _, sender)
-    ns.NotePeerVersion(c)
+    ns.NotePeerVersion(c, sender)
     local itemID = tonumber(b)
     ns.ItemDB.Learn(itemID)
     if Ambiguate(sender, "short") == ns.playerName then return end   -- my own query: self-injected locally
@@ -147,7 +147,7 @@ end
 ns.OnMessage("W", function(a, b, c, _, _, _, sender)
     if Ambiguate(sender, "short") == ns.playerName then return end
     if ns.IsPaused() then return end
-    ns.NotePeerVersion(c)
+    ns.NotePeerVersion(c, sender)
     local filter = b
     if filter and filter ~= "" and not ns.playerName:lower():find(filter, 1, true) then return end
     local list = ns.WantList()

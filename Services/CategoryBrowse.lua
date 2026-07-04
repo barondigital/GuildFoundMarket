@@ -76,7 +76,7 @@ end
 ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     if Ambiguate(sender, "short") == ns.playerName then return end   -- own query: injected locally
     if ns.IsPaused() then return end
-    ns.NotePeerVersion(d)
+    ns.NotePeerVersion(d, sender)
     local classID, subID = tonumber(b), tonumber(c)
     if not classID or not subID then return end
     local slot = (e and e ~= "") and e or nil

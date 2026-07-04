@@ -89,6 +89,7 @@ function ns.AddCODOrder(buyer, itemID, suffix, qty, unit, source)
             unit > 0 and (" @ " .. GetCoinTextureString(unit)) or ""), false)
         ns.Log(("COD updated: %s %s x%d @ %s (%s)"):format(buyer, name, qty,
             unit > 0 and (unit .. "c") or "no price", source or "manual"))
+        if source == "request" and ns.NotifyCODOrder then ns.NotifyCODOrder(buyer, name, qty, true) end
         return true
     end
     local rec = {
@@ -103,6 +104,9 @@ function ns.AddCODOrder(buyer, itemID, suffix, qty, unit, source)
         unit > 0 and (" @ " .. GetCoinTextureString(unit)) or ""), false)
     ns.Log(("COD added: %s %s x%d @ %s (%s)"):format(buyer, name, qty,
         unit > 0 and (unit .. "c") or "no price", rec.source))
+    -- an incoming buyer request (not a manual add): flash it on screen + a chat line, so the seller
+    -- notices even with the GFM window closed
+    if source == "request" and ns.NotifyCODOrder then ns.NotifyCODOrder(buyer, name, qty, false) end
     return true
 end
 

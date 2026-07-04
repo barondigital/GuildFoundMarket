@@ -117,7 +117,7 @@ end
 ns.OnMessage("S", function(a, b, c, _, _, _, sender)
     if Ambiguate(sender, "short") == ns.playerName then return end   -- ignore my own broadcast
     if ns.IsPaused() then return end                                 -- paused: stay invisible
-    ns.NotePeerVersion(c)
+    ns.NotePeerVersion(c, sender)
     local filter = b
     if filter and filter ~= "" and not ns.playerName:lower():find(filter, 1, true) then return end
     local list = ns.OfferList()

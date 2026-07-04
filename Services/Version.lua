@@ -14,9 +14,14 @@ local function verNewer(a, b)   -- is version a strictly newer than b?
     end
     return false
 end
-local function notePeerVersion(v)
+ns.VerNewer = verNewer   -- exposed for the changelog service (only respond to peers genuinely behind us)
+
+-- `sender` (may be nil on older call sites) is remembered as latestVersionPeer so the changelog
+-- service can whisper the peer who actually runs the newest version to fetch its notes.
+local function notePeerVersion(v, sender)
     if not v or v == "" or not verNewer(v, ns.latestVersion) then return end
     ns.latestVersion = v
+    ns.latestVersionPeer = sender and Ambiguate(sender, "short") or nil
     if verNewer(v, ns.version) then
         ns.updateAvailable = v
         if not ns._updateNotified then
@@ -24,6 +29,8 @@ local function notePeerVersion(v)
             ns.Feedback(("A newer version (%s) of Guild Found Market is out (you have %s). Please update."):format(v, ns.version), true)
         end
         if ns.UpdateVersionDisplay then ns.UpdateVersionDisplay() end
+        -- ask that peer for the newest changelog so out-of-date clients can show it (opt-in on their side)
+        if ns.RequestChangelog and ns.latestVersionPeer then ns.RequestChangelog(ns.latestVersionPeer, v) end
     end
 end
 ns.NotePeerVersion = notePeerVersion

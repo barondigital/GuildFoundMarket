@@ -95,7 +95,7 @@ ns.SettingsSchema = {
         tip = "Let other GFM users request a Cash On Delivery straight from one of your listings (Alt-click a row in your shop, the Buy results, or the category Browse).\n\n"
             .. "When on, an incoming request is added to your COD list (My Items > COD) and the buyer gets the automatic confirmation whisper below. "
             .. "Requests for items you don't currently list, or made while your listings are offline, are declined automatically.",
-        default = false,
+        default = true,
     },
     {
         key = "codReplyText",
@@ -105,6 +105,13 @@ ns.SettingsSchema = {
             .. "Tokens filled in for you: |cffffffff%item|r, |cffffffff%qty|r, |cffffffff%unit|r, |cffffffff%total|r, |cffffffff%buyer|r.",
         default = "Got your COD for %item x%qty @ %unit (%total). I'll mail it next time I'm at a mailbox, thanks %buyer!",
         maxLetters = 200,
+    },
+    {
+        key = "announceChangelog",
+        label = "Share changelog with out-of-date players",
+        tip = "When you're on the newest version, answer other GFM users who are behind with this build's changelog, so they see what's new in an overlay.\n\n"
+            .. "Only shares when you're actually up to date, and only your own bundled notes. Turn off to never send your changelog.",
+        default = true,
     },
     {
         key = "hideShopGuild",

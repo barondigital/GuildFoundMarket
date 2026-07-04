@@ -17,6 +17,7 @@ Services\Transport.lua
 Services\Protocol.lua
 Services\Guild.lua
 Services\Version.lua
+Services\Changelog.lua
 Services\Stock.lua
 Services\Offers.lua
 Services\Wants.lua

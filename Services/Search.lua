@@ -61,7 +61,7 @@ end
 
 -- Q~qid~itemID~ver: someone searched an item. Answer every variant we list for it.
 ns.OnMessage("Q", function(a, b, c, _, _, _, sender)
-    ns.NotePeerVersion(c)
+    ns.NotePeerVersion(c, sender)
     local itemID = tonumber(b)
     ns.ItemDB.Learn(itemID)                                       -- learn the searched item (vocabulary)
     if Ambiguate(sender, "short") == ns.playerName then return end   -- my own query: own offers are injected locally

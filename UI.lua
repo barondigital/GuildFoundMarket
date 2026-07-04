@@ -348,6 +348,15 @@ function ns.Feedback(msg, isError)
     end
 end
 
+-- A COD order just arrived from a buyer: a brief flash top-center plus a chat line, so the seller
+-- notices even with the GFM window closed. Feedback only reaches the window's status line; this is
+-- the always-visible version. Fired by ns.AddCODOrder for request-sourced orders only.
+function ns.NotifyCODOrder(buyer, name, qty, updated)
+    local msg = ("%s COD order from %s: %s x%d"):format(updated and "Updated" or "New", buyer or "?", name or "?", qty or 1)
+    if UIErrorsFrame and UIErrorsFrame.AddMessage then UIErrorsFrame:AddMessage(msg, 0.2, 1, 0.5) end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff96GFM|r " .. msg) end
+end
+
 --========================================================================
 -- minimap button
 --========================================================================
@@ -1515,6 +1524,79 @@ function ns.UpdateVersionDisplay()
     end
 end
 
+-- "What's new" overlay: shown over the main window every time it opens while you're behind and a
+-- peer has shared the newer version's changelog (Services/Changelog.lua). A clear button at the
+-- bottom dismisses it so you can carry on into the addon.
+local changelogOverlay
+local function buildChangelogOverlay()
+    local o = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    o:SetAllPoints(main); o:SetFrameStrata("DIALOG")
+    o:EnableMouse(true); o:EnableMouseWheel(true)   -- swallow clicks/scroll so the addon behind stays put
+    -- FULLY opaque fill: the dialog bgFile is semi-transparent, so the addon's text would bleed
+    -- through and be unreadable. A solid colour texture covers everything behind; the backdrop is
+    -- kept for its border only (no bgFile).
+    o:SetBackdrop({ edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 } })
+    local fill = o:CreateTexture(nil, "BACKGROUND")
+    fill:SetPoint("TOPLEFT", 5, -5); fill:SetPoint("BOTTOMRIGHT", -5, 5)
+    fill:SetColorTexture(0.05, 0.05, 0.06, 1)   -- alpha 1: nothing shows through
+    o.title = o:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); o.title:SetPoint("TOP", 0, -18)
+    o.sub = o:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); o.sub:SetPoint("TOP", o.title, "BOTTOM", 0, -4)
+    o.sub:SetText("Update on CurseForge to get it. Your version keeps working meanwhile.")
+    o.sub:SetTextColor(0.7, 0.7, 0.7)
+    local scroll = CreateFrame("ScrollFrame", nil, o, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 22, -60); scroll:SetPoint("BOTTOMRIGHT", -36, 58)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxs = self:GetVerticalScrollRange()
+        self:SetVerticalScroll(math.min(maxs, math.max(0, self:GetVerticalScroll() - delta * 28)))
+    end)
+    local content = CreateFrame("Frame", nil, scroll); content:SetSize(1, 1); scroll:SetScrollChild(content)
+    o.text = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    o.text:SetPoint("TOPLEFT"); o.text:SetWidth(660); o.text:SetJustifyH("LEFT"); o.text:SetJustifyV("TOP"); o.text:SetSpacing(3)
+    o.content = content
+    local close = CreateFrame("Button", nil, o, "UIPanelButtonTemplate")
+    close:SetSize(260, 26); close:SetPoint("BOTTOM", 0, 18); close:SetText("Close and continue to the addon")
+    close:SetScript("OnClick", function() o:Hide() end)
+    return o
+end
+
+-- Show the overlay. With no args it uses the fetched newer changelog (the out-of-date case); pass
+-- (version, text) to show any notes, e.g. /gfm changelog showing this build's own bundled notes.
+-- The wording adapts: an available update nudges you to CurseForge; your own version reads "what's new".
+function ns.ShowChangelogOverlay(version, text)
+    version = version or (ns.newerChangelog and ns.newerChangelog.version)
+    text = text or (ns.newerChangelog and ns.newerChangelog.text)
+    if not (main and version and text) then return end
+    changelogOverlay = changelogOverlay or buildChangelogOverlay()
+    local o = changelogOverlay
+    local isUpdate = (version ~= ns.version)
+    o.title:SetText(isUpdate and ("Guild Found Market %s is available"):format(version)
+        or ("Guild Found Market %s - what's new"):format(version))
+    o.sub:SetText(isUpdate and "Update on CurseForge to get it. Your version keeps working meanwhile."
+        or "You're up to date.")
+    o.text:SetText(text)
+    o.content:SetHeight((o.text:GetStringHeight() or 0) + 12)
+    o:Show()
+end
+
+-- /gfm changelog: open the window and show the notes overlay on demand. Shows the fetched newer
+-- version's notes if you're behind, otherwise this build's own bundled notes.
+function ns.ShowChangelog()
+    if not (main and main:IsShown()) then ns.ToggleUI() end   -- ToggleUI creates + shows the window if needed
+    if ns.newerChangelog then ns.ShowChangelogOverlay()
+    else ns.ShowChangelogOverlay(ns.version, ns.CHANGELOG) end
+end
+
+-- Show it when relevant: window open, and we hold the notes for the version we're behind on
+-- (ns.ShouldShowChangelog, in Services/Changelog.lua).
+local function maybeShowChangelog()
+    if main and main:IsShown() and ns.ShouldShowChangelog and ns.ShouldShowChangelog() then
+        ns.ShowChangelogOverlay()
+    end
+end
+ns.OnChangelogReady = maybeShowChangelog   -- the changelog service calls this when a fetch completes
+
 --========================================================================
 -- build the window
 --========================================================================
@@ -1537,6 +1619,7 @@ local function buildWindow()
     title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
     main:HookScript("OnHide", hideCODQtyPopup)   -- don't leave a COD qty picker floating after the window closes
+    main:HookScript("OnShow", maybeShowChangelog)   -- surface a newer version's changelog each time you open GFM
     -- debug-log toggle (opens the copyable sidebar; available to everyone for bug
     -- reports). Lives on the Help tab, top right, shown only there.
     local debugBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")

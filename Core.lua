@@ -285,7 +285,9 @@ SlashCmdList.GFMARKET = function(msg)
         return
     end
     msg = (msg or ""):lower():gsub("%s+", "")
-    if msg == "dev" then
+    if msg == "changelog" then
+        if ns.ShowChangelog then ns.ShowChangelog() end   -- what's new / update overlay, on demand
+    elseif msg == "dev" then
         ns.dev = not ns.dev
         ns.selfTest = ns.dev   -- dev implies self-test; toggle both at once (use "selftest" to peel it back off)
         print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off") .. " (self-test " .. (ns.selfTest and "ON" or "off") .. ")")
@@ -359,6 +361,14 @@ SlashCmdList.GFMARKET = function(msg)
         -- cancel-specific timeout message land after ns.QUERY_SETTLE seconds. (Hearthstone = 6948.)
         devEcho("codtimeout: sending a cancel to an unanswering seller; watch for the timeout in ~" .. (ns.QUERY_SETTLE or 5) .. "s")
         ns.RequestCOD("Gfmnobodyxyz", 6948, 0, 0, 0)
+    elseif ns.dev and msg == "changelogtest" then
+        -- preview the "newer version" overlay solo: fake being behind a v99.0.0 peer that shared this
+        -- build's own notes. Shows now (if GFM is open) and on every open until you /reload.
+        ns.updateAvailable = "99.0.0"
+        ns.newerChangelog = { version = "99.0.0", text = ns.CHANGELOG or "(no changelog bundled)" }
+        if ns.UpdateVersionDisplay then ns.UpdateVersionDisplay() end
+        if ns.ShowChangelogOverlay then ns.ShowChangelogOverlay() end
+        devEcho("changelogtest: faked a newer version (99.0.0) with this build's notes; the overlay shows on every GFM open until /reload")
     elseif ns.dev and msg == "fakesellers" then
         wipe(ns.sellers.results)
         -- Aldorin: note pre-cached (hover shows it at once). Bigbags: flag only, so the bubble
