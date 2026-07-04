@@ -183,8 +183,9 @@ local function coin(c) return (ns.CoinText and ns.CoinText(c)) or ((c or 0) .. "
 
 -- Fill the configurable confirmation whisper's tokens. Returns "" when the template is empty
 -- (meaning: send no whisper). Coins are plaintext (texture strings don't render in a whisper).
-function ns.CODReplyText(buyer, itemID, qty, unit)
-    local tmpl = ns.GetSetting("codReplyText") or ""
+-- Fill %item/%qty/%unit/%total/%buyer in a template. Empty template -> "" (meaning: send nothing).
+local function fillCODTokens(tmpl, buyer, itemID, qty, unit)
+    tmpl = tmpl or ""
     if tmpl == "" then return "" end
     local name = GetItemInfo(itemID) or ("item:" .. tostring(itemID))
     local repl = {
@@ -192,6 +193,16 @@ function ns.CODReplyText(buyer, itemID, qty, unit)
         unit = coin(unit), total = coin((unit or 0) * (qty or 1)), buyer = buyer or "",
     }
     return (tmpl:gsub("%%(%a+)", function(tok) return repl[tok] or ("%" .. tok) end))
+end
+
+-- The confirmation whisper sent when a request is accepted.
+function ns.CODReplyText(buyer, itemID, qty, unit)
+    return fillCODTokens(ns.GetSetting("codReplyText"), buyer, itemID, qty, unit)
+end
+
+-- The whisper sent to the buyer when the seller marks an order Done (mailed).
+function ns.CODSentText(buyer, itemID, qty, unit)
+    return fillCODTokens(ns.GetSetting("codSentText"), buyer, itemID, qty, unit)
 end
 
 -- Pending buyer-side requests, so a reply can be matched and a silent seller times out.
@@ -240,6 +251,29 @@ local function sellerDecideCOD(buyer, itemID, suffix, qty, buyerUnit)
     end
     if not ns.AddCODOrder(buyer, itemID, suffix, qty, unit, "request") then return "no", "stock" end
     return "ok", nil, unit, qty
+end
+
+-- Whisper-captured COD: a buyer typed "cod N" about an item (resolved from the whisper or the
+-- conversation, see Services/CODWhisper.lua). Gate + queue exactly like a protocol request, at the
+-- seller's own listed price, then send the confirmation whisper. Only items you currently list with
+-- a real price are captured; "all" resolves to your listed quantity. A negotiated price is left to
+-- the seller to adjust on the (editable) COD row.
+function ns.CaptureCOD(buyer, itemID, suffix, qty)
+    if not (buyer and itemID) then return end
+    suffix = suffix or 0
+    local stock, _, listedPrice = ns.OfferInfo(itemID, suffix)
+    if not listedPrice or listedPrice <= 0 then return end   -- not listed, or bid-only: don't auto-capture
+    if qty == "all" then qty = stock or 1 end
+    qty = math.max(1, tonumber(qty) or 1)
+    local status, _, unit, acceptedQty = sellerDecideCOD(buyer, itemID, suffix, qty, listedPrice)
+    if status ~= "ok" then return end
+    local text = ns.CODReplyText(buyer, itemID, acceptedQty, unit)
+    if text ~= "" then
+        local marker = ns.CODCancelMarker and (" " .. ns.CODCancelMarker(itemID, suffix)) or ""
+        SendChatMessage(text .. marker, "WHISPER", nil, buyer)
+    end
+    ns.Log(("COD captured from whisper: %s %s x%d"):format(buyer, GetItemInfo(itemID) or ("item:" .. itemID), acceptedQty))
+    return true
 end
 
 -- Self-test: exercise the whole round trip against your own shop with no wire traffic. You can't

@@ -491,8 +491,8 @@ local function resetRow(r)
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
-    r.x:Hide(); r.x:SetScript("OnClick", nil)
-    r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit")   -- COD rows relabel it "Done"; reset so a reused row never keeps that
+    r.x:Hide(); r.x:SetScript("OnClick", nil); r.x.tip = nil
+    r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit"); r.edit.tip = nil   -- COD rows relabel it "Done"; reset so a reused row never keeps that
     r.codEdit:Hide(); r.codEdit:SetScript("OnClick", nil)
     r.codSend:Hide(); r.codSend:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
@@ -679,7 +679,19 @@ local function formatCODRow(r, d)
     r.c4:SetText(d.buyer or ""); r.c4:Show()
     r.codSend:Show(); r.codSend:SetScript("OnClick", function() if ns.CODSendAssist then ns.CODSendAssist(rec) end end)
     r.codEdit:Show(); r.codEdit:SetScript("OnClick", function() if ns.LoadCODForEdit then ns.LoadCODForEdit(rec) end end)
-    r.edit:Show(); r.edit:SetText("Done"); r.edit:SetScript("OnClick", function() ns.RemoveCODOrder(rec, "done") end)
+    -- Done = "I mailed it": whisper the buyer that it's on its way, then clear the row.
+    r.edit:Show(); r.edit:SetText("Done")
+    r.edit:SetScript("OnClick", function()
+        if rec.buyer and rec.buyer ~= "" and ns.CODSentText then
+            local text = ns.CODSentText(rec.buyer, rec.itemID, rec.qty, rec.unit)
+            if text ~= "" then SendChatMessage(text, "WHISPER", nil, rec.buyer) end
+        end
+        ns.RemoveCODOrder(rec, "done")
+    end)
+    r.edit.tip = "Mark mailed: whisper the buyer and clear the order"
+    -- X = drop the order without mailing (no whisper).
+    r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveCODOrder(rec, "cancel") end)
+    r.x.tip = "Remove this COD (not mailed, no whisper)"
     r.itemID = d.id
 end
 
@@ -1929,6 +1941,14 @@ local function buildRows()
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
+        -- optional hover tip on the X / Done buttons (set per row via .tip, e.g. COD rows explain the difference)
+        for _, b in ipairs({ r.x, r.edit }) do
+            b:SetScript("OnEnter", function(self)
+                if not self.tip then return end
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(self.tip, 1, 1, 1, true); GameTooltip:Show()
+            end)
+            b:SetScript("OnLeave", GameTooltip_Hide)
+        end
         -- COD rows only: an Edit button left of the Done button that loads the row back into the
         -- add form. Shares findBtn's slot (never shown on the same row, so no overlap).
         r.codEdit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codEdit:SetSize(40, 20); r.codEdit:SetPoint("RIGHT", r.edit, "LEFT", -2, 0); r.codEdit:SetText("Edit"); r.codEdit:Hide()
@@ -2008,6 +2028,17 @@ local function buildStatusVersion()
     local versionFS = main:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     versionFS:SetPoint("TOPRIGHT", -44, -16); versionFS:SetJustifyH("RIGHT")
     main.versionFS = versionFS
+    -- clickable: opens the changelog overlay (a newer version's notes if you're behind and have
+    -- received them, otherwise this build's own notes to re-read)
+    local verBtn = CreateFrame("Button", nil, main)
+    verBtn:SetPoint("TOPRIGHT", versionFS, "TOPRIGHT", 2, 2); verBtn:SetPoint("BOTTOMLEFT", versionFS, "BOTTOMLEFT", -2, -2)
+    verBtn:SetScript("OnClick", function() if ns.ShowChangelog then ns.ShowChangelog() end end)
+    verBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+        GameTooltip:SetText(ns.updateAvailable and "Click to see what's new in the update" or "Click to view the changelog", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    verBtn:SetScript("OnLeave", GameTooltip_Hide)
     ns.UpdateVersionDisplay()
 end
 
@@ -3446,7 +3477,7 @@ local function buildOptionsPanel()
     local GROUPS = {
         { title = "General",             keys = { "minimapButton", "altClickSearch", "showPriceTooltip", "priceFormat", "auxSeed" } },
         { title = "Selling",             keys = { "trackDefault", "announceShopNote" } },
-        { title = "Cash On Delivery",    keys = { "codAccept", "codReplyText" } },
+        { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codReplyText", "codSentText" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
         { title = "Updates",             keys = { "announceChangelog" } },
     }

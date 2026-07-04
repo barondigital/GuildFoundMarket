@@ -16,13 +16,12 @@ local ADDON, ns = ...
 -- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.17.1
-See what's new, and never miss a COD order
+ns.CHANGELOG = [[Guild Found Market 0.17.3
+Just whisper "cod"
 
-- Update notes reach you even before you update: a peer running the newer version shares its changelog and you see it in an overlay. Share yours with the new "Share changelog with out-of-date players" option (on by default). Type /gfm changelog to read the notes any time.
-- An incoming COD order now flashes on screen and prints a chat line, so you notice it even with the GFM window closed.
-- "Accept COD order requests" is now on by default.
-- The Options tab is reorganised into groups (General, Selling, Cash On Delivery, Shop link visibility, Updates) with a scrollbar.]]
+- A COD order is captured straight from a plain whisper. When a buyer whispers you "cod", "cod me 3", "cod 20", or "[Item] cod 5" about one of your listings, it's added to your COD list automatically at your listed price. The item is read from a link in the whisper, or from the last item linked in your conversation, so a "cod 5 then" after some haggling still works. No more Alt-click needed. Toggle it with "Capture COD from whispers" (on by default).
+- Marking an order Done now whispers the buyer that it's mailed (configurable, "COD mailed whisper"), and each COD row has an X to drop an order without mailing.
+- Click the version text (top right) any time to read the changelog: the newer version's notes if you're behind, or your own build's notes.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

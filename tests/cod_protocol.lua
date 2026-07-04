@@ -194,6 +194,10 @@ check("tokens: filled", ns.CODReplyText("Bob", 100, 2, 3000) == "Got Item 100 x2
 settings.codReplyText = ""
 check("empty template: returns empty (no whisper)", ns.CODReplyText("Bob", 100, 2, 3000) == "")
 settings.codReplyText = "Got %item x%qty (%total) for %buyer"
+settings.codSentText = "Mailed %item x%qty (%total) to %buyer"
+check("sent tokens: filled", ns.CODSentText("Bob", 100, 2, 3000) == "Mailed Item 100 x2 (6000c) to Bob")
+settings.codSentText = ""
+check("sent empty template: no whisper", ns.CODSentText("Bob", 100, 2, 3000) == "")
 
 --========================================================================
 -- 11. Outstanding-qty query (CQ/CQR): buyer asks, seller answers from its own list
@@ -314,6 +318,32 @@ resetAll()
 listings = { { id = 100, suffix = 0, qty = 5, price = 15000, track = false } }
 ns.DispatchMessage("CO~100~0~50~0", "Bulk")
 check("no cap on manual listing: qty honored", ns.CODCount() == 1 and ns.CODList()[1].qty == 50)
+
+--========================================================================
+-- 14. CaptureCOD (whisper capture): listed price is used, gates on listing / bid-only
+--========================================================================
+resetAll()
+settings.codAccept, paused = true, false
+listings = { { id = 100, suffix = 0, qty = 8, price = 20000 } }
+ns.CaptureCOD("Whisperer", 100, 0, 3)
+check("capture: order queued at the listed price", ns.CODCount() == 1
+    and ns.CODList()[1].qty == 3 and ns.CODList()[1].unit == 20000 and ns.CODList()[1].buyer == "Whisperer")
+check("capture: confirmation whisper sent", sentWhispers[#sentWhispers] and sentWhispers[#sentWhispers].to == "Whisperer")
+
+resetAll()
+listings = { { id = 100, suffix = 0, qty = 8, price = 20000 } }
+ns.CaptureCOD("Whisperer", 100, 0, "all")
+check("capture: 'all' becomes the listed quantity", ns.CODCount() == 1 and ns.CODList()[1].qty == 8)
+
+resetAll()
+listings = {}
+ns.CaptureCOD("Whisperer", 100, 0, 3)
+check("capture: an unlisted item is ignored", ns.CODCount() == 0)
+
+resetAll()
+listings = { { id = 100, suffix = 0, qty = 8, price = 0 } }
+ns.CaptureCOD("Whisperer", 100, 0, 3)
+check("capture: a bid-only listing is not auto-captured", ns.CODCount() == 0)
 
 io.write(failures == 0 and "\nALL PASS\n" or ("\n" .. failures .. " FAILURE(S)\n"))
 os.exit(failures == 0 and 0 or 1)

@@ -107,6 +107,22 @@ ns.SettingsSchema = {
         maxLetters = 200,
     },
     {
+        key = "codSentText",
+        type = "text",
+        label = "COD mailed whisper",
+        tip = "The whisper sent to the buyer when you mark a COD order Done (mailed). Leave empty to send no whisper.\n\n"
+            .. "Tokens filled in for you: |cffffffff%item|r, |cffffffff%qty|r, |cffffffff%unit|r, |cffffffff%total|r, |cffffffff%buyer|r.",
+        default = "Mailed your COD: %item x%qty (%total). It's on its way, thanks %buyer!",
+        maxLetters = 200,
+    },
+    {
+        key = "codWhisperCapture",
+        label = "Capture COD from whispers",
+        tip = "When a buyer whispers you \"cod\", \"cod me 3\", \"cod 20\", etc. about one of your listings, add it to your COD list automatically at your listed price.\n\n"
+            .. "The item is taken from a link in the whisper, or from the last item linked in your conversation. Only items you currently list are captured; adjust a negotiated price on the COD row. Requires \"Accept COD order requests\".",
+        default = true,
+    },
+    {
         key = "announceChangelog",
         label = "Share changelog with out-of-date players",
         tip = "When you're on the newest version, answer other GFM users who are behind with this build's changelog, so they see what's new in an overlay.\n\n"

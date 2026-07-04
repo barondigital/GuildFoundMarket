@@ -361,6 +361,18 @@ SlashCmdList.GFMARKET = function(msg)
         -- cancel-specific timeout message land after ns.QUERY_SETTLE seconds. (Hearthstone = 6948.)
         devEcho("codtimeout: sending a cancel to an unanswering seller; watch for the timeout in ~" .. (ns.QUERY_SETTLE or 5) .. "s")
         ns.RequestCOD("Gfmnobodyxyz", 6948, 0, 0, 0)
+    elseif ns.dev and msg == "codwhispertest" then
+        -- simulate a buyer whispering a COD about your first listing (you can't whisper yourself), so
+        -- you can watch the capture + on-screen flash + confirmation whisper solo. The order lands for
+        -- "Testbuyer"; the confirmation whisper to that fake name errors in chat but the rest happens.
+        local it = ns.OfferList()[1]
+        if not it then
+            devEcho("codwhispertest: list an item first, then run this again")
+        else
+            local link = ("|Hitem:%d:0:0:0:0:0:%d:0|h[test]|h"):format(it.id, it.suffix or 0)
+            devEcho("codwhispertest: simulating Testbuyer whispering \"" .. link .. " cod 2\"")
+            ns.HandleCODWhisper(link .. " cod 2", "Testbuyer", true)
+        end
     elseif ns.dev and msg == "changelogtest" then
         -- preview the "newer version" overlay solo: fake being behind a v99.0.0 peer that shared this
         -- build's own notes. Shows now (if GFM is open) and on every open until you /reload.

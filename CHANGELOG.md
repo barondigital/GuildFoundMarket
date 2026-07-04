@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.17.3
+
+- **Just whisper "cod".** A COD order is now captured straight from a plain whisper, so buyers don't
+  need the Alt-click affordance. When someone whispers you `cod`, `cod me 3`, `cod 20`, or
+  `[Item] cod 5` about one of your listings, it's added to your COD list automatically at your listed
+  price. The item is taken from a link in the whisper, or from the last item linked in your
+  conversation, so even a `cod 5 then` after some haggling resolves to the right item. Coin amounts
+  (`80s`, `1g`) aren't mistaken for a quantity, and only items you currently list are captured. Turn
+  it off with "Capture COD from whispers" in Options (on by default). A negotiated price is a
+  one-click edit on the COD row.
+- **Done tells the buyer, and X drops an order.** Marking a COD order Done now whispers the buyer
+  that it's on its way (configurable as "COD mailed whisper"), and each COD row has an X to remove an
+  order without mailing it (no whisper).
+- **Click the version to read the changelog.** The version text in the top right is now clickable: it
+  shows the newer version's notes if you're behind and have received them, or your own build's notes
+  to re-read.
+
 ## 0.17.1
 
 - **See what's new, even before you update.** When a GFM user near you runs a newer version, your
