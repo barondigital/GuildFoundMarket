@@ -37,6 +37,26 @@ function ns.GuildOf(name)
     return ns.guilds[name]
 end
 
+-- Guild-roster names starting with `prefix` (case-insensitive), short form and sorted, for
+-- name autocomplete. Capped at `max` (default 10). Empty prefix or no guild returns {}. The
+-- caller should have asked the client to refresh the roster (GuildRoster) on focus so this reads
+-- fresh data.
+function ns.GuildNameMatches(prefix, max)
+    local out = {}
+    if not IsInGuild() or not prefix or prefix == "" then return out end
+    prefix, max = prefix:lower(), max or 10
+    for i = 1, (GetNumGuildMembers() or 0) do
+        local full = GetGuildRosterInfo(i)
+        local name = full and Ambiguate(full, "short")
+        if name and name:lower():find(prefix, 1, true) == 1 then
+            out[#out + 1] = name
+            if #out >= max then break end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
 -- A player's name for a tooltip title: "Name" or, when the guild is known, "Name <Guild>"
 -- with the guild in a quiet blue so it reads apart from the name.
 function ns.PlayerTitle(name)

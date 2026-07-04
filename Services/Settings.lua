@@ -90,6 +90,23 @@ ns.SettingsSchema = {
         default = false,
     },
     {
+        key = "codAccept",
+        label = "Accept COD order requests",
+        tip = "Let other GFM users request a Cash On Delivery straight from one of your listings (Alt-click a row in your shop, the Buy results, or the category Browse).\n\n"
+            .. "When on, an incoming request is added to your COD list (My Items > COD) and the buyer gets the automatic confirmation whisper below. "
+            .. "Requests for items you don't currently list, or made while your listings are offline, are declined automatically.",
+        default = false,
+    },
+    {
+        key = "codReplyText",
+        type = "text",
+        label = "COD confirmation whisper",
+        tip = "The whisper sent back automatically when you accept a COD request. Leave empty to send no whisper (the order is still added to your list).\n\n"
+            .. "Tokens filled in for you: |cffffffff%item|r, |cffffffff%qty|r, |cffffffff%unit|r, |cffffffff%total|r, |cffffffff%buyer|r.",
+        default = "Got your COD for %item x%qty @ %unit (%total). I'll mail it next time I'm at a mailbox, thanks %buyer!",
+        maxLetters = 200,
+    },
+    {
         key = "hideShopGuild",
         label = "Hide shop links in guild chat",
         tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",
@@ -138,7 +155,7 @@ end
 -- re-apply is possible; reactors must therefore be idempotent.
 function ns.SetSetting(key, value)
     local s = byKey[key]
-    if not (s and s.type == "choice") then value = value and true or false end   -- booleans stay boolean
+    if not (s and (s.type == "choice" or s.type == "text")) then value = value and true or false end   -- only booleans get coerced
     store()[key] = value
     ns.Emit("setting:" .. key, value)
     ns.Emit("setting", key, value)

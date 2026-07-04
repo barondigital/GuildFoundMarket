@@ -186,6 +186,7 @@ local function coinShort(c)
     if cp > 0 then out = out .. cp .. "c" end
     return out == "" and "0c" or out
 end
+ns.CoinText = coinShort   -- plaintext coins for outgoing whispers (texture strings don't render there)
 
 -- Open a whisper to `name`, pre-filled with the item link + price and a trailing
 -- space so the buyer can append a question: "/w Name [Item]@1g2s45c "
@@ -193,6 +194,103 @@ local function whisperItem(name, itemID, suffix, price)
     local link = (itemID and vLink(itemID, suffix)) or ("[" .. itemName(itemID) .. "]")
     local body = (price and price > 0) and (link .. "@" .. coinShort(price) .. " ") or (link .. " ")
     ChatFrame_OpenChat("/w " .. name .. " " .. body)
+end
+
+-- Alt-click on a listing requests a COD over the addon protocol. The request is silent by design:
+-- the seller's own client queues the order and sends back their configured confirmation whisper
+-- (codReplyText), so the buyer's readable feedback comes from the seller, not from us.
+--
+-- Before the qty picker is shown, we ask the seller how many of this item they already have on
+-- order for us (QueryCOD): the seller's list is authoritative and can't be mirrored to the buyer,
+-- so we read it live rather than persist a buyer-side copy that would drift. The popup then
+-- prefills that amount so a re-request edits the existing order instead of guessing.
+--
+-- A custom frame (not StaticPopup) holds the picker: StaticPopup bridges into secure code and,
+-- once shown from addon code, taints SendChatMessage on the channel-scan path.
+local codQtyPopup
+local codQtyGen = 0   -- bumped on each open/hide so a slow query reply can't pop onto a stale view
+
+local function hideCODQtyPopup()
+    codQtyGen = codQtyGen + 1
+    if codQtyPopup then codQtyPopup:Hide() end
+end
+
+-- maxQty (from the seller's CQR cap) is the most the buyer may request: only set for a bag-synced
+-- listing, where the seller reports real free stock. nil = uncapped (manual listing / seller offline).
+local function showCODQtyPopup(seller, itemID, suffix, price, outstanding, cx, cy, maxQty)
+    local f = codQtyPopup
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        f:SetSize(260, 86); f:SetFrameStrata("DIALOG"); f:EnableMouse(true)
+        f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 } })
+        f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetPoint("TOPRIGHT", -12, -10); f.title:SetJustifyH("LEFT")
+        f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        f.hint:SetPoint("TOPLEFT", 12, -28); f.hint:SetPoint("TOPRIGHT", -12, -28); f.hint:SetJustifyH("LEFT")
+        local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+        eb:SetSize(48, 20); eb:SetPoint("BOTTOMLEFT", 16, 12); eb:SetNumeric(true); eb:SetMaxLetters(5)
+        f.eb = eb
+        -- snap back to the cap when the buyer types more than the seller has to give
+        eb:SetScript("OnTextChanged", function(self, user)
+            if not user or not f.maxQty then return end
+            local v = tonumber(self:GetText())
+            if v and v > f.maxQty then self:SetText(tostring(f.maxQty)); self:SetCursorPosition(5) end
+        end)
+        local ok = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        ok:SetSize(88, 22); ok:SetPoint("BOTTOMRIGHT", -12, 10)
+        f.ok = ok
+        local function submit()
+            -- blank or 0 is a cancel (RequestCOD turns qty 0 into "drop my order"); any other value
+            -- is the requested amount. Don't clamp to 1 here, or cancel could never be expressed.
+            local qty = tonumber(eb:GetText()) or 0
+            if f.maxQty and qty > f.maxQty then qty = f.maxQty end
+            f:Hide()
+            ns.RequestCOD(f.seller, f.itemID, f.suffix, qty, f.price)
+        end
+        ok:SetScript("OnClick", submit)
+        eb:SetScript("OnEnterPressed", submit)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        codQtyPopup = f
+    end
+    -- a bag-synced seller with nothing left to give and no order of yours to edit: nothing to do
+    if maxQty == 0 and (outstanding or 0) == 0 then
+        ns.Feedback(("%s has none of that free for a COD right now."):format(seller), true)
+        return
+    end
+    f.seller, f.itemID, f.suffix, f.price, f.maxQty = seller, itemID, suffix or 0, price, maxQty
+    f.title:SetText(("COD %s"):format(itemName(itemID) or "item"))
+    local cap = maxQty and (" |cff888888(max %d)|r"):format(maxQty) or ""
+    local prefill = 1
+    if outstanding == nil then
+        f.hint:SetText("|cffaaaaaaCouldn't reach the seller; requesting a new order.|r")
+        f.ok:SetText("Request")
+    elseif outstanding > 0 then
+        prefill = outstanding
+        f.hint:SetText(("|cffffd100You have %d on order — change to update, 0 to cancel.|r%s"):format(outstanding, cap))
+        f.ok:SetText("Update")
+    else
+        f.hint:SetText("How many would you like?" .. cap)
+        f.ok:SetText("Request")
+    end
+    if maxQty and prefill > maxQty then prefill = maxQty end   -- keep the prefill within the cap too
+    f:ClearAllPoints()
+    local scale = UIParent:GetEffectiveScale()
+    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (cx or 0) / scale + 8, (cy or 0) / scale - 8)
+    f:Show()
+    f.eb:SetText(tostring(prefill)); f.eb:HighlightText(); f.eb:SetFocus()
+end
+
+local function promptCODQty(seller, itemID, suffix, price)
+    if not (seller and itemID) then return end
+    codQtyGen = codQtyGen + 1
+    local g = codQtyGen
+    local cx, cy = GetCursorPosition()   -- capture now; the query reply lands a moment later
+    ns.QueryCOD(seller, itemID, suffix, function(outstanding, cap)
+        if g ~= codQtyGen then return end   -- the buyer switched view before the seller answered
+        showCODQtyPopup(seller, itemID, suffix, price, outstanding, cx, cy, cap)
+    end)
 end
 
 -- pick an item into the search box and fire a search (used by autocomplete + shift-click)
@@ -338,7 +436,8 @@ local function resetRow(r)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
     r.x:Hide(); r.x:SetScript("OnClick", nil)
-    r.edit:Hide(); r.edit:SetScript("OnClick", nil)
+    r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit")   -- COD rows relabel it "Done"; reset so a reused row never keeps that
+    r.codEdit:Hide(); r.codEdit:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
@@ -388,9 +487,10 @@ local function formatBuyRow(r, d)
         end)
     else
         r.c1.fs:SetText(d.seller .. tag)
-        r.c1.tip = "Click for items · right-click to whisper"
+        r.c1.tip = "Click for items · Alt-click to request a COD · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, ns.search.itemID, d.suffix, d.price)
+            elseif IsAltKeyDown() then promptCODQty(d.seller, ns.search.itemID, d.suffix, d.price)
             else
                 pendingCatFilter = itemName(ns.search.itemID)   -- open their shop filtered to the item you searched
                 ns.SelectTab("SELLERS", d.seller, d.loc)
@@ -420,7 +520,16 @@ local function formatMineRow(r, d)
             if link then ChatEdit_InsertLink(link) end
         elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
     end)
-    r.c2:SetText(parked and "|cffff88000|r" or (d.qty or 0))   -- orange 0 flags a parked (hidden) listing
+    -- qty: orange 0 flags a parked (hidden) listing; a "(N)" suffix flags stock reserved by open
+    -- COD orders (others see qty minus that), explained in full on the item hover
+    if parked then
+        r.c2:SetText("|cffff88000|r")
+    elseif (d.codHold or 0) > 0 then
+        r.c2:SetText(("%d |cffff8800(%d)|r"):format(d.qty or 0, d.codHold))
+        r.c1.tip = (r.c1.tip or "") .. (" · %d reserved for open COD orders (others see %d)"):format(d.codHold, math.max(0, (d.qty or 0) - d.codHold))
+    else
+        r.c2:SetText(d.qty or 0)
+    end
     r.c3:SetText(priceText(d.price))
     r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
     r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
@@ -457,9 +566,10 @@ local function formatSellerRow(r, d)
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
-        r.c1.tip = "Ctrl-click to compare · right-click to whisper"
+        r.c1.tip = "Ctrl-click to compare · Alt-click to request a COD · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
+            elseif IsAltKeyDown() then promptCODQty(d.seller, d.id, d.suffix, d.price)
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
         r.c2:SetText(d.qty or 0)
@@ -485,6 +595,32 @@ local function formatWantRow(r, d)
     r.c3:SetText(wantPriceText(d.price, d.cod))
     r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveWant(d.key) end)
     r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadWantForEdit(d.key) end)
+    r.itemID = d.id
+end
+
+-- My COD list row: a pending Cash On Delivery mail the seller owes a buyer. Columns are
+-- Item / Qty / COD (the total to collect) / Buyer. One action: "Done" (the edit button,
+-- relabeled) clears the order once you've mailed it. Right-click the item whispers the buyer.
+local function formatCODRow(r, d)
+    resetRow(r)
+    local rec = d.rec
+    r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
+    r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+    r.c1.tip = "Right-click to whisper " .. (d.buyer or "") .. " · shift-click to drop the item into your open chat message"
+    r.c1.itemLink = vLink(d.id, d.suffix)
+    r.c1:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            if d.buyer and d.buyer ~= "" then ChatFrame_OpenChat("/w " .. d.buyer .. " ") end
+        elseif IsModifiedClick("CHATLINK") then
+            local link = vLink(d.id, d.suffix)
+            if link then ChatEdit_InsertLink(link) end
+        end
+    end)
+    r.c2:SetText(d.qty or 1)
+    r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cff888888-|r")
+    r.c4:SetText(d.buyer or ""); r.c4:Show()
+    r.codEdit:Show(); r.codEdit:SetScript("OnClick", function() if ns.LoadCODForEdit then ns.LoadCODForEdit(rec) end end)
+    r.edit:Show(); r.edit:SetText("Done"); r.edit:SetScript("OnClick", function() ns.RemoveCODOrder(rec, "done") end)
     r.itemID = d.id
 end
 
@@ -546,9 +682,10 @@ local function formatBrowseRow(r, d)
     r.c1.fs:SetText(vName(d.id, d.suffix))
     r.c1.fs:SetTextColor(qualityRGB(q))
     r.c1.itemLink = vLink(d.id, d.suffix)
-    r.c1.tip = "Ctrl-click to find who else sells this · right-click to whisper"
+    r.c1.tip = "Ctrl-click to find who else sells this · Alt-click to request a COD · right-click to whisper"
     r.c1:SetScript("OnClick", function(_, button)
         if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
+        elseif IsAltKeyDown() then promptCODQty(d.seller, d.id, d.suffix, d.price)
         elseif IsControlKeyDown() then setBuyMode("SEARCH"); selectSearchItem(d.id) end
     end)
     r.lvl:SetText(lvl > 0 and lvl or "")
@@ -586,6 +723,7 @@ local function renderRows()
             if currentTab == "BUY" then formatBuyRow(r, d)
             elseif currentTab == "SELLERS" then formatSellerRow(r, d)
             elseif currentTab == "BUYERS" then formatBuyerRow(r, d)
+            elseif currentTab == "MINE" and mineMode == "COD" then formatCODRow(r, d)
             elseif currentTab == "MINE" and mineMode == "WTB" then formatWantRow(r, d)
             else formatMineRow(r, d) end
             r:Show()
@@ -644,7 +782,10 @@ end
 
 -- The sort state of whichever shared item list is on screen (nil if none is).
 function activeItemSort()
-    if currentTab == "MINE" then return mineMode == "WTB" and wantSort or mineSort end
+    if currentTab == "MINE" then
+        if mineMode == "COD" then return nil end   -- COD list is fixed oldest-first, no column sort
+        return mineMode == "WTB" and wantSort or mineSort
+    end
     if currentTab == "BUY" and buyMode == "SEARCH" then return buySort end
     if currentTab == "SELLERS" and sellersView == "SHOW" then return catalogSort end
     if currentTab == "BUYERS" then
@@ -654,7 +795,7 @@ function activeItemSort()
 end
 
 function refreshActiveItemView()
-    if currentTab == "MINE" then if mineMode == "WTB" then ns.RefreshWant() else ns.RefreshMine() end
+    if currentTab == "MINE" then if mineMode == "COD" then ns.RefreshCOD() elseif mineMode == "WTB" then ns.RefreshWant() else ns.RefreshMine() end
     elseif currentTab == "BUY" then ns.RefreshBuy()
     elseif currentTab == "SELLERS" then ns.RefreshSellerCatalog()
     elseif currentTab == "BUYERS" then if buyersView == "SHOW" then ns.RefreshBuyerCatalog() else ns.RefreshFindBuyers() end end
@@ -664,7 +805,7 @@ end
 -- shared item lists, the index overlays for the Sellers/Buyers index, neither elsewhere.
 function updateSharedSortHeaders()
     if not main or not main.itemSort1 then return end
-    local itemView  = (currentTab == "MINE")
+    local itemView  = (currentTab == "MINE" and mineMode ~= "COD")   -- COD has no sortable item columns
         or (currentTab == "BUY" and buyMode == "SEARCH")
         or (currentTab == "SELLERS" and sellersView == "SHOW")
         or (currentTab == "BUYERS" and (buyersView == "SHOW" or buyersView == "FIND"))
@@ -704,14 +845,17 @@ end
 --========================================================================
 function ns.RefreshMine()
     local filter, hasOffers, parked   -- shared by build (to match names) and status (to report empties/parked)
-    refreshList(currentTab == "MINE", function()
+    -- Guard the SELLING sub-mode, not just the MINE tab: a bag-sync refresh while the WTB or COD
+    -- sub-tab is showing must not clobber that list with offer rows.
+    refreshList(currentTab == "MINE" and mineMode == "SELLING", function()
         filter = (main.mineFilter:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
         for key, o in pairs(GuildFoundMarketCharDB.offers) do
             hasOffers = true
             local id, suffix = o.id or tonumber(key), o.suffix or 0
             if filter == "" or vName(id, suffix):lower():find(filter, 1, true) then
                 if (o.qty or 0) <= 0 then parked = (parked or 0) + 1 end
-                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, track = o.track, key = key, q = (itemQualLevel(id, suffix)) }
+                local cod = (o.track and ns.CODCommitted) and ns.CODCommitted(id, suffix) or 0
+                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, track = o.track, key = key, codHold = cod, q = (itemQualLevel(id, suffix)) }
             end
         end
         applyItemHeaderArrows(mineSort, "Item", true)
@@ -844,6 +988,7 @@ end
 -- Switch between the seller index and a single seller's catalog.
 function ns.SetSellersView(v)
     if not main then return end
+    hideCODQtyPopup()
     sellersView = v
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
@@ -897,6 +1042,38 @@ function ns.RefreshWant()
             main.status:SetText("")
         end
     end)
+end
+
+-- Keep the "COD (n)" count on the sub-tab button in step with the list. Safe to call any time
+-- (guards on the button existing), so adding an order from anywhere updates the badge even when
+-- the COD list isn't the one on screen.
+local function updateCODBadge()
+    if not (main and main.mineCodBtn and main.mineCodBtn.fs) then return end
+    local n = ns.CODCount and ns.CODCount() or 0
+    main.mineCodBtn.fs:SetText(n > 0 and ("COD (" .. n .. ")") or "COD")
+end
+
+--========================================================================
+-- refresh: My COD orders (pending Cash On Delivery mails) — seller-side to-do list
+--========================================================================
+function ns.RefreshCOD()
+    local hasOrders
+    refreshList(currentTab == "MINE" and mineMode == "COD", function()
+        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("COD"); main.h4:SetText("Buyer")
+        for _, rec in ipairs(ns.CODList()) do   -- CODList is already oldest-first (clear the top one first)
+            hasOrders = true
+            view[#view + 1] = { rec = rec, id = rec.itemID, suffix = rec.suffix or 0,
+                qty = rec.qty, price = rec.total, unit = rec.unit, buyer = rec.buyer, added = rec.added }
+        end
+    end, function()
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        if not hasOrders then
+            main.status:SetText("No COD orders yet: add one below when a buyer asks for a mail.")
+        else
+            main.status:SetText(("%d COD order(s) waiting. Mail them at a mailbox, then press Done."):format(#view))
+        end
+    end)
+    updateCODBadge()
 end
 
 --========================================================================
@@ -1014,6 +1191,7 @@ end
 -- Switch the Buyers tab between the index, "who wants X" results, and one buyer's want list.
 function ns.SetBuyersView(v)
     if not main then return end
+    hideCODQtyPopup()
     buyersView = v
     local index = (v == "INDEX")
     local show  = (v == "SHOW")
@@ -1220,6 +1398,7 @@ end
 setBuyMode = function(mode)
     buyMode = mode
     if not main then return end
+    hideCODQtyPopup()
     local browse = (mode == "BROWSE")
     if main.modeToggle then main.modeToggle:SetText(browse and "<< Search" or "Browse >>") end
     main.searchBox:SetShown(not browse); main.searchLabel:SetShown(not browse); main.ac:Hide()
@@ -1306,6 +1485,7 @@ local function buildWindow()
     local title = main:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -16); title:SetText("Guild Found |cff00ff96Market|r")
     CreateFrame("Button", nil, main, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -8, -8)
+    main:HookScript("OnHide", hideCODQtyPopup)   -- don't leave a COD qty picker floating after the window closes
     -- debug-log toggle (opens the copyable sidebar; available to everyone for bug
     -- reports). Lives on the Help tab, top right, shown only there.
     local debugBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
@@ -1615,6 +1795,9 @@ local function buildRows()
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
+        -- COD rows only: an Edit button left of the Done button that loads the row back into the
+        -- add form. Shares findBtn's slot (never shown on the same row, so no overlap).
+        r.codEdit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codEdit:SetSize(40, 20); r.codEdit:SetPoint("RIGHT", r.edit, "LEFT", -2, 0); r.codEdit:SetText("Edit"); r.codEdit:Hide()
         -- chat-bubble icon for a player's note (Sellers and Buyers index rows). Positioned after
         -- the location by the formatter, which also sets self.store (the index table to read/cache
         -- in). The note text is fetched on hover (click to retry a failed load); state read live by name.
@@ -1673,7 +1856,7 @@ local function buildRows()
         end)
         r.track:SetScript("OnLeave", GameTooltip_Hide)
         r.track:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.noteBtn, r.findBtn, r.track)
+        addRowHighlight(r, r.c1, r.x, r.edit, r.codEdit, r.noteBtn, r.findBtn, r.track)
         r:Hide(); rows[i] = r
     end
 end
@@ -2072,6 +2255,7 @@ local function subTabButton(x, text)
     local sel = b:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(1, 0.82, 0, 0.18); sel:Hide(); b.sel = sel
     local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
     local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); fs:SetPoint("CENTER"); fs:SetText(text)
+    b.fs = fs   -- exposed so the COD sub-tab can show a live "COD (n)" badge
     return b
 end
 
@@ -2296,7 +2480,7 @@ local function buildPauseAnnounce()
     pauseLabel:SetPoint("TOPLEFT", 16, -70); pauseLabel:SetText(""); pauseLabel:Hide()
     main.pauseLabel = pauseLabel
     local pauseBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    pauseBtn:SetSize(120, 22); pauseBtn:SetPoint("TOPLEFT", 142, -64); pauseBtn:Hide()
+    pauseBtn:SetSize(120, 22); pauseBtn:SetPoint("TOPLEFT", 196, -64); pauseBtn:Hide()   -- shifted right to make room for the COD sub-tab
     pauseBtn:SetScript("OnClick", function() ns.ToggleListings() end)
     pauseBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -2317,10 +2501,10 @@ local function buildPauseAnnounce()
     -- substring filter over your listed items (client-side), sitting between the pause button
     -- and the announce controls
     local mineFilterLabel = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    mineFilterLabel:SetPoint("TOPLEFT", 268, -68); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
+    mineFilterLabel:SetPoint("TOPLEFT", 322, -68); mineFilterLabel:SetText("Find item:"); mineFilterLabel:Hide()
     main.mineFilterLabel = mineFilterLabel
     local mineFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    mineFilter:SetPoint("TOPLEFT", 332, -64); mineFilter:SetSize(120, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
+    mineFilter:SetPoint("TOPLEFT", 392, -64); mineFilter:SetSize(96, 22); mineFilter:SetAutoFocus(false); mineFilter:Hide()
     mineFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshMine() end end)
     mineFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshMine() end)
     main.mineFilter = mineFilter
@@ -2554,14 +2738,17 @@ local function buildWTB()
     -- two small sub-tab buttons at the far left (the pause button moved right to make room)
     main.mineSellBtn = subTabButton(16, "WTS")
     main.mineWtbBtn  = subTabButton(74, "WTB")
+    main.mineCodBtn  = subTabButton(132, "COD")
     attachSubTip(main.mineSellBtn, "WTS - Want To Sell", "Items you're offering for sale.")
     attachSubTip(main.mineWtbBtn,  "WTB - Want To Buy", "Items you want to buy.")
+    attachSubTip(main.mineCodBtn,  "COD orders", "Cash On Delivery mails you owe buyers. Add one when a buyer asks, then send it at a mailbox and press Done.")
     main.mineSellBtn:SetScript("OnClick", function() setMineMode("SELLING") end)
     main.mineWtbBtn:SetScript("OnClick", function() setMineMode("WTB") end)
+    main.mineCodBtn:SetScript("OnClick", function() setMineMode("COD") end)
 
     -- substring filter over your WTB list (shares the "Find item:" label with Selling)
     local wtbFilter = CreateFrame("EditBox", nil, main, "InputBoxTemplate")
-    wtbFilter:SetPoint("TOPLEFT", 332, -64); wtbFilter:SetSize(120, 22); wtbFilter:SetAutoFocus(false); wtbFilter:Hide()
+    wtbFilter:SetPoint("TOPLEFT", 392, -64); wtbFilter:SetSize(96, 22); wtbFilter:SetAutoFocus(false); wtbFilter:Hide()
     wtbFilter:SetScript("OnTextChanged", function(_, user) if user then ns.RefreshWant() end end)
     wtbFilter:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus(); ns.RefreshWant() end)
     main.wtbFilter = wtbFilter
@@ -2727,20 +2914,225 @@ local function buildWTB()
     setMineMode = function(mode)
         mineMode = mode
         if not main then return end
+        hideCODQtyPopup()
+        local selling = (mode == "SELLING")
         local wtb = (mode == "WTB")
-        main.mineSellBtn.sel:SetShown(not wtb); main.mineWtbBtn.sel:SetShown(wtb)
-        main.postPanel:SetShown(not wtb); main.wtbPanel:SetShown(wtb)
-        main.announceBtn:SetShown(not wtb); main.announceDestBtn:SetShown(not wtb)
-        main.announceWhisper:SetShown(not wtb and GuildFoundMarketCharDB.announceDest == "whisper")
+        local cod = (mode == "COD")
+        main.mineSellBtn.sel:SetShown(selling); main.mineWtbBtn.sel:SetShown(wtb); main.mineCodBtn.sel:SetShown(cod)
+        main.postPanel:SetShown(selling); main.wtbPanel:SetShown(wtb); main.codPanel:SetShown(cod)
+        main.announceBtn:SetShown(selling); main.announceDestBtn:SetShown(selling)
+        main.announceWhisper:SetShown(selling and GuildFoundMarketCharDB.announceDest == "whisper")
         if main.announceDestPopup then main.announceDestPopup:Hide() end
         if main.announceWAC then main.announceWAC:Hide() end
-        main.mineFilter:SetShown(not wtb); main.wtbFilter:SetShown(wtb)
+        main.mineFilter:SetShown(selling); main.wtbFilter:SetShown(wtb)
+        main.mineFilterLabel:SetShown(not cod)   -- COD has no filter box
         ac:Hide()
-        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
+        if main.codPanelAC then main.codPanelAC:Hide() end
+        if main.codPanelBAC then main.codPanelBAC:Hide() end
+        if cod then
+            main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("COD"); main.h4:SetText("Buyer")
+        else
+            main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
+        end
+        updateCODBadge()
         updateSharedSortHeaders()
         wipe(view); FauxScrollFrame_SetOffset(main.scroll, 0); main.scroll:SetVerticalScroll(0)
-        if wtb then clearWant(); ns.RefreshWant() else ns.RefreshMine() end
+        if cod then
+            if main.clearCOD then main.clearCOD() end; ns.RefreshCOD()
+        elseif wtb then clearWant(); ns.RefreshWant()
+        else ns.RefreshMine() end
     end
+end
+
+-- The COD compose panel: a manual "add a COD order" form (buyer, item, qty, unit price).
+-- Mirrors the WTB panel's item autocomplete (its own copy, exactly as the WTB panel keeps its
+-- own copy of the Buy-search picker) so nothing here can disturb the Selling/WTB forms.
+local function buildCODPanel()
+    local panel = CreateFrame("Frame", nil, main)
+    panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74); panel:Hide()
+    main.codPanel = panel
+
+    local codDraft = { itemID = nil, suffix = 0 }
+    local function label(text, x, y) local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("BOTTOMLEFT", x, y); fs:SetText(text); return fs end
+
+    -- Buyer field (who the COD mail goes to)
+    label("Buyer", 6, 52)
+    local buyerBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    buyerBox:SetPoint("BOTTOMLEFT", 10, 30); buyerBox:SetSize(110, 20); buyerBox:SetAutoFocus(false); buyerBox:SetMaxLetters(30)
+
+    -- Buyer-name autocomplete over the guild roster (same picker style as the announce whisper field)
+    local bac = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    bac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    bac:SetBackdropColor(0, 0, 0, 0.95); bac:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    bac:SetPoint("TOPLEFT", buyerBox, "BOTTOMLEFT", -2, -2); bac:SetWidth(114); bac:SetFrameStrata("DIALOG"); bac:Hide()
+    bac.rows = {}
+    main.codPanelBAC = bac
+    local function bacRow(i)
+        local r = bac.rows[i]; if r then return r end
+        r = CreateFrame("Button", nil, bac); r:SetSize(110, 16); r:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 16)
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.fs:SetPoint("LEFT", 5, 0)
+        bac.rows[i] = r; return r
+    end
+    local function updateBAC()
+        local matches = ns.GuildNameMatches(buyerBox:GetText() or "")
+        if #matches == 0 then bac:Hide(); return end
+        for i = 1, 10 do
+            local r = bacRow(i)
+            local nm = matches[i]
+            if nm then
+                r.fs:SetText(nm)
+                r:SetScript("OnClick", function() buyerBox:SetText(nm); bac:Hide(); buyerBox:ClearFocus() end)
+                r:Show()
+            else r:Hide() end
+        end
+        bac:SetHeight(math.min(#matches, 10) * 16 + 4); bac:Show()
+    end
+    buyerBox:SetScript("OnTextChanged", function(_, user) if user then updateBAC() end end)
+    buyerBox:SetScript("OnEditFocusGained", function()   -- nudge the client to refresh the roster so matches are fresh
+        if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster() elseif GuildRoster then GuildRoster() end
+    end)
+    buyerBox:SetScript("OnEscapePressed", function(self) bac:Hide(); self:ClearFocus() end)
+    buyerBox:SetScript("OnEnterPressed", function(self) bac:Hide(); self:ClearFocus() end)
+
+    -- Item field + autocomplete (own copy of the WTB picker)
+    label("Item (type to search)", 130, 52)
+    local itemBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    itemBox:SetPoint("BOTTOMLEFT", 134, 30); itemBox:SetSize(184, 20); itemBox:SetAutoFocus(false)
+
+    local ac = CreateFrame("Frame", nil, main, "BackdropTemplate")
+    ac:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    ac:SetBackdropColor(0, 0, 0, 0.92); ac:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    ac:SetPoint("TOPLEFT", itemBox, "BOTTOMLEFT", -2, -2); ac:SetWidth(188); ac:SetFrameStrata("DIALOG"); ac:Hide()
+    main.codPanelAC = ac
+    ac.rows = {}; ac.sel = 0
+    for i = 1, 8 do
+        local row = CreateFrame("Button", nil, ac); row:SetSize(184, 18)
+        row:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 18)
+        local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        row.selTex = row:CreateTexture(nil, "BACKGROUND"); row.selTex:SetAllPoints(); row.selTex:SetColorTexture(1, 0.82, 0, 0.25); row.selTex:Hide()
+        row.icon = row:CreateTexture(nil, "ARTWORK"); row.icon:SetSize(14, 14); row.icon:SetPoint("LEFT", 2, 0)
+        row.fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.fs:SetPoint("LEFT", 20, 0)
+        row:Hide(); ac.rows[i] = row
+    end
+    local function highlightAC()
+        for i, row in ipairs(ac.rows) do row.selTex:SetShown(ac.sel == i and row:IsShown()) end
+    end
+    local function pickItem(id, name)
+        codDraft.itemID = id; codDraft.suffix = 0
+        ns.ItemDB.Learn(id)
+        itemBox:SetText(name or itemName(id)); itemBox:SetCursorPosition(0); itemBox:ClearFocus()
+        ac:Hide()
+    end
+    local function updateAC()
+        local matches = ns.ItemDB.Match(itemBox:GetText())
+        ac.matches = matches; ac.sel = 0
+        if #matches == 0 then ac:Hide(); return end
+        for i, row in ipairs(ac.rows) do
+            local m = matches[i]
+            row.selTex:Hide()
+            if m then
+                row.icon:SetTexture(GetItemIcon(m.id))
+                local col = ITEM_QUALITY_COLORS[m.q] or ITEM_QUALITY_COLORS[1]
+                row.fs:SetText(m.name); row.fs:SetTextColor(col.r, col.g, col.b)
+                row:SetScript("OnClick", function() pickItem(m.id, m.name) end)
+                row:SetScript("OnEnter", function() ac.sel = i; highlightAC() end)
+                row:Show()
+            else row:Hide() end
+        end
+        ac:SetHeight(math.min(#matches, 8) * 18 + 4); ac:Show()
+    end
+    itemBox:SetScript("OnTextChanged", function(self, user)
+        if not user then return end
+        local linkID = self:GetText():match("|Hitem:(%d+)")
+        if linkID then pickItem(tonumber(linkID), itemName(tonumber(linkID))); return end
+        codDraft.itemID = nil; updateAC()
+    end)
+    itemBox:SetScript("OnArrowPressed", function(self, key)
+        if not ac:IsShown() or not ac.matches then return end
+        local n = #ac.matches
+        if n == 0 then return end
+        if key == "DOWN" then ac.sel = (ac.sel >= n) and 1 or ac.sel + 1; highlightAC()
+        elseif key == "UP" then ac.sel = (ac.sel <= 1) and n or ac.sel - 1; highlightAC() end
+    end)
+    itemBox:SetScript("OnEnterPressed", function(self)
+        if ac:IsShown() and ac.sel and ac.sel > 0 and ac.matches and ac.matches[ac.sel] then
+            local m = ac.matches[ac.sel]; pickItem(m.id, m.name); return
+        end
+        local matches = ns.ItemDB.Match(self:GetText())
+        if matches[1] then pickItem(matches[1].id, matches[1].name) end
+    end)
+    itemBox:SetScript("OnEscapePressed", function(self) ac:Hide(); self:ClearFocus() end)
+    itemBox:SetScript("OnReceiveDrag", function(self)
+        local t, id = GetCursorInfo()
+        if t == "item" and id then ClearCursor(); pickItem(id, itemName(id)) end
+    end)
+
+    label("Qty", 330, 52)
+    local qtyBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    qtyBox:SetPoint("BOTTOMLEFT", 334, 30); qtyBox:SetSize(40, 20); qtyBox:SetAutoFocus(false); qtyBox:SetNumeric(true); qtyBox:SetText("1")
+    label("Unit price (paid on delivery)", 390, 52)
+    local priceBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    priceBox:SetPoint("BOTTOMLEFT", 394, 30); priceBox:SetSize(130, 20); priceBox:SetAutoFocus(false); priceBox:SetMaxLetters(20)
+
+    -- Tab cycles Buyer -> Item -> Qty -> Price (Shift+Tab reverses)
+    buyerBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then priceBox:SetFocus(); priceBox:HighlightText() else itemBox:SetFocus() end
+    end)
+    itemBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then buyerBox:SetFocus(); buyerBox:HighlightText(); return end
+        local m = ac:IsShown() and ac.matches and ac.matches[ac.sel > 0 and ac.sel or 1]
+        if m then pickItem(m.id, m.name) end
+        qtyBox:SetFocus(); qtyBox:HighlightText()
+    end)
+    qtyBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then itemBox:SetFocus() else priceBox:SetFocus(); priceBox:HighlightText() end
+    end)
+    priceBox:SetScript("OnTabPressed", function()
+        if IsShiftKeyDown() then qtyBox:SetFocus(); qtyBox:HighlightText() else buyerBox:SetFocus(); buyerBox:HighlightText() end
+    end)
+
+    local addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    addBtn:SetSize(96, 24); addBtn:SetPoint("BOTTOMRIGHT", -4, 28); addBtn:SetText("Add COD")
+
+    -- The row being edited (its Edit button loaded it into this form). nil = the form adds a new
+    -- order; set = it updates that record in place. Reset by clearCOD so the button relabels back.
+    local editingCODRec = nil
+
+    local function clearCOD()
+        codDraft.itemID = nil; codDraft.suffix = 0
+        editingCODRec = nil; addBtn:SetText("Add COD")
+        buyerBox:SetText(""); itemBox:SetText(""); qtyBox:SetText("1"); priceBox:SetText(""); ac:Hide(); bac:Hide()
+    end
+    main.clearCOD = clearCOD
+
+    -- Load an existing order back into the form for editing (the COD row's Edit button).
+    function ns.LoadCODForEdit(rec)
+        if not rec then return end
+        editingCODRec = rec
+        codDraft.itemID = rec.itemID; codDraft.suffix = rec.suffix or 0
+        buyerBox:SetText(rec.buyer or "")
+        itemBox:SetText(vName(rec.itemID, rec.suffix))
+        qtyBox:SetText(tostring(rec.qty or 1))
+        priceBox:SetText(priceToStr(rec.unit))
+        addBtn:SetText("Update"); ac:Hide(); bac:Hide()
+        priceBox:SetFocus(); priceBox:HighlightText()
+    end
+
+    local function submitCOD()
+        local qty = tonumber(qtyBox:GetText()) or 1
+        local unit = parsePrice(priceBox:GetText())
+        local ok
+        if editingCODRec then
+            ok = ns.EditCODOrder(editingCODRec, buyerBox:GetText(), codDraft.itemID, codDraft.suffix or 0, qty, unit)
+        else
+            ok = ns.AddCODOrder(buyerBox:GetText(), codDraft.itemID, codDraft.suffix or 0, qty, unit, "manual")
+        end
+        if ok then clearCOD() end
+    end
+    addBtn:SetScript("OnClick", submitCOD)
+    qtyBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitCOD() end)
+    priceBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); submitCOD() end)
 end
 
 local function buildHelpPanel()
@@ -2812,7 +3204,7 @@ local function buildOptionsPanel()
         GameTooltip:Show()
     end
 
-    local optChecks, optRadios = {}, {}
+    local optChecks, optRadios, optEdits = {}, {}, {}
 
     -- Render one schema entry as a control at column x, starting at vertical oy; return next oy.
     local function renderOption(s, x, oy)
@@ -2853,12 +3245,52 @@ local function buildOptionsPanel()
     -- the format choices (price fill, shop-note items) and the hide-shop-link toggles on the right.
     local LEFT_X, RIGHT_X, TOP_Y = 4, 340, -48
     local lY, rY = TOP_Y, TOP_Y
+    local textSettings = {}
     for _, s in ipairs(ns.SettingsSchema) do
-        if s.type == "choice" or s.key:find("^hideShop") then
+        if s.type == "text" then
+            textSettings[#textSettings + 1] = s   -- wide free-text control; rendered full-width below the columns
+        elseif s.type == "choice" or s.key:find("^hideShop") then
             rY = renderOption(s, RIGHT_X, rY)
         else
             lY = renderOption(s, LEFT_X, lY)
         end
+    end
+
+    -- Free-text settings (e.g. the COD confirmation whisper) span the full width under both
+    -- columns: a label, then a wide edit box that saves on Enter or when focus leaves.
+    local ty = math.min(lY, rY) - 12
+    for _, s in ipairs(textSettings) do
+        local labelTy = ty
+        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("TOPLEFT", LEFT_X + 4, labelTy); lbl:SetText(s.label)
+        ty = ty - 22
+        local eb = CreateFrame("EditBox", nil, optPanel, "InputBoxTemplate")
+        eb:SetPoint("TOPLEFT", LEFT_X + 8, ty); eb:SetSize(560, 22); eb:SetAutoFocus(false); eb:SetMaxLetters(s.maxLetters or 200)
+        eb.key = s.key
+        local function save(self) ns.SetSetting(self.key, (self:GetText() or ""):gsub("[~\r\n]", " ")) end
+        eb:SetScript("OnEnterPressed", function(self) save(self); self:ClearFocus() end)
+        eb:SetScript("OnEditFocusLost", save)
+        eb:SetScript("OnEscapePressed", function(self) self:SetText(ns.GetSetting(self.key) or ""); self:ClearFocus() end)
+        eb:SetScript("OnEnter", function(self) showTip(self, s) end)
+        eb:SetScript("OnLeave", GameTooltip_Hide)
+        optEdits[#optEdits + 1] = eb
+        -- "Reset to default": restore the example message (which carries every placeholder), so a
+        -- player who has edited or cleared it can always get a working template with all tokens back.
+        if s.default and s.default ~= "" then
+            local reset = CreateFrame("Button", nil, optPanel, "UIPanelButtonTemplate")
+            reset:SetSize(120, 20); reset:SetPoint("TOPLEFT", LEFT_X + 448, labelTy - 2); reset:SetText("Reset to default")
+            reset:SetScript("OnClick", function()
+                ns.SetSetting(s.key, s.default)
+                eb:SetText(s.default); eb:SetCursorPosition(0); eb:ClearFocus()
+            end)
+            reset:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText("Restore the example message, with every placeholder filled in.", 1, 1, 1, true)
+                GameTooltip:Show()
+            end)
+            reset:SetScript("OnLeave", GameTooltip_Hide)
+        end
+        ty = ty - 34
     end
 
     -- pull every control from the store; called on entering the tab and on any change
@@ -2866,6 +3298,9 @@ local function buildOptionsPanel()
     function ns.RefreshOptions()
         for _, cb in ipairs(optChecks) do cb:SetChecked(ns.GetSetting(cb.key)) end
         for _, rb in ipairs(optRadios) do rb:SetChecked(ns.GetSetting(rb.key) == rb.value) end
+        for _, eb in ipairs(optEdits) do
+            if not eb:HasFocus() then eb:SetText(ns.GetSetting(eb.key) or "") end   -- don't stomp mid-edit
+        end
     end
     ns.On("setting", function()
         if main and main.optionsPanel and main.optionsPanel:IsShown() then ns.RefreshOptions() end
@@ -2887,6 +3322,7 @@ local function CreateUI()
     buildBuyerWidgets()
     buildPauseAnnounce()
     buildWTB()
+    buildCODPanel()
     buildHelpPanel()
     buildOptionsPanel()
     ns.SelectTab("BUY")
@@ -2942,6 +3378,7 @@ end
 --========================================================================
 function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not main then return end
+    hideCODQtyPopup()   -- a pending COD qty picker belongs to the view you're leaving
     currentTab = tab
     for _, b in ipairs(tabButtons) do
         local on = (b.tab == tab)
@@ -2986,9 +3423,11 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
         main.h1:Show(); main.h2:Show(); main.h3:Show(); main.h4:Show()
     end
     main.pauseBtn:SetShown(mine)
-    main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine)
+    main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine); main.mineCodBtn:SetShown(mine)
     main.mineFilterLabel:SetShown(mine)
-    if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbPanel:Hide() end
+    if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbPanel:Hide(); main.codPanel:Hide()
+        if main.codPanelAC then main.codPanelAC:Hide() end
+        if main.codPanelBAC then main.codPanelBAC:Hide() end end
     main.announceBtn:SetShown(mine)
     main.announceDestBtn:SetShown(mine)
     main.announceWhisper:SetShown(mine and mineMode == "SELLING" and GuildFoundMarketCharDB.announceDest == "whisper")

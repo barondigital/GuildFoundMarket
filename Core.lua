@@ -167,6 +167,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildFoundMarketCharDB = GuildFoundMarketCharDB or {}
         GuildFoundMarketCharDB.offers = GuildFoundMarketCharDB.offers or {}
         GuildFoundMarketCharDB.wants = GuildFoundMarketCharDB.wants or {}   -- WTB list (buy side)
+        GuildFoundMarketCharDB.codOrders = GuildFoundMarketCharDB.codOrders or {}   -- COD to-do list (seller side)
         -- migrate legacy offers keyed by a bare numeric itemID to the "itemID:suffix" form
         do
             local off, legacy = GuildFoundMarketCharDB.offers, {}
@@ -286,7 +287,8 @@ SlashCmdList.GFMARKET = function(msg)
     msg = (msg or ""):lower():gsub("%s+", "")
     if msg == "dev" then
         ns.dev = not ns.dev
-        print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off"))
+        ns.selfTest = ns.dev   -- dev implies self-test; toggle both at once (use "selftest" to peel it back off)
+        print("|cff00ff96GFM|r: dev mode " .. (ns.dev and "ON" or "off") .. " (self-test " .. (ns.selfTest and "ON" or "off") .. ")")
         if ns.UpdateDebugTitle then ns.UpdateDebugTitle() end
     elseif msg == "altsearch" then
         devEcho("|cff00ff96GFM altsearch|r")
@@ -352,6 +354,11 @@ SlashCmdList.GFMARKET = function(msg)
     elseif ns.dev and msg == "selftest" then
         ns.selfTest = not ns.selfTest
         ns.Feedback("Self-test " .. (ns.selfTest and "ON: search an item you've listed in My Items to see your own offer." or "off") .. ".", false)
+    elseif ns.dev and msg == "codtimeout" then
+        -- fire a COD cancel at a name nobody's playing, so no OA comes back and you can watch the
+        -- cancel-specific timeout message land after ns.QUERY_SETTLE seconds. (Hearthstone = 6948.)
+        devEcho("codtimeout: sending a cancel to an unanswering seller; watch for the timeout in ~" .. (ns.QUERY_SETTLE or 5) .. "s")
+        ns.RequestCOD("Gfmnobodyxyz", 6948, 0, 0, 0)
     elseif ns.dev and msg == "fakesellers" then
         wipe(ns.sellers.results)
         -- Aldorin: note pre-cached (hover shows it at once). Bigbags: flag only, so the bubble

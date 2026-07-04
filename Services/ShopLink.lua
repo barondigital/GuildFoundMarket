@@ -66,6 +66,23 @@ end
 -- pipes, and we strip colons, so a crafted message can't inject escape codes or extra fields.
 local SHOP_LINK_NS = "addon:GuildFoundMarket"   -- custom link type; no item, no placeholder tooltip
 
+-- A clickable "Cancel COD" link. Same taint-safe "addon:" hyperlink type as the shop link, but a
+-- `cod:` payload carrying (seller, itemID, suffix) so a click cancels that order. It rides in the
+-- seller's confirmation whisper as a {{GFMCOD:...}} marker the recipient rewrites, giving the buyer
+-- a cancel entry point that survives even when the listing is fully reserved and hidden from search.
+local function codLink(seller, itemID, suffix)
+    return ("|cffff6060|H%s:cod:%s:%d:%d|h[Cancel COD]|h|r"):format(SHOP_LINK_NS, seller, itemID, suffix or 0)
+end
+
+-- Wire marker (plain text; the chat server strips real hyperlinks). ns.playerName = the seller, so
+-- a click knows who to send the cancel to. The recipient's shareFilter rewrites it into codLink.
+function ns.CODCancelMarker(itemID, suffix)
+    return ("{{GFMCOD:%s:%d:%d}}"):format(ns.playerName, itemID, suffix or 0)
+end
+-- Ready-made clickable link for LOCAL display (e.g. the self-test's simulated whisper, which uses
+-- AddMessage and so never passes through the incoming-chat filter that rewrites markers).
+function ns.CODCancelLink(seller, itemID, suffix) return codLink(seller, itemID, suffix) end
+
 -- Per-surface spam filter: each chat event maps to a "hide" setting. When that setting is on
 -- the whole shop-link line is suppressed for this player only (local, changes nothing for
 -- anyone else). Surfaces not listed here (e.g. raid) are never hidden, by design.
@@ -81,21 +98,34 @@ local HIDE_KEY_BY_EVENT = {
 -- distinct message+frame so the debug log shows one "hid" line per blocked announce.
 local lastHiddenMsg, lastHiddenAt = nil, 0
 local function shareFilter(_, event, msg, ...)
-    if not (msg and msg:find("{{GFM:", 1, true)) then return end
-    local hideKey = HIDE_KEY_BY_EVENT[event]
-    if hideKey and ns.GetSetting(hideKey) then
-        local now = GetTime()
-        if ns.Log and (msg ~= lastHiddenMsg or now ~= lastHiddenAt) then
-            lastHiddenMsg, lastHiddenAt = msg, now
-            ns.Log("SPAM-FILTER: hid a shop link (" .. tostring(event) .. ")")
+    if not msg then return end
+    local hasShop = msg:find("{{GFM:", 1, true) ~= nil
+    local hasCancel = msg:find("{{GFMCOD:", 1, true) ~= nil
+    if not (hasShop or hasCancel) then return end
+    -- the spam filter is for shop-announce lines only; a COD confirmation whisper with a cancel
+    -- link is a transactional reply, never suppressed
+    if hasShop then
+        local hideKey = HIDE_KEY_BY_EVENT[event]
+        if hideKey and ns.GetSetting(hideKey) then
+            local now = GetTime()
+            if ns.Log and (msg ~= lastHiddenMsg or now ~= lastHiddenAt) then
+                lastHiddenMsg, lastHiddenAt = msg, now
+                ns.Log("SPAM-FILTER: hid a shop link (" .. tostring(event) .. ")")
+            end
+            return true   -- spam-filtered: drop the line for this client
         end
-        return true   -- spam-filtered: drop the line for this client
     end
     local changed = false
     local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
         name = name:gsub(":", "")   -- colon is our payload delimiter; real names never contain one
         changed = true
         return ("|cff00ff96|H%s:%s|h[%s's shop]|h|r"):format(SHOP_LINK_NS, name, name)
+    end)
+    out = out:gsub("{{GFMCOD:([^{}|]+)}}", function(payload)
+        local seller, id, sfx = payload:match("^([^:]+):(%d+):(%d+)$")   -- reject anything malformed
+        if not seller then return nil end
+        changed = true
+        return codLink(seller, tonumber(id), tonumber(sfx))
     end)
     if changed then return false, out, ... end
 end
@@ -120,7 +150,18 @@ end
 -- with no tooltip, and we never write the global SetItemRef (the old code REPLACED it, tainting
 -- the secure menu/clipboard path and blocking CopyToClipboard). EventRegistry is Blizzard's own
 -- callback, so nothing leaks and there is no placeholder to hide.
+-- Recover a cancel link's payload ("addon:GuildFoundMarket:cod:Seller:itemID:suffix").
+local function linkCancel(link)
+    if type(link) ~= "string" then return nil end
+    return link:match("^addon:GuildFoundMarket:cod:([^:]+):(%d+):(%d+)$")
+end
+
 local function openClickedLink(link)
+    local seller, id, sfx = linkCancel(link)   -- a "Cancel COD" link: send a cancel (qty 0) for it
+    if seller then
+        if ns.RequestCOD then ns.RequestCOD(seller, tonumber(id), tonumber(sfx), 0, 0) end
+        return
+    end
     local name = linkSeller(link)
     if name and ns.OpenShopLink then ns.OpenShopLink(name) end
 end
@@ -150,6 +191,14 @@ end
 ns.AddShopNoteLines = addNoteLines   -- reused by the Sellers/Buyers note bubbles for one consistent look
 
 local function showLinkTooltip(owner, link)
+    if linkCancel(link) then   -- a "Cancel COD" link: its own tooltip, not a shop tooltip
+        GameTooltip:SetOwner(owner or UIParent, "ANCHOR_CURSOR")
+        GameTooltip:AddLine("Cancel COD", 1, 0.4, 0.4)
+        GameTooltip:AddLine("Click to cancel this order with the seller.", 0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+        linkTipShown = true; activeLink = nil
+        return
+    end
     local name = linkSeller(link)
     if not name then return end   -- not our link: leave other tooltips untouched
     GameTooltip:SetOwner(owner or UIParent, "ANCHOR_CURSOR")

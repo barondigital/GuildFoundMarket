@@ -20,6 +20,7 @@ Services\Version.lua
 Services\Stock.lua
 Services\Offers.lua
 Services\Wants.lua
+Services\CODOrders.lua
 Services\Search.lua
 Services\SellerBrowse.lua
 Services\BuyerBrowse.lua

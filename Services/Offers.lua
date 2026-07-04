@@ -122,16 +122,35 @@ end
 -- seller-browse, category-browse, the L~ catalog and the shop-link scan reply) reads through
 -- OfferList, so a parked listing never leaves this client.
 -- Tolerates legacy offers keyed by a bare numeric itemID (no stored id/suffix).
+-- Every outward path (search, browse, catalog, shop-link) reads through here, so this is where a
+-- bag-synced listing's advertised qty is reduced by what's already promised on open COD orders:
+-- an item fully reserved by CODs drops to 0 available and is hidden until an order is mailed and
+-- cleared. Manual (untracked) listings are left untouched: their qty is a soft claim, not stock.
 local function offerList()
     local list = {}
     for key, o in pairs(offers()) do
         if (o.qty or 0) > 0 then
-            list[#list + 1] = { id = o.id or tonumber(key), suffix = o.suffix or 0, qty = o.qty, price = o.price }
+            local id, suffix = o.id or tonumber(key), o.suffix or 0
+            local avail = o.qty
+            if o.track and ns.CODCommitted then avail = o.qty - ns.CODCommitted(id, suffix) end
+            if avail > 0 then
+                list[#list + 1] = { id = id, suffix = suffix, qty = avail, price = o.price }
+            end
         end
     end
     return list
 end
 ns.OfferList = offerList
+
+-- The seller's own listing for a variant: returns (qty, track, price) or nil. `track` = "follows my
+-- bags", in which case qty is real stock (SyncTrackedOffers keeps it live). qty here is the RAW
+-- stock (not COD-reduced): COD uses it to cap a buyer's request and to price an order the buyer is
+-- editing. A manual listing returns track=false and is left uncapped.
+function ns.OfferInfo(itemID, suffix)
+    local o = offers()[vkey(itemID, suffix)]
+    if not o then return nil end
+    return o.qty or 0, o.track and true or false, o.price
+end
 
 -- Auto-sync every "tracked" listing to its stock count. Only offers with track=true are
 -- touched; a manual listing (track nil/false) is never read against inventory. The count is
