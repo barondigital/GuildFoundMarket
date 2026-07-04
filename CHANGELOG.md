@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.17.0
+
+- **Cash On Delivery orders.** A new COD tab on My Items keeps a per-character to-do list of the
+  Cash On Delivery mails you owe buyers, so you can keep your shop open while you're out and send the
+  mails at a mailbox later. Buyers request a COD straight from one of your listings (Alt-click a row
+  on the Buy results, your shop catalogue, or the category Browse); the order lands on your list and
+  the buyer gets your confirmation whisper. You can also add one by hand (buyer, item, quantity, unit
+  price) when a deal happens in chat. Turn it on with "Accept COD order requests" in Options, where
+  you can also edit the confirmation whisper (with a Reset to default button that restores the example
+  with every placeholder).
+- **The request popup knows what you already have on order.** Alt-clicking shows a small quantity box
+  right away; it fills in how many of that item you already have on order with that seller, so
+  changing the number updates the one order instead of stacking duplicates. On a listing that follows
+  your bags it won't let a buyer order more than you actually have free, and an item fully spoken for
+  by CODs drops out of search and your shop until an order is mailed or cleared.
+- **Cancel from the confirmation whisper.** The seller's confirmation whisper carries a clickable
+  Cancel COD link, so a buyer can drop the whole order from chat even after the item has sold out of
+  the listings. Setting the quantity to 0 in the popup cancels too.
+- **Mailbox send-assist.** Standing at a mailbox, the Send button on a COD row pre-fills the mail:
+  recipient, the item pulled from your bags, the COD amount to collect, and a subject. You review it
+  and press Send yourself, so real gold and items only move on your own click.
+
 ## 0.16.3
 
 - **Opening a shop from an item jumps straight to that item.** When you open a seller from a Buy
