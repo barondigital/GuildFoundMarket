@@ -16,16 +16,13 @@ local ADDON, ns = ...
 -- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.17.0
-Cash On Delivery orders
+ns.CHANGELOG = [[Guild Found Market 0.17.1
+See what's new, and never miss a COD order
 
-A new COD tab on My Items keeps a to-do list of the Cash On Delivery mails you owe buyers, so you can keep your shop open while you're out and send the mails at a mailbox later.
-
-- Buyers request a COD straight from one of your listings (Alt-click on the Buy results, your shop, or the category Browse). The order lands on your list and the buyer gets your confirmation whisper. Turn it on with "Accept COD order requests" in Options, where you can also edit the whisper.
-- Add COD orders by hand too: buyer, item, quantity, unit price.
-- The request popup shows how many the buyer already has on order, and on a bag-synced listing caps the amount to your free stock.
-- Cancel from chat: the confirmation whisper carries a Cancel COD link (or set the quantity to 0).
-- Mailbox send-assist: at a mailbox, the Send button pre-fills the mail (recipient, the item from your bags, the COD amount, a subject). You review it and press Send yourself.]]
+- Update notes reach you even before you update: a peer running the newer version shares its changelog and you see it in an overlay. Share yours with the new "Share changelog with out-of-date players" option (on by default). Type /gfm changelog to read the notes any time.
+- An incoming COD order now flashes on screen and prints a chat line, so you notice it even with the GFM window closed.
+- "Accept COD order requests" is now on by default.
+- The Options tab is reorganised into groups (General, Selling, Cash On Delivery, Shop link visibility, Updates) with a scrollbar.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

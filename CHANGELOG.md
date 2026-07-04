@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.1
+
+- **See what's new, even before you update.** When a GFM user near you runs a newer version, your
+  client fetches that version's changelog from them and shows it in an overlay each time you open
+  GFM, so you know what you're missing without leaving the game. Sharing is controlled by a new
+  option, "Share changelog with out-of-date players" (on by default): while you're on the newest
+  version you answer behind players with your bundled notes. Type `/gfm changelog` to read the notes
+  at any time.
+- **Never miss a COD order.** An incoming Cash On Delivery request now flashes a line on screen and
+  prints one to chat, so you notice it even with the GFM window closed. Orders you add by hand don't
+  notify.
+- **"Accept COD order requests" is now on by default.**
+- **The Options tab is reorganised.** Settings are grouped into General, Selling, Cash On Delivery,
+  Shop link visibility, and Updates, and the panel now scrolls so it has room to grow.
+
 ## 0.17.0
 
 - **Cash On Delivery orders.** A new COD tab on My Items keeps a per-character to-do list of the

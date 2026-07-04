@@ -3343,66 +3343,73 @@ local function buildOptionsPanel()
 
     local optChecks, optRadios, optEdits = {}, {}, {}
 
-    -- Render one schema entry as a control at column x, starting at vertical oy; return next oy.
-    local function renderOption(s, x, oy)
-        if s.type == "choice" then
-            local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            lbl:SetPoint("TOPLEFT", x + 4, oy); lbl:SetText(s.label)
-            oy = oy - 22
-            local rx = x + 8
-            for _, opt in ipairs(s.options) do
-                local rb = CreateFrame("CheckButton", nil, optPanel, "UIRadioButtonTemplate")
-                rb:SetPoint("TOPLEFT", rx, oy); rb.key = s.key; rb.value = opt.value
-                local rl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                rl:SetPoint("LEFT", rb, "RIGHT", 3, 0); rl:SetText(opt.label)
-                rb:SetHitRectInsets(0, -(rl:GetStringWidth() + 6), 0, 0)
-                rb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self.value) end)
-                rb:SetScript("OnEnter", function(self) showTip(self, s) end)
-                rb:SetScript("OnLeave", GameTooltip_Hide)
-                optRadios[#optRadios + 1] = rb
-                rx = rx + 24 + rl:GetStringWidth() + 18
-            end
-            return oy - 30
-        end
-        local cb = CreateFrame("CheckButton", nil, optPanel, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", x, oy); cb:SetSize(26, 26); cb.key = s.key
-        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    -- Everything lives in a scrolling content frame now, so groups can grow past the panel height.
+    local scroll = CreateFrame("ScrollFrame", nil, optPanel, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 0, -46); scroll:SetPoint("BOTTOMRIGHT", -24, 2)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxs = self:GetVerticalScrollRange()
+        self:SetVerticalScroll(math.min(maxs, math.max(0, self:GetVerticalScroll() - delta * 30)))
+    end)
+    local W = 660   -- content width (panel width minus the scrollbar gutter)
+    local content = CreateFrame("Frame", nil, scroll); content:SetSize(W, 1); scroll:SetScrollChild(content)
+
+    local X, y = 6, -4   -- running layout cursor in the content frame
+
+    -- A section header with a divider line under it.
+    local function header(title)
+        y = y - 8
+        local h = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        h:SetPoint("TOPLEFT", X, y); h:SetText(title); h:SetTextColor(1, 0.82, 0)
+        y = y - 18
+        local line = content:CreateTexture(nil, "ARTWORK")
+        line:SetColorTexture(1, 1, 1, 0.12)
+        line:SetPoint("TOPLEFT", X, y); line:SetPoint("TOPRIGHT", -6, y); line:SetHeight(1)
+        y = y - 10
+    end
+
+    local function renderCheck(s)
+        local cb = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", X, y); cb:SetSize(26, 26); cb.key = s.key
+        local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
-        -- extend the click/hover area rightward over the label, so hovering or clicking the
-        -- text behaves the same as the checkbox itself (tooltip + toggle)
+        -- extend the click/hover area over the label so it behaves like the checkbox (tooltip + toggle)
         cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
         cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
         cb:SetScript("OnEnter", function(self) showTip(self, s) end)
         cb:SetScript("OnLeave", GameTooltip_Hide)
         optChecks[#optChecks + 1] = cb
-        return oy - 30
+        y = y - 28
     end
 
-    -- Two columns so the list never runs past the panel: general feature checkboxes on the left;
-    -- the format choices (price fill, shop-note items) and the hide-shop-link toggles on the right.
-    local LEFT_X, RIGHT_X, TOP_Y = 4, 340, -48
-    local lY, rY = TOP_Y, TOP_Y
-    local textSettings = {}
-    for _, s in ipairs(ns.SettingsSchema) do
-        if s.type == "text" then
-            textSettings[#textSettings + 1] = s   -- wide free-text control; rendered full-width below the columns
-        elseif s.type == "choice" or s.key:find("^hideShop") then
-            rY = renderOption(s, RIGHT_X, rY)
-        else
-            lY = renderOption(s, LEFT_X, lY)
+    local function renderChoice(s)
+        local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("TOPLEFT", X + 2, y); lbl:SetText(s.label)
+        y = y - 22
+        local rx = X + 8
+        for _, opt in ipairs(s.options) do
+            local rb = CreateFrame("CheckButton", nil, content, "UIRadioButtonTemplate")
+            rb:SetPoint("TOPLEFT", rx, y); rb.key = s.key; rb.value = opt.value
+            local rl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            rl:SetPoint("LEFT", rb, "RIGHT", 3, 0); rl:SetText(opt.label)
+            rb:SetHitRectInsets(0, -(rl:GetStringWidth() + 6), 0, 0)
+            rb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self.value) end)
+            rb:SetScript("OnEnter", function(self) showTip(self, s) end)
+            rb:SetScript("OnLeave", GameTooltip_Hide)
+            optRadios[#optRadios + 1] = rb
+            rx = rx + 24 + rl:GetStringWidth() + 18
         end
+        y = y - 30
     end
 
-    -- Free-text settings (e.g. the COD confirmation whisper) span the full width under both
-    -- columns: a label, then a wide edit box that saves on Enter or when focus leaves.
-    local ty = math.min(lY, rY) - 12
-    for _, s in ipairs(textSettings) do
-        local labelTy = ty
-        local lbl = optPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        lbl:SetPoint("TOPLEFT", LEFT_X + 4, labelTy); lbl:SetText(s.label)
-        ty = ty - 22
-        local eb = CreateFrame("EditBox", nil, optPanel, "InputBoxTemplate")
-        eb:SetPoint("TOPLEFT", LEFT_X + 8, ty); eb:SetSize(560, 22); eb:SetAutoFocus(false); eb:SetMaxLetters(s.maxLetters or 200)
+    -- Free-text setting: a label (with a Reset-to-default button on the right), then a wide edit box.
+    local function renderText(s)
+        local labelY = y
+        local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("TOPLEFT", X + 2, labelY); lbl:SetText(s.label)
+        y = y - 22
+        local eb = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+        eb:SetPoint("TOPLEFT", X + 6, y); eb:SetSize(W - 46, 22); eb:SetAutoFocus(false); eb:SetMaxLetters(s.maxLetters or 200)
         eb.key = s.key
         local function save(self) ns.SetSetting(self.key, (self:GetText() or ""):gsub("[~\r\n]", " ")) end
         eb:SetScript("OnEnterPressed", function(self) save(self); self:ClearFocus() end)
@@ -3411,11 +3418,9 @@ local function buildOptionsPanel()
         eb:SetScript("OnEnter", function(self) showTip(self, s) end)
         eb:SetScript("OnLeave", GameTooltip_Hide)
         optEdits[#optEdits + 1] = eb
-        -- "Reset to default": restore the example message (which carries every placeholder), so a
-        -- player who has edited or cleared it can always get a working template with all tokens back.
         if s.default and s.default ~= "" then
-            local reset = CreateFrame("Button", nil, optPanel, "UIPanelButtonTemplate")
-            reset:SetSize(120, 20); reset:SetPoint("TOPLEFT", LEFT_X + 448, labelTy - 2); reset:SetText("Reset to default")
+            local reset = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+            reset:SetSize(120, 20); reset:SetPoint("TOPRIGHT", -6, labelY - 1); reset:SetText("Reset to default")
             reset:SetScript("OnClick", function()
                 ns.SetSetting(s.key, s.default)
                 eb:SetText(s.default); eb:SetCursorPosition(0); eb:ClearFocus()
@@ -3427,8 +3432,41 @@ local function buildOptionsPanel()
             end)
             reset:SetScript("OnLeave", GameTooltip_Hide)
         end
-        ty = ty - 34
+        y = y - 34
     end
+
+    local function renderSetting(s)
+        if s.type == "choice" then renderChoice(s)
+        elseif s.type == "text" then renderText(s)
+        else renderCheck(s) end
+    end
+
+    -- Grouped layout. Keys are pulled from the schema by name; anything not placed in a group falls
+    -- through to "Other" at the end, so a newly added setting is never silently hidden.
+    local GROUPS = {
+        { title = "General",             keys = { "minimapButton", "altClickSearch", "showPriceTooltip", "priceFormat", "auxSeed" } },
+        { title = "Selling",             keys = { "trackDefault", "announceShopNote" } },
+        { title = "Cash On Delivery",    keys = { "codAccept", "codReplyText" } },
+        { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
+        { title = "Updates",             keys = { "announceChangelog" } },
+    }
+    local byKey, placed = {}, {}
+    for _, s in ipairs(ns.SettingsSchema) do byKey[s.key] = s end
+    for _, g in ipairs(GROUPS) do
+        header(g.title)
+        for _, k in ipairs(g.keys) do
+            local s = byKey[k]
+            if s then placed[k] = true; renderSetting(s) end
+        end
+    end
+    local leftovers = {}
+    for _, s in ipairs(ns.SettingsSchema) do if not placed[s.key] then leftovers[#leftovers + 1] = s end end
+    if #leftovers > 0 then
+        header("Other")
+        for _, s in ipairs(leftovers) do renderSetting(s) end
+    end
+
+    content:SetHeight(-y + 12)
 
     -- pull every control from the store; called on entering the tab and on any change
     -- elsewhere (e.g. a slash command), so the panel always mirrors the live settings.
