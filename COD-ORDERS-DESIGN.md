@@ -199,9 +199,18 @@ piggybacks on the existing seller summary/catalog payload as a small flag.
 1. **Unit popup menu on 1.15.7**: is `Menu.ModifyMenu` available and which menu tag backs the
    chat-name right-click menu? If uncertain, ship the modified-click fallback first and add
    the menu entry later.
-2. **Mail frame names on Classic Era**: confirm `SendMailNameEditBox`, the COD button, the
-   COD money input frame, and `C_Container.UseContainerItem` behaviour when the Send frame is
-   open. Postal (`wow-vanilla-addons/Postal`) is the blueprint.
+2. **Mail frame names on Classic Era** [VERIFIED against the classic_era Blizzard `MailFrame.lua`
+   source]: `SendMailNameEditBox`, `SendMailSubjectEditBox`, `SendMailMoney` (a MoneyInputFrame,
+   driven with `MoneyInputFrame_SetCopper`), the radio pair `SendMailSendMoneyButton` /
+   `SendMailCODButton` toggled by `SendMailRadioButton_OnClick(1|2)`, `SendMailAttachment1..16`,
+   the Send button `SendMailMailButton`, and the body box `MailEditBox`. `SendMailFrame_CanSend()`
+   enables Send once name + subject are set and (in COD mode) the amount is within `MAX_COD_AMOUNT`.
+   `C_Container.UseContainerItem(bag, slot)` attaches while the Send frame is open; a larger stack
+   is split with `C_Container.SplitContainerItem` and dropped into a free slot via
+   `ClickSendMailItemButton`, so we never over-attach. Correction to an earlier note: `SetSendMailCOD`
+   **does** exist on 1.15 (the WeakAuras whitelist that suggested otherwise is curated, not the full
+   API), but we never call it: we drive the COD radio + money input and let the seller press Send,
+   whose handler calls it. Postal is the same pattern.
 3. **Auto-reply throttling**: confirm one whisper per request is comfortably within send
    limits (it is for normal volumes; note it, do not batch).
 4. **Capability flag placement**: cheapest place to advertise `codAccept` in the existing
@@ -222,7 +231,10 @@ Phased so each phase is independently useful and shippable.
   catalog, and the category Browse. Optimistic (no capability handshake): the seller declines
   with a reason (closed / stock / price) and the buyer's request times out if nobody answers.
   The seller's own listed price is authoritative. Headless test at `tests/cod_protocol.lua`.
-- **Phase 3 (mailbox assist)**: the Send action pre-filling the send-mail frame.
+- **Phase 3 (mailbox assist)** [DONE]: `Services/CODMail.lua`, a "Send" action per COD row that,
+  at a mailbox, pre-fills the Send-Mail frame (recipient, the item pulled from bags, COD amount,
+  subject) and leaves the real Send button for the seller. Headless test at `tests/cod_mail.lua`.
+  See section 8 for the verified Classic Era mail facts.
 - **Phase 4 (polish)**: unit popup menu entry, hover details, nicer empty/loading states.
 
 ## 10. Out of scope (v1)

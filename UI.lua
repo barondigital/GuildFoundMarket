@@ -215,81 +215,102 @@ local function hideCODQtyPopup()
     if codQtyPopup then codQtyPopup:Hide() end
 end
 
--- maxQty (from the seller's CQR cap) is the most the buyer may request: only set for a bag-synced
--- listing, where the seller reports real free stock. nil = uncapped (manual listing / seller offline).
-local function showCODQtyPopup(seller, itemID, suffix, price, outstanding, cx, cy, maxQty)
-    local f = codQtyPopup
-    if not f then
-        f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        f:SetSize(260, 86); f:SetFrameStrata("DIALOG"); f:EnableMouse(true)
-        f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 16,
-            insets = { left = 4, right = 4, top = 4, bottom = 4 } })
-        f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetPoint("TOPRIGHT", -12, -10); f.title:SetJustifyH("LEFT")
-        f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        f.hint:SetPoint("TOPLEFT", 12, -28); f.hint:SetPoint("TOPRIGHT", -12, -28); f.hint:SetJustifyH("LEFT")
-        local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
-        eb:SetSize(48, 20); eb:SetPoint("BOTTOMLEFT", 16, 12); eb:SetNumeric(true); eb:SetMaxLetters(5)
-        f.eb = eb
-        -- snap back to the cap when the buyer types more than the seller has to give
-        eb:SetScript("OnTextChanged", function(self, user)
-            if not user or not f.maxQty then return end
+-- Build the qty picker once. f.maxQty = the seller's cap (nil until the reply lands / uncapped);
+-- f.userEdited flags that the buyer typed, so a late reply won't clobber their number.
+local function buildCODQtyPopup()
+    local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    f:SetSize(260, 86); f:SetFrameStrata("DIALOG"); f:EnableMouse(true)
+    f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 } })
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f.title:SetPoint("TOPLEFT", 12, -10); f.title:SetPoint("TOPRIGHT", -12, -10); f.title:SetJustifyH("LEFT")
+    f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    f.hint:SetPoint("TOPLEFT", 12, -28); f.hint:SetPoint("TOPRIGHT", -12, -28); f.hint:SetJustifyH("LEFT")
+    local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    eb:SetSize(48, 20); eb:SetPoint("BOTTOMLEFT", 16, 12); eb:SetNumeric(true); eb:SetMaxLetters(5)
+    f.eb = eb
+    eb:SetScript("OnTextChanged", function(self, user)
+        if not user then return end
+        f.userEdited = true
+        if f.maxQty then   -- snap back to the cap when the buyer types more than the seller has to give
             local v = tonumber(self:GetText())
             if v and v > f.maxQty then self:SetText(tostring(f.maxQty)); self:SetCursorPosition(5) end
-        end)
-        local ok = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-        ok:SetSize(88, 22); ok:SetPoint("BOTTOMRIGHT", -12, 10)
-        f.ok = ok
-        local function submit()
-            -- blank or 0 is a cancel (RequestCOD turns qty 0 into "drop my order"); any other value
-            -- is the requested amount. Don't clamp to 1 here, or cancel could never be expressed.
-            local qty = tonumber(eb:GetText()) or 0
-            if f.maxQty and qty > f.maxQty then qty = f.maxQty end
-            f:Hide()
-            ns.RequestCOD(f.seller, f.itemID, f.suffix, qty, f.price)
         end
-        ok:SetScript("OnClick", submit)
-        eb:SetScript("OnEnterPressed", submit)
-        eb:SetScript("OnEscapePressed", function() f:Hide() end)
-        codQtyPopup = f
+    end)
+    local ok = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    ok:SetSize(88, 22); ok:SetPoint("BOTTOMRIGHT", -12, 10)
+    f.ok = ok
+    local function submit()
+        -- blank or 0 is a cancel (RequestCOD turns qty 0 into "drop my order"); any other value
+        -- is the requested amount. Don't clamp to 1 here, or cancel could never be expressed.
+        local qty = tonumber(eb:GetText()) or 0
+        if f.maxQty and qty > f.maxQty then qty = f.maxQty end
+        f:Hide()
+        ns.RequestCOD(f.seller, f.itemID, f.suffix, qty, f.price)
     end
-    -- a bag-synced seller with nothing left to give and no order of yours to edit: nothing to do
-    if maxQty == 0 and (outstanding or 0) == 0 then
-        ns.Feedback(("%s has none of that free for a COD right now."):format(seller), true)
+    ok:SetScript("OnClick", submit)
+    eb:SetScript("OnEnterPressed", submit)
+    eb:SetScript("OnEscapePressed", function() f:Hide() end)
+    return f
+end
+
+-- The seller's answer landed: fill the still-open popup. outstanding nil = no answer; cap nil =
+-- uncapped. Skips the edit-box if the buyer already typed; snaps an over-cap value back.
+local function resolveCODQtyPopup(outstanding, cap)
+    local f = codQtyPopup
+    if not (f and f:IsShown()) then return end   -- already submitted or dismissed
+    -- bag-synced seller with nothing free and no order of yours to edit: nothing to request
+    if cap == 0 and (outstanding or 0) == 0 then
+        f:Hide()
+        ns.Feedback(("%s has none of that free for a COD right now."):format(f.seller), true)
         return
     end
-    f.seller, f.itemID, f.suffix, f.price, f.maxQty = seller, itemID, suffix or 0, price, maxQty
-    f.title:SetText(("COD %s"):format(itemName(itemID) or "item"))
-    local cap = maxQty and (" |cff888888(max %d)|r"):format(maxQty) or ""
+    f.maxQty = cap
+    local capTxt = cap and (" |cff888888(max %d)|r"):format(cap) or ""
     local prefill = 1
     if outstanding == nil then
         f.hint:SetText("|cffaaaaaaCouldn't reach the seller; requesting a new order.|r")
         f.ok:SetText("Request")
     elseif outstanding > 0 then
         prefill = outstanding
-        f.hint:SetText(("|cffffd100You have %d on order — change to update, 0 to cancel.|r%s"):format(outstanding, cap))
+        f.hint:SetText(("|cffffd100You have %d on order — change to update, 0 to cancel.|r%s"):format(outstanding, capTxt))
         f.ok:SetText("Update")
     else
-        f.hint:SetText("How many would you like?" .. cap)
+        f.hint:SetText("How many would you like?" .. capTxt)
         f.ok:SetText("Request")
     end
-    if maxQty and prefill > maxQty then prefill = maxQty end   -- keep the prefill within the cap too
-    f:ClearAllPoints()
-    local scale = UIParent:GetEffectiveScale()
-    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (cx or 0) / scale + 8, (cy or 0) / scale - 8)
-    f:Show()
-    f.eb:SetText(tostring(prefill)); f.eb:HighlightText(); f.eb:SetFocus()
+    if cap and prefill > cap then prefill = cap end
+    if not f.userEdited then
+        f.eb:SetText(tostring(prefill)); f.eb:HighlightText()
+    elseif cap then
+        local v = tonumber(f.eb:GetText())
+        if v and v > cap then f.eb:SetText(tostring(cap)) end
+    end
 end
 
+-- Alt-click shows the picker AT ONCE in a "waiting for the seller" state, then the query reply fills
+-- in the outstanding qty and the cap. Showing immediately gives the buyer instant feedback that the
+-- click registered, instead of a blank pause until the seller answers (or the ~2s timeout).
 local function promptCODQty(seller, itemID, suffix, price)
     if not (seller and itemID) then return end
     codQtyGen = codQtyGen + 1
     local g = codQtyGen
-    local cx, cy = GetCursorPosition()   -- capture now; the query reply lands a moment later
+    local f = codQtyPopup or buildCODQtyPopup()
+    codQtyPopup = f
+    f.seller, f.itemID, f.suffix, f.price, f.maxQty, f.userEdited = seller, itemID, suffix or 0, price, nil, false
+    f.title:SetText(("COD %s"):format(itemName(itemID) or "item"))
+    f.hint:SetText(("|cffaaaaaaChecking your order with %s...|r"):format(seller))
+    f.ok:SetText("Request")
+    f:ClearAllPoints()
+    local scale = UIParent:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", cx / scale + 8, cy / scale - 8)
+    f:Show()
+    f.eb:SetText("1"); f.eb:HighlightText(); f.eb:SetFocus()
     ns.QueryCOD(seller, itemID, suffix, function(outstanding, cap)
-        if g ~= codQtyGen then return end   -- the buyer switched view before the seller answered
-        showCODQtyPopup(seller, itemID, suffix, price, outstanding, cx, cy, cap)
+        if g ~= codQtyGen then return end   -- the buyer switched view / reopened before the answer
+        resolveCODQtyPopup(outstanding, cap)
     end)
 end
 
@@ -426,8 +447,34 @@ end
 -- Reset a pooled row to a known baseline before a formatter fills in only its differences.
 -- Rows are shared across the Buy / My Items / Sellers tabs, so anything a previous row set
 -- (scripts, colour, the trailing buttons, the hover link) must be cleared here.
+-- Shared list columns (Item/Qty/c3/c4). The COD view carries three action buttons (Send/Edit/Done)
+-- on the right, which at the default x's would sit on top of the Buyer name (the buttons start at
+-- row-x 564 on a 720-wide row). So COD pulls Qty/COD/Buyer left into the slack the other item lists
+-- leave, ending Buyer before the buttons. Headers move via setHeaderColumns; row cells via
+-- applyRowColumns (default in resetRow, COD in formatCODRow).
+local COLS = {
+    default = { h2 = 322, h3 = 384, h4 = 524, c2 = { 322, 50 }, c3 = { 382, 130 }, c4 = { 524, 190 } },
+    -- Item cell (c1) is 280 wide (26..306), so Qty starts at 310; COD/Buyer follow, Buyer ending at
+    -- 560 just before the Send button (row-x 564).
+    cod     = { h2 = 310, h3 = 350, h4 = 460, c2 = { 310, 34 }, c3 = { 350, 104 }, c4 = { 460, 100 } },
+}
+local function setHeaderColumns(mode)
+    if not main then return end
+    local c = COLS[mode]
+    main.h2:ClearAllPoints(); main.h2:SetPoint("TOPLEFT", c.h2, -96)
+    main.h3:ClearAllPoints(); main.h3:SetPoint("TOPLEFT", c.h3, -96)
+    main.h4:ClearAllPoints(); main.h4:SetPoint("TOPLEFT", c.h4, -96)
+end
+local function applyRowColumns(r, mode)
+    local c = COLS[mode]
+    r.c2:ClearAllPoints(); r.c2:SetPoint("LEFT", c.c2[1], 0); r.c2:SetWidth(c.c2[2])
+    r.c3:ClearAllPoints(); r.c3:SetPoint("LEFT", c.c3[1], 0); r.c3:SetWidth(c.c3[2])
+    r.c4:ClearAllPoints(); r.c4:SetPoint("LEFT", c.c4[1], 0); r.c4:SetWidth(c.c4[2])
+end
+
 local function resetRow(r)
     r.icon:Hide()
+    applyRowColumns(r, "default")   -- COD rows override to their tighter layout in formatCODRow
     r.c1:EnableMouse(true)
     r.c1.fs:SetTextColor(1, 1, 1)
     r.c1.tip = nil
@@ -438,6 +485,7 @@ local function resetRow(r)
     r.x:Hide(); r.x:SetScript("OnClick", nil)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit")   -- COD rows relabel it "Done"; reset so a reused row never keeps that
     r.codEdit:Hide(); r.codEdit:SetScript("OnClick", nil)
+    r.codSend:Hide(); r.codSend:SetScript("OnClick", nil)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
@@ -603,6 +651,7 @@ end
 -- relabeled) clears the order once you've mailed it. Right-click the item whispers the buyer.
 local function formatCODRow(r, d)
     resetRow(r)
+    applyRowColumns(r, "cod")   -- pull columns left so Buyer clears the Send/Edit/Done buttons
     local rec = d.rec
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -619,6 +668,7 @@ local function formatCODRow(r, d)
     r.c2:SetText(d.qty or 1)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cff888888-|r")
     r.c4:SetText(d.buyer or ""); r.c4:Show()
+    r.codSend:Show(); r.codSend:SetScript("OnClick", function() if ns.CODSendAssist then ns.CODSendAssist(rec) end end)
     r.codEdit:Show(); r.codEdit:SetScript("OnClick", function() if ns.LoadCODForEdit then ns.LoadCODForEdit(rec) end end)
     r.edit:Show(); r.edit:SetText("Done"); r.edit:SetScript("OnClick", function() ns.RemoveCODOrder(rec, "done") end)
     r.itemID = d.id
@@ -988,7 +1038,7 @@ end
 -- Switch between the seller index and a single seller's catalog.
 function ns.SetSellersView(v)
     if not main then return end
-    hideCODQtyPopup()
+    hideCODQtyPopup(); setHeaderColumns("default")
     sellersView = v
     local index = (v == "INDEX")
     main.sellerFilter:SetShown(index); main.sellerFilterLabel:SetShown(index); main.sellerRefreshBtn:SetShown(index)
@@ -1059,6 +1109,7 @@ end
 function ns.RefreshCOD()
     local hasOrders
     refreshList(currentTab == "MINE" and mineMode == "COD", function()
+        setHeaderColumns("cod")
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("COD"); main.h4:SetText("Buyer")
         for _, rec in ipairs(ns.CODList()) do   -- CODList is already oldest-first (clear the top one first)
             hasOrders = true
@@ -1191,7 +1242,7 @@ end
 -- Switch the Buyers tab between the index, "who wants X" results, and one buyer's want list.
 function ns.SetBuyersView(v)
     if not main then return end
-    hideCODQtyPopup()
+    hideCODQtyPopup(); setHeaderColumns("default")
     buyersView = v
     local index = (v == "INDEX")
     local show  = (v == "SHOW")
@@ -1398,7 +1449,7 @@ end
 setBuyMode = function(mode)
     buyMode = mode
     if not main then return end
-    hideCODQtyPopup()
+    hideCODQtyPopup(); setHeaderColumns("default")
     local browse = (mode == "BROWSE")
     if main.modeToggle then main.modeToggle:SetText(browse and "<< Search" or "Browse >>") end
     main.searchBox:SetShown(not browse); main.searchLabel:SetShown(not browse); main.ac:Hide()
@@ -1798,6 +1849,8 @@ local function buildRows()
         -- COD rows only: an Edit button left of the Done button that loads the row back into the
         -- add form. Shares findBtn's slot (never shown on the same row, so no overlap).
         r.codEdit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codEdit:SetSize(40, 20); r.codEdit:SetPoint("RIGHT", r.edit, "LEFT", -2, 0); r.codEdit:SetText("Edit"); r.codEdit:Hide()
+        -- COD rows only: a Send button (mailbox send-assist) left of Edit.
+        r.codSend = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codSend:SetSize(44, 20); r.codSend:SetPoint("RIGHT", r.codEdit, "LEFT", -2, 0); r.codSend:SetText("Send"); r.codSend:Hide()
         -- chat-bubble icon for a player's note (Sellers and Buyers index rows). Positioned after
         -- the location by the formatter, which also sets self.store (the index table to read/cache
         -- in). The note text is fetched on hover (click to retry a failed load); state read live by name.
@@ -1856,7 +1909,7 @@ local function buildRows()
         end)
         r.track:SetScript("OnLeave", GameTooltip_Hide)
         r.track:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.codEdit, r.noteBtn, r.findBtn, r.track)
+        addRowHighlight(r, r.c1, r.x, r.edit, r.codEdit, r.codSend, r.noteBtn, r.findBtn, r.track)
         r:Hide(); rows[i] = r
     end
 end
@@ -2918,6 +2971,7 @@ local function buildWTB()
         local selling = (mode == "SELLING")
         local wtb = (mode == "WTB")
         local cod = (mode == "COD")
+        setHeaderColumns(cod and "cod" or "default")   -- COD packs three action buttons on the right
         main.mineSellBtn.sel:SetShown(selling); main.mineWtbBtn.sel:SetShown(wtb); main.mineCodBtn.sel:SetShown(cod)
         main.postPanel:SetShown(selling); main.wtbPanel:SetShown(wtb); main.codPanel:SetShown(cod)
         main.announceBtn:SetShown(selling); main.announceDestBtn:SetShown(selling)
@@ -3379,6 +3433,7 @@ end
 function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not main then return end
     hideCODQtyPopup()   -- a pending COD qty picker belongs to the view you're leaving
+    setHeaderColumns("default")   -- MINE/COD re-applies its own layout via setMineMode below
     currentTab = tab
     for _, b in ipairs(tabButtons) do
         local on = (b.tab == tab)
