@@ -18,6 +18,7 @@ function ns.ScanSellers(filter)
     ns.sellers.pendingOpen = nil   -- a fresh scan cancels any pending shop-link auto-open
     sellerSeq = sellerSeq + 1
     activeSid = ns.playerName .. "#S" .. sellerSeq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeSid) end
     wipe(ns.sellers.results)
     ns.sellers.count = 0
     ns.sellers.capped = false
@@ -84,6 +85,7 @@ function ns.OpenSeller(seller, loc)
     ns.Log("OPEN " .. seller .. ": requesting catalog")
     sellerSeq = sellerSeq + 1
     activeLid = ns.playerName .. "#L" .. sellerSeq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeLid) end
     -- seed the note from the index cache (if you already loaded it there); real sellers also
     -- bundle a fresh note with their catalog reply (see the L handler)
     local seededNote = ns.sellers.results[seller] and ns.sellers.results[seller].note
@@ -142,7 +144,7 @@ ns.OnMessage("C", function(a, b, c, d, e, _, sender)
     local s = Ambiguate(sender, "short")
     ns.NoteGuild(sender, e)
     if not ns.sellers.results[s] then
-        if (ns.sellers.count or 0) >= ns.SELLER_CAP then ns.sellers.capped = true; return end
+        if (ns.sellers.count or 0) >= ns.ScanCap() then ns.sellers.capped = true; return end
         ns.sellers.count = (ns.sellers.count or 0) + 1
     end
     -- note stays nil ("not fetched yet"); the bubble offers to load it when hasNote is set
@@ -177,7 +179,10 @@ ns.OnMessage("L", function(a, _, _, _, _, _, sender)
 end)
 
 -- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix;...).
+-- The bag scan fetches catalogs over the same message with its own lids; give it first
+-- pick so a sweep never collides with a catalog the Sellers tab has open.
 ns.OnMessage("K", function(a, b, c)
+    if ns.BagScan and ns.BagScan.HandleCatalogChunk(a, b, c) then return end
     if a ~= activeLid or not ns.sellers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix = strsplit(":", chunk)

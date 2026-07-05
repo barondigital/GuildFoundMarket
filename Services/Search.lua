@@ -11,6 +11,7 @@ function ns.Search(itemID)
     if not itemID then return end
     querySeq = querySeq + 1
     activeQid = ns.playerName .. "#" .. querySeq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeQid) end
     wipe(ns.search.results)
     ns.search.itemID = itemID
     ns.search.active = true

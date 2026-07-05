@@ -16,13 +16,12 @@ local ADDON, ns = ...
 -- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.17.4
-One-click COD from a whisper, clearer confirmations
+ns.CHANGELOG = [[Guild Found Market 0.18.0
+Bag scan with market prices, network health view, adjustable scan size
 
-- New: when a buyer whispers you an item link for one of your listings, a clickable [Create COD] is added to the message. Click it and a small popup asks the quantity, then the order is placed. Turn it off with "Add a Create COD link to buyer whispers".
-- The quantity popup now opens above the chat line (out of the way) with a close button.
-- Buyer confirmations (request accepted / cancelled, and the Cancel COD link result) now show in chat, not just the window, and read more clearly.
-- The changelog overlay has a link to the full changelog history on GitHub at the bottom.]]
+- New: Scan bags (beside Offer on My Items) finds every sellable item you carry (bank included while open) and checks what the confederation asks for each. Live progress, stoppable at any time; hover the market column for the individual sellers. Each scan also refreshes the price ranges on item tooltips.
+- New: Network view (Help tab, next to Debug): a plain-language look at your marketplace traffic, showing server slow-downs, lost or late replies, and whether your scan cap was reached.
+- New: how many sellers/buyers one scan collects is now a slider in Options under Network (50 to 600, was fixed at 150). Client-side only.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

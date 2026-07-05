@@ -30,6 +30,7 @@ function ns.BrowseCategory(classID, subClassID, slot)
     if not classID or not subClassID then return end
     browseSeq = browseSeq + 1
     activeQCid = ns.playerName .. "#QC" .. browseSeq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeQCid) end
     wipe(ns.browseResults)
     ns.browseClass, ns.browseSub, ns.browseSlot = classID, subClassID, slot
     ns.browsing = true

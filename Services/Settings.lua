@@ -14,6 +14,7 @@ local ADDON, ns = ...
 -- status = optional fn returning (text, r, g, b): a live status line appended to the
 --          tooltip, e.g. whether an optional dependency is actually installed.
 -- type   = "choice" for a multi-option setting (needs `options` = { {value, label}, ... });
+--          "range" for a numeric slider (needs `min`, `max`, optional `step`);
 --          omitted means a boolean toggle.
 ns.SettingsSchema = {
     {
@@ -137,6 +138,17 @@ ns.SettingsSchema = {
         default = true,
     },
     {
+        key = "scanCap",
+        type = "range",
+        label = "Sellers & Buyers scan size",
+        tip = "How many players one Sellers or Buyers scan collects before ignoring the rest.\n\n"
+            .. "Higher = a more complete index on a big confederation, at the cost of more data for your client to hold and a busier scan. "
+            .. "Lower = lighter and snappier, but the index may cut off early. Only affects what YOUR client keeps; nothing changes for anyone else.\n\n"
+            .. "The Network view (Help tab) shows whether your scans actually hit this cap.",
+        default = 150,
+        min = 50, max = 600, step = 10,
+    },
+    {
         key = "hideShopGuild",
         label = "Hide shop links in guild chat",
         tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",
@@ -185,7 +197,11 @@ end
 -- re-apply is possible; reactors must therefore be idempotent.
 function ns.SetSetting(key, value)
     local s = byKey[key]
-    if not (s and (s.type == "choice" or s.type == "text")) then value = value and true or false end   -- only booleans get coerced
+    if not (s and (s.type == "choice" or s.type == "text" or s.type == "range")) then value = value and true or false end   -- only booleans get coerced
+    if s and s.type == "range" then   -- keep a slider value numeric and inside its bounds
+        value = tonumber(value) or s.default
+        value = math.max(s.min, math.min(s.max, value))
+    end
     store()[key] = value
     ns.Emit("setting:" .. key, value)
     ns.Emit("setting", key, value)

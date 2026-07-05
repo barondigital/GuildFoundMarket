@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.18.0
+
+- **Scan bags: price-check everything you carry.** A new "Scan bags" button beside Offer on My Items
+  finds every sellable item you carry (not soulbound, no quest items; your bank is included while
+  its window is open) and checks what the confederation currently asks for each. On the wire it's
+  one broadcast plus a catalog fetch per online seller, the same load as one buyer browsing each
+  shop once. A window shows live progress ("fetching price catalogs 37/153") and a Stop button;
+  stopping keeps the prices found so far. Each row shows your stock, your current listing and the
+  market low/high with seller count; hover the market column for the individual sellers and prices.
+  Every scan also refreshes the price ranges shown on item tooltips.
+- **Network health view.** A Network button next to Debug on the Help tab opens a plain-language
+  view of this session's marketplace traffic: what you sent and received, whether the server slowed
+  your sending down, whether outgoing replies were dropped or answers arrived too late, and whether
+  your scan cap was reached, each with a one-line explanation and a green/yellow/red verdict on top.
+  Open to everyone, so guildmates can compare numbers when tuning their settings.
+- **Adjustable scan size.** How many sellers/buyers one scan collects (previously fixed at 150) is
+  now a slider in Options under Network, from 50 to 600. Purely client-side: it only changes how
+  much your own client keeps; nothing changes for anyone else.
+
 ## 0.17.4
 
 - **One-click COD from a whisper.** When a buyer whispers you an item link for one of your listings,

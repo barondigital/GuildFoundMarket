@@ -1691,6 +1691,19 @@ local function buildWindow()
     end)
     debugBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.debugBtn = debugBtn
+    -- network-health toggle (plain-language traffic stats). Open to everyone, so
+    -- guildmates can compare numbers when tuning the scan cap in Options.
+    local netBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    netBtn:SetSize(70, 20); netBtn:SetPoint("RIGHT", debugBtn, "LEFT", -6, 0); netBtn:SetText("Network"); netBtn:Hide()
+    netBtn:SetScript("OnClick", function() if ns.ToggleNetStats then ns.ToggleNetStats() end end)
+    netBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("Network health")
+        GameTooltip:AddLine("How much marketplace traffic you send and receive, whether the server is slowing you down, and whether your scan cap is cutting results short.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    netBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.netBtn = netBtn
 end
 
 local function buildTabs()
@@ -2387,6 +2400,23 @@ local function buildPostPanel()
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
     main.offerBtn = offerBtn
 
+    -- Bag scan: price-check every sellable item you carry against the market. Sits beside
+    -- Offer (Offer keeps the corner). Must stay a direct OnClick call: the scan opens with
+    -- a channel broadcast, which Classic only allows straight from a hardware event.
+    local scanBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    scanBtn:SetSize(90, 24); scanBtn:SetPoint("RIGHT", offerBtn, "LEFT", -8, 0); scanBtn:SetText("Scan bags")
+    scanBtn:SetScript("OnClick", function() if ns.BagScan then ns.BagScan.Start() end end)
+    scanBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Scan bags")
+        GameTooltip:AddLine("Find every sellable item you carry (not soulbound, not quest items; your bank too while it's open) and check what the confederation currently asks for each.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Takes a moment: it asks every online seller for their price list. You can stop it at any time.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    scanBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.scanBtn = scanBtn
+
     -- clear the compose panel back to the empty "new offer" state
     local function clearDraft()
         editingKey = nil
@@ -2431,6 +2461,7 @@ local function buildPostPanel()
         offerBtn:SetText("Update")
         priceBox:SetFocus(); priceBox:HighlightText()   -- price is the field most edits change
     end
+
 end
 
 local function buildDbPanel()
@@ -3418,7 +3449,7 @@ local function buildOptionsPanel()
         GameTooltip:Show()
     end
 
-    local optChecks, optRadios, optEdits = {}, {}, {}
+    local optChecks, optRadios, optEdits, optSliders = {}, {}, {}, {}
 
     -- Everything lives in a scrolling content frame now, so groups can grow past the panel height.
     local scroll = CreateFrame("ScrollFrame", nil, optPanel, "UIPanelScrollFrameTemplate")
@@ -3512,9 +3543,39 @@ local function buildOptionsPanel()
         y = y - 34
     end
 
+    -- Numeric slider setting: a live "label: value" line, then an OptionsSliderTemplate
+    -- with the min/max printed at the ends. Stores on every (stepped) value change.
+    local function renderRange(s)
+        local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        lbl:SetPoint("TOPLEFT", X + 2, y)
+        y = y - 24
+        local sl = CreateFrame("Slider", "GuildFoundMarketOptSlider_" .. s.key, content, "OptionsSliderTemplate")
+        sl:SetPoint("TOPLEFT", X + 8, y); sl:SetWidth(280)
+        sl:SetMinMaxValues(s.min, s.max)
+        sl:SetValueStep(s.step or 1)
+        sl:SetObeyStepOnDrag(true)
+        _G[sl:GetName() .. "Low"]:SetText(s.min)
+        _G[sl:GetName() .. "High"]:SetText(s.max)
+        _G[sl:GetName() .. "Text"]:SetText("")
+        sl.key = s.key
+        local function setLabel(v) lbl:SetText(("%s: |cffffffff%d|r"):format(s.label, v)) end
+        sl.SyncLabel = setLabel
+        sl:SetScript("OnValueChanged", function(self, v)
+            v = math.floor(v + 0.5)
+            setLabel(v)
+            -- RefreshOptions drives SetValue too; only store a real change to avoid loops
+            if not self.updating and v ~= ns.GetSetting(self.key) then ns.SetSetting(self.key, v) end
+        end)
+        sl:SetScript("OnEnter", function(self) showTip(self, s) end)
+        sl:SetScript("OnLeave", GameTooltip_Hide)
+        optSliders[#optSliders + 1] = sl
+        y = y - 36
+    end
+
     local function renderSetting(s)
         if s.type == "choice" then renderChoice(s)
         elseif s.type == "text" then renderText(s)
+        elseif s.type == "range" then renderRange(s)
         else renderCheck(s) end
     end
 
@@ -3525,6 +3586,7 @@ local function buildOptionsPanel()
         { title = "Selling",             keys = { "trackDefault", "announceShopNote" } },
         { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codCreateLink", "codReplyText", "codSentText" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
+        { title = "Network",             keys = { "scanCap" } },
         { title = "Updates",             keys = { "announceChangelog" } },
     }
     local byKey, placed = {}, {}
@@ -3552,6 +3614,11 @@ local function buildOptionsPanel()
         for _, rb in ipairs(optRadios) do rb:SetChecked(ns.GetSetting(rb.key) == rb.value) end
         for _, eb in ipairs(optEdits) do
             if not eb:HasFocus() then eb:SetText(ns.GetSetting(eb.key) or "") end   -- don't stomp mid-edit
+        end
+        for _, sl in ipairs(optSliders) do
+            local v = tonumber(ns.GetSetting(sl.key)) or 0
+            sl.updating = true; sl:SetValue(v); sl.updating = false
+            sl.SyncLabel(v)
         end
     end
     ns.On("setting", function()
@@ -3631,6 +3698,9 @@ end
 function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not main then return end
     hideCODQtyPopup()   -- a pending COD qty picker belongs to the view you're leaving
+    -- the bag-scan overlay belongs to My Items; the scan itself keeps running hidden
+    -- (reopen it with the Scan bags button)
+    if tab ~= "MINE" and _G.GuildFoundMarketBagScan then _G.GuildFoundMarketBagScan:Hide() end
     setHeaderColumns("default")   -- MINE/COD re-applies its own layout via setMineMode below
     currentTab = tab
     for _, b in ipairs(tabButtons) do
@@ -3688,6 +3758,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if main.announceWAC then main.announceWAC:Hide() end
     main.helpPanel:SetShown(help)
     main.debugBtn:SetShown(help)
+    main.netBtn:SetShown(help)
     main.helpUsageBtn:SetShown(help); main.helpSetupBtn:SetShown(help)
     main.optionsPanel:SetShown(options)
     main.scroll:SetShown(not help and not options)

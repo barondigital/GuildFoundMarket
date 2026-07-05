@@ -22,6 +22,7 @@ function ns.FindBuyersForItem(itemID)
     if not itemID then return end
     seq = seq + 1
     activeWQid = ns.playerName .. "#WQ" .. seq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeWQid) end
     wipe(ns.buyers.find.results)
     ns.buyers.find.itemID = itemID
     ns.buyers.find.active = true
@@ -96,6 +97,7 @@ function ns.ScanBuyers(filter)
     ns.buyers.pendingOpen = nil
     seq = seq + 1
     activeWSid = ns.playerName .. "#WS" .. seq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeWSid) end
     wipe(ns.buyers.results)
     ns.buyers.count = 0
     ns.buyers.capped = false
@@ -168,7 +170,7 @@ ns.OnMessage("WC", function(a, b, c, d, e, _, sender)
     local s = Ambiguate(sender, "short")
     ns.NoteGuild(sender, e)
     if not ns.buyers.results[s] then
-        if (ns.buyers.count or 0) >= ns.SELLER_CAP then ns.buyers.capped = true; return end
+        if (ns.buyers.count or 0) >= ns.ScanCap() then ns.buyers.capped = true; return end
         ns.buyers.count = (ns.buyers.count or 0) + 1
     end
     ns.buyers.results[s] = { count = tonumber(b) or 0, loc = c or "", hasNote = (d == "1") }
@@ -190,6 +192,7 @@ function ns.OpenBuyer(buyer, loc)
     ns.Log("OPEN buyer " .. buyer .. ": requesting want list")
     seq = seq + 1
     activeWLid = ns.playerName .. "#WL" .. seq
+    if ns.NetStats then ns.NetStats.ScanStarted(activeWLid) end
     -- seed the note from the index cache (clicked there) or selftest; real buyers also bundle a
     -- fresh note with their want-list reply (see the WL handler)
     local seededNote = ns.buyers.results[buyer] and ns.buyers.results[buyer].note

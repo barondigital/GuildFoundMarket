@@ -14,6 +14,11 @@ local SCAN_JITTER   = 2.0           -- seconds sellers spread scan replies over 
 local FILTER_MIN    = 3             -- min chars before a seller-name scan goes over the network
 ns.SELLER_CAP = SELLER_CAP
 ns.FILTER_MIN = FILTER_MIN
+
+-- The sellers/buyers index cap is player-tunable (Options > Network): a bigger, more
+-- complete index versus a lighter, snappier scan. Purely client-side (it only limits what
+-- THIS client stores; everyone replies regardless), so each player picks their own.
+function ns.ScanCap() return tonumber(ns.GetSetting and ns.GetSetting("scanCap")) or SELLER_CAP end
 ns.QUERY_SETTLE = QUERY_SETTLE
 ns.SCAN_JITTER = SCAN_JITTER
 
@@ -209,12 +214,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "CHAT_MSG_ADDON" then
         local prefix, text, _, sender = ...
-        if prefix == ns.PREFIX then ns.DispatchMessage(text, sender) end
+        if prefix == ns.PREFIX then
+            if ns.NetStats then ns.NetStats.Bump("recvWhisper") end
+            ns.DispatchMessage(text, sender)
+        end
 
     elseif event == "CHAT_MSG_CHANNEL" then
         local text, sender, _, chanName, _, _, _, chanIdx, chanBase = ...
         local isGFM = text and text:sub(1, #CHAT_TAG) == CHAT_TAG
         if isGFM then
+            if ns.NetStats then ns.NetStats.Bump("recvChannel") end
             if ns.dev then devEcho("|cff00ff96GFM|r received channel: " .. text:sub(#CHAT_TAG + 1) .. " (from " .. tostring(sender) .. ")") end
             ns.DispatchMessage(text:sub(#CHAT_TAG + 1), sender)
         end

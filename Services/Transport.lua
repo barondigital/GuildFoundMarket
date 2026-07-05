@@ -18,9 +18,17 @@ local sendBacklogWarned = false
 
 -- Queue a whispered reply. Channel broadcasts do not go here (they need a hardware event).
 function ns.EnqueueWhisper(msg, to)
-    if #sendQ >= SEND_QUEUE_MAX then table.remove(sendQ, 1) end
+    if #sendQ >= SEND_QUEUE_MAX then
+        table.remove(sendQ, 1)
+        if ns.NetStats then ns.NetStats.Bump("dropped") end   -- an answer someone will never get
+    end
     sendQ[#sendQ + 1] = { msg = msg, to = to }
+    if ns.NetStats then ns.NetStats.NoteBacklog(#sendQ) end
 end
+
+-- Live queue depth, for the Network view.
+function ns.SendQueueSize() return #sendQ end
+ns.SEND_QUEUE_MAX = SEND_QUEUE_MAX
 
 -- Hold off the first join until the default chat channels (General, Trade, LocalDefense...)
 -- have settled, so we do not grab a low slot like /1 and push everyone's channels up.
@@ -79,8 +87,10 @@ function ns.StartTransport()
                 and res == Enum.SendAddonMessageResult.AddonMessageThrottle
             if throttled then
                 ns.Log("THROTTLE: addon whisper to " .. item.to .. " throttled by server; will retry")
+                if ns.NetStats then ns.NetStats.Bump("throttled") end
             else
                 table.remove(sendQ, 1)
+                if ns.NetStats then ns.NetStats.Bump("sent"); ns.NetStats.Bump("sentBytes", #item.msg) end
             end
         end
         -- surface a growing backlog (latency / throttling symptom), edge-triggered

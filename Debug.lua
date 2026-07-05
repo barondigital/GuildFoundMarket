@@ -111,6 +111,8 @@ function ns.ToggleDebug()
     if panel:IsShown() then
         panel:Hide()
     else
+        local net = _G.GuildFoundMarketNetStats
+        if net and net:IsShown() then net:Hide() end   -- shares the sidebar spot beside the window
         panel:Show(); ns.RefreshDebug()
     end
 end

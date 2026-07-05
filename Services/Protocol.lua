@@ -23,9 +23,15 @@ function ns.OnMessage(cmd, fn)
     handlers[cmd] = fn
 end
 
+-- Replies that carry the requester's scan id in their first field. Reported to NetStats,
+-- so answers landing after the scan's collection window show up as "late replies" in the
+-- Network view (the health signal for "the confederation answers slower than we wait").
+local SCAN_REPLIES = { R = true, C = true, K = true, QR = true, WR = true, WC = true, WK = true }
+
 -- Split an incoming line and route it to the registered handler (if any).
 function ns.DispatchMessage(text, sender)
     local cmd, a, b, c, d, e, f, g = strsplit("~", text)
+    if SCAN_REPLIES[cmd] and ns.NetStats then ns.NetStats.NoteReply(a) end
     local h = handlers[cmd]
     if h then h(a, b, c, d, e, f, sender, g) end
 end
