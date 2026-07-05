@@ -1587,7 +1587,7 @@ local function buildChangelogOverlay()
     o.sub:SetText("Update on CurseForge to get it. Your version keeps working meanwhile.")
     o.sub:SetTextColor(0.7, 0.7, 0.7)
     local scroll = CreateFrame("ScrollFrame", nil, o, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 22, -60); scroll:SetPoint("BOTTOMRIGHT", -36, 86)
+    scroll:SetPoint("TOPLEFT", 22, -60); scroll:SetPoint("BOTTOMRIGHT", -36, 142)
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local maxs = self:GetVerticalScrollRange()
@@ -1613,6 +1613,142 @@ local function buildChangelogOverlay()
     url:SetScript("OnTextChanged", function(self, user)   -- keep it read-only
         if user then self:SetText(CHANGELOG_URL); self:SetCursorPosition(0) end
     end)
+
+    -- Announce this version in a chat of choice. Same philosophy as the shop announce: the
+    -- button only PREFILLS the chat line (version + the short changelog's summary line);
+    -- nothing is sent until the player presses Enter themselves. The exact line is previewed
+    -- here first (the chat box is too small to show it all), and the destination picker
+    -- lists guild, whisper and every chat channel you have actually joined.
+    o.previewLabel = o:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    o.previewLabel:SetPoint("BOTTOMLEFT", 26, 126)
+    o.previewLabel:SetText("Announcement (this exact line goes to your chat box; press Enter there to send):")
+    o.preview = o:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    o.preview:SetPoint("BOTTOMLEFT", 26, 104); o.preview:SetPoint("BOTTOMRIGHT", -26, 104)
+    o.preview:SetJustifyH("LEFT")
+
+    -- the short changelog's summary line: the line right under the "Guild Found Market
+    -- x.y.z" title of the bundled notes (never the full md text)
+    local function buildMsg()
+        if not o.curVersion then return "" end
+        local tagline = (o.curText and o.curText:match("^[^\n]*\n([^\n]+)") or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if tagline ~= "" then
+            return ("Guild Found Market %s is out: %s. Update on CurseForge!"):format(o.curVersion, tagline)
+        end
+        return ("Guild Found Market %s is out! Update on CurseForge."):format(o.curVersion)
+    end
+    function o.UpdatePreview() o.preview:SetText(buildMsg()) end
+
+    local announceBtn = CreateFrame("Button", nil, o, "UIPanelButtonTemplate")
+    announceBtn:SetSize(82, 22); announceBtn:SetPoint("BOTTOMRIGHT", -26, 76); announceBtn:SetText("Announce")
+    local destBtn = CreateFrame("Button", nil, o, "UIPanelButtonTemplate")
+    destBtn:SetSize(160, 22); destBtn:SetPoint("BOTTOMLEFT", 26, 76)
+    local whisperBox = CreateFrame("EditBox", nil, o, "InputBoxTemplate")
+    whisperBox:SetSize(120, 20); whisperBox:SetPoint("LEFT", destBtn, "RIGHT", 12, 0); whisperBox:SetAutoFocus(false)
+    o.whisperBox = whisperBox
+
+    local function destLabel(dest)
+        local chan = dest:match("^channel:(.+)")
+        if chan then return "To: " .. chan end
+        return dest == "whisper" and "To: Whisper" or "To: Guild"
+    end
+    local function applyDest(dest)
+        local chan = dest:match("^channel:(.+)")
+        if chan and (GetChannelName(chan) or 0) == 0 then dest = "guild" end   -- saved channel gone: fall back
+        o.dest = dest
+        GuildFoundMarketCharDB.announceVerDest = dest
+        destBtn:SetText(destLabel(dest))
+        whisperBox:SetShown(dest == "whisper")
+    end
+
+    -- destination picker: guild, whisper, then every joined channel (our hidden marketplace
+    -- channel excluded: that one is protocol, not chat)
+    local popup = CreateFrame("Frame", nil, o, "BackdropTemplate")
+    popup:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    popup:SetBackdropColor(0, 0, 0, 0.95); popup:SetBackdropBorderColor(0.4, 0.4, 0.4)
+    popup:SetPoint("BOTTOMLEFT", destBtn, "TOPLEFT", 0, 2); popup:SetWidth(200); popup:SetFrameStrata("TOOLTIP"); popup:Hide()
+    popup.rows = {}
+    local function popupRow(i)
+        local r = popup.rows[i]
+        if r then return r end
+        r = CreateFrame("Button", nil, popup); r:SetSize(196, 18); r:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 18)
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
+        r.fs = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); r.fs:SetPoint("LEFT", 6, 0)
+        popup.rows[i] = r
+        return r
+    end
+    local function joinedChannels()
+        local out, list = {}, { GetChannelList() }
+        local mine = ns.channelName and ns.channelName:lower()
+        for i = 1, #list, 3 do   -- GetChannelList returns id, name, disabled triplets
+            local id, name = list[i], list[i + 1]
+            if type(name) == "string" and name:lower() ~= mine then
+                out[#out + 1] = { id = id, name = name }
+            end
+        end
+        return out
+    end
+    local function refreshPopup()
+        local entries = {
+            { dest = "guild", label = "Guild", ok = IsInGuild(), why = "Join a guild to use guild chat." },
+            { dest = "whisper", label = "Whisper", ok = true },
+        }
+        for _, c in ipairs(joinedChannels()) do
+            entries[#entries + 1] = { dest = "channel:" .. c.name, label = ("/%d  %s"):format(c.id, c.name), ok = true }
+        end
+        for i, e in ipairs(entries) do
+            local r = popupRow(i)
+            r.fs:SetText(e.label)
+            r.fs:SetTextColor(e.ok and 1 or 0.5, e.ok and 1 or 0.5, e.ok and 1 or 0.5)
+            r:SetScript("OnClick", function() if e.ok then applyDest(e.dest); popup:Hide() end end)
+            r:SetScript("OnEnter", function(self)
+                if not e.ok and e.why then GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(e.why); GameTooltip:Show() end
+            end)
+            r:SetScript("OnLeave", GameTooltip_Hide)
+            r:Show()
+        end
+        for i = #entries + 1, #popup.rows do popup.rows[i]:Hide() end
+        popup:SetHeight(#entries * 18 + 4)
+    end
+    destBtn:SetScript("OnClick", function()
+        if popup:IsShown() then popup:Hide() else refreshPopup(); popup:Show() end
+    end)
+    destBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Where to announce")
+        GameTooltip:AddLine("Pick guild chat, a whisper (with a name box), or any chat channel you have joined.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    destBtn:SetScript("OnLeave", GameTooltip_Hide)
+
+    announceBtn:SetScript("OnClick", function()
+        local msg = buildMsg()
+        if msg == "" then return end
+        local prefix
+        local chan = (o.dest or "guild"):match("^channel:(.+)")
+        if chan then
+            local idx = GetChannelName(chan)
+            if not (idx and idx > 0) then ns.Feedback(("You're no longer in %s; pick another destination."):format(chan), true); return end
+            prefix = "/" .. idx
+        elseif o.dest == "whisper" then
+            local name = (whisperBox:GetText() or ""):gsub("%s+", "")
+            if name == "" then ns.Feedback("Enter a name to whisper the announcement to.", true); return end
+            prefix = "/w " .. name
+        else
+            if not IsInGuild() then ns.Feedback("You're not in a guild, so there's no guild chat to announce in.", true); return end
+            prefix = "/g"
+        end
+        ChatFrame_OpenChat(prefix .. " " .. msg)
+        ns.Log("VERSION announce composed for " .. (o.dest or "guild") .. " (not sent, your call)")
+    end)
+    announceBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Announce this version")
+        GameTooltip:AddLine("Puts the previewed line in your chat box, aimed at the chosen destination. Nothing is sent until you press Enter yourself.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    announceBtn:SetScript("OnLeave", GameTooltip_Hide)
+    applyDest(GuildFoundMarketCharDB.announceVerDest or "guild")
+
     local close = CreateFrame("Button", nil, o, "UIPanelButtonTemplate")
     close:SetSize(260, 26); close:SetPoint("BOTTOM", 0, 8); close:SetText("Close and continue to the addon")
     close:SetScript("OnClick", function() o:Hide() end)
@@ -1633,6 +1769,8 @@ function ns.ShowChangelogOverlay(version, text)
         or ("Guild Found Market %s - what's new"):format(version))
     o.sub:SetText(isUpdate and "Update on CurseForge to get it. Your version keeps working meanwhile."
         or "You're up to date.")
+    o.curVersion, o.curText = version, text   -- what the Announce button advertises
+    if o.UpdatePreview then o.UpdatePreview() end
     o.text:SetText(text)
     o.content:SetHeight((o.text:GetStringHeight() or 0) + 12)
     o:Show()

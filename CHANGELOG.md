@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.2
+
+- **Announce a new version from the changelog overlay.** The overlay now has an Announce button at
+  the bottom that puts a one-line announcement (version plus the short summary line) in your chat
+  box, aimed at a destination you pick: guild chat, a whisper (with a name box), or any chat channel
+  you have joined, listed by slot number and name. The exact line is previewed in the overlay first,
+  since the chat box is too small to show it all, and nothing is sent until you press Enter
+  yourself.
+
 ## 0.18.1
 
 - **The bag scan has its own Scan tab.** The scan moved from a pop-over window to a tab of its own,
