@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.3
+
+- **Hidden addon channels are kept out of the announce picker.** The version announce on the
+  changelog overlay listed every joined channel, including other addons' hidden protocol channels
+  (GreenWall's bridge channel, for one); announcing into those tripped that addon's parser
+  ("message corruption" errors) instead of reaching players. The picker now only offers channels
+  that are visible in at least one of your chat windows, and a previously saved hidden-channel
+  choice falls back to Guild. Tip for GreenWall confederations: announcing to Guild reaches all
+  bridged guilds at once.
+- **The shared changelog message is now cumulative per minor.** Players several patches behind see
+  the whole 0.18 story in the update overlay, not just the latest patch note.
+
 ## 0.18.2
 
 - **Announce a new version from the changelog overlay.** The overlay now has an Announce button at

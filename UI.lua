@@ -1646,6 +1646,19 @@ local function buildChangelogOverlay()
     whisperBox:SetSize(120, 20); whisperBox:SetPoint("LEFT", destBtn, "RIGHT", 12, 0); whisperBox:SetAutoFocus(false)
     o.whisperBox = whisperBox
 
+    -- A channel no chat window displays is an addon's hidden protocol channel (GreenWall,
+    -- Hardcore, our own marketplace channel...): plain text there trips that addon's parser
+    -- ("message corruption" errors) instead of reaching players. So only offer channels the
+    -- player can actually read somewhere.
+    local function shownInAnyChatFrame(name)
+        if not ChatFrame_ContainsChannel then return true end   -- API missing: don't over-filter
+        for i = 1, (NUM_CHAT_WINDOWS or 10) do
+            local frame = _G["ChatFrame" .. i]
+            if frame and ChatFrame_ContainsChannel(frame, name) then return true end
+        end
+        return false
+    end
+
     local function destLabel(dest)
         local chan = dest:match("^channel:(.+)")
         if chan then return "To: " .. chan end
@@ -1653,15 +1666,16 @@ local function buildChangelogOverlay()
     end
     local function applyDest(dest)
         local chan = dest:match("^channel:(.+)")
-        if chan and (GetChannelName(chan) or 0) == 0 then dest = "guild" end   -- saved channel gone: fall back
+        -- saved channel gone, or a hidden protocol channel picked before the filter: fall back
+        if chan and ((GetChannelName(chan) or 0) == 0 or not shownInAnyChatFrame(chan)) then dest = "guild" end
         o.dest = dest
         GuildFoundMarketCharDB.announceVerDest = dest
         destBtn:SetText(destLabel(dest))
         whisperBox:SetShown(dest == "whisper")
     end
 
-    -- destination picker: guild, whisper, then every joined channel (our hidden marketplace
-    -- channel excluded: that one is protocol, not chat)
+    -- destination picker: guild, whisper, then every joined channel (hidden protocol
+    -- channels excluded: those are addon wire traffic, not chat)
     local popup = CreateFrame("Frame", nil, o, "BackdropTemplate")
     popup:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
     popup:SetBackdropColor(0, 0, 0, 0.95); popup:SetBackdropBorderColor(0.4, 0.4, 0.4)
@@ -1681,7 +1695,7 @@ local function buildChangelogOverlay()
         local mine = ns.channelName and ns.channelName:lower()
         for i = 1, #list, 3 do   -- GetChannelList returns id, name, disabled triplets
             local id, name = list[i], list[i + 1]
-            if type(name) == "string" and name:lower() ~= mine then
+            if type(name) == "string" and name:lower() ~= mine and shownInAnyChatFrame(name) then
                 out[#out + 1] = { id = id, name = name }
             end
         end

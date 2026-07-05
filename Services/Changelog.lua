@@ -12,15 +12,22 @@ local ADDON, ns = ...
 -- announcer always actually runs the version whose notes it sends. The requester only accepts a
 -- reply that is genuinely newer than itself and matches the highest version it has seen.
 --
--- ns.CHANGELOG is this build's own notes; keep it current at release time. It travels `~`-free and
--- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
+-- ns.CHANGELOG is this build's own notes; keep it current at release time. It is CUMULATIVE
+-- over the whole minor (all 0.x.* patches, compactly worded): a peer who is several patches
+-- behind only ever sees the newest build's message, so a patch-only note would hide the
+-- minor's features from them. Reset the list when a new minor starts. The second line is the
+-- one-line summary the overlay's Announce button puts in chat. It travels `~`-free and with
+-- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.18.2
-Announce a new version straight from this overlay
+ns.CHANGELOG = [[Guild Found Market 0.18.3
+Bag scan with market prices, network health view, adjustable scan size, version announcements
 
-- New: an Announce button at the bottom of this overlay puts a one-line version announcement in your chat box, aimed at guild chat, a whisper, or any chat channel you have joined. The exact line is previewed first, and nothing is sent until you press Enter yourself.
-- From 0.18.x: the Scan tab checks every sellable item you carry against the confederation's prices; the Network view (Help tab) explains your marketplace traffic in plain language; the scan size is a slider in Options (50 to 600).]]
+- New Scan tab: Scan bags finds every sellable item you carry (bank included while its window is open) and checks what the confederation currently asks for each. Live progress, stoppable at any time; hover the market column for the individual sellers. Each scan also refreshes the price ranges on item tooltips.
+- New Network view (Help tab, next to Debug): your marketplace traffic in plain language, showing server slow-downs, lost or late replies, and whether your scan cap was reached.
+- The scan size is now a slider in Options under Network (50 to 600, was fixed at 150). Client-side only.
+- Announce a version from this overlay: pick guild chat, a whisper, or a chat channel you have joined; the exact line is previewed first and nothing is sent until you press Enter yourself.
+- Fix: the announce picker no longer lists hidden addon channels (like GreenWall's bridge), which mistook announcements for corrupted protocol traffic.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,
