@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.1
+
+- **The bag scan has its own Scan tab.** The scan moved from a pop-over window to a tab of its own,
+  next to My Items: the Scan bags and Stop buttons and the results list live there now, with more
+  rows and wider columns, and My Items keeps its space. A running scan carries on while you visit
+  other tabs; the Scan tab shows the current state the moment you return.
+
 ## 0.18.0
 
 - **Scan bags: price-check everything you carry.** A new "Scan bags" button beside Offer on My Items

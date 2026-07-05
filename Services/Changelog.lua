@@ -16,12 +16,11 @@ local ADDON, ns = ...
 -- with newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.18.0
-Bag scan with market prices, network health view, adjustable scan size
+ns.CHANGELOG = [[Guild Found Market 0.18.1
+The bag scan gets its own Scan tab
 
-- New: Scan bags (beside Offer on My Items) finds every sellable item you carry (bank included while open) and checks what the confederation asks for each. Live progress, stoppable at any time; hover the market column for the individual sellers. Each scan also refreshes the price ranges on item tooltips.
-- New: Network view (Help tab, next to Debug): a plain-language look at your marketplace traffic, showing server slow-downs, lost or late replies, and whether your scan cap was reached.
-- New: how many sellers/buyers one scan collects is now a slider in Options under Network (50 to 600, was fixed at 150). Client-side only.]]
+- The market price scan (new in 0.18.0) moved from a pop-over window to its own Scan tab next to My Items: Scan bags and Stop buttons plus the results list, with more rows and wider columns. A running scan carries on while you visit other tabs.
+- From 0.18.0: Scan bags checks every sellable item you carry (bank included while open) against what the confederation asks; the Network view (Help tab) explains your marketplace traffic in plain language; the scan size is a slider in Options (50 to 600).]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

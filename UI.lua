@@ -1714,6 +1714,7 @@ local function buildTabs()
         { tab = "SELLERS", label = "Sellers", w = 80 },
         { tab = "BUYERS", label = "Buyers", w = 80 },
         { tab = "MINE", label = "My Items", w = 90 },
+        { tab = "SCAN", label = "Scan", w = 56 },
         { tab = "HELP", label = "Help", w = 50, right = true },
         { tab = "OPTIONS", icon = "Interface\\Buttons\\UI-OptionsButton", w = 28, right = true, tip = "Options" },
     }
@@ -2399,23 +2400,6 @@ local function buildPostPanel()
     local offerBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     offerBtn:SetSize(90, 24); offerBtn:SetPoint("BOTTOMRIGHT", -4, 8); offerBtn:SetText("Offer")
     main.offerBtn = offerBtn
-
-    -- Bag scan: price-check every sellable item you carry against the market. Sits beside
-    -- Offer (Offer keeps the corner). Must stay a direct OnClick call: the scan opens with
-    -- a channel broadcast, which Classic only allows straight from a hardware event.
-    local scanBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    scanBtn:SetSize(90, 24); scanBtn:SetPoint("RIGHT", offerBtn, "LEFT", -8, 0); scanBtn:SetText("Scan bags")
-    scanBtn:SetScript("OnClick", function() if ns.BagScan then ns.BagScan.Start() end end)
-    scanBtn:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Scan bags")
-        GameTooltip:AddLine("Find every sellable item you carry (not soulbound, not quest items; your bank too while it's open) and check what the confederation currently asks for each.", 1, 1, 1, true)
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Takes a moment: it asks every online seller for their price list. You can stop it at any time.", 0.8, 0.8, 0.8, true)
-        GameTooltip:Show()
-    end)
-    scanBtn:SetScript("OnLeave", GameTooltip_Hide)
-    main.scanBtn = scanBtn
 
     -- clear the compose panel back to the empty "new offer" state
     local function clearDraft()
@@ -3644,6 +3628,8 @@ local function CreateUI()
     buildCODPanel()
     buildHelpPanel()
     buildOptionsPanel()
+    -- the Scan tab's panel lives in BagScan.lua (service + UI in one place, like Debug)
+    if ns.BagScan and ns.BagScan.CreatePanel then main.scanPanel = ns.BagScan.CreatePanel(main) end
     ns.SelectTab("BUY")
     main:Hide()
 end
@@ -3698,9 +3684,6 @@ end
 function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     if not main then return end
     hideCODQtyPopup()   -- a pending COD qty picker belongs to the view you're leaving
-    -- the bag-scan overlay belongs to My Items; the scan itself keeps running hidden
-    -- (reopen it with the Scan bags button)
-    if tab ~= "MINE" and _G.GuildFoundMarketBagScan then _G.GuildFoundMarketBagScan:Hide() end
     setHeaderColumns("default")   -- MINE/COD re-applies its own layout via setMineMode below
     currentTab = tab
     for _, b in ipairs(tabButtons) do
@@ -3715,6 +3698,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     local buyers  = (tab == "BUYERS")
     local help    = (tab == "HELP")
     local options = (tab == "OPTIONS")
+    local scan    = (tab == "SCAN")
     main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)   -- buyers re-shows it via SetBuyersView
     main.ac:Hide()
     main.postPanel:SetShown(mine)
@@ -3761,7 +3745,8 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.netBtn:SetShown(help)
     main.helpUsageBtn:SetShown(help); main.helpSetupBtn:SetShown(help)
     main.optionsPanel:SetShown(options)
-    main.scroll:SetShown(not help and not options)
+    if main.scanPanel then main.scanPanel:SetShown(scan) end
+    main.scroll:SetShown(not help and not options and not scan)
     if options then ns.RefreshOptions() end
     if mine then ns.UpdatePauseButton() end
     if buy then ns.UpdateDBPanel() end
@@ -3800,7 +3785,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
             ns.SetSellersView("INDEX")   -- sets its own headers + refresh
             ns.ScanSellers("")           -- auto-scan on entering (driven by the tab click = hardware event)
         end
-    elseif help or options then
+    elseif help or options or scan then
         main.h1:SetText(""); main.h2:SetText(""); main.h3:SetText(""); main.h4:SetText("")
         wipe(view); renderRows()
         if help then main.helpShowUsage() end   -- default to Usage; sizes the text + scrolls to top

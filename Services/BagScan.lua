@@ -16,8 +16,9 @@ local ADDON, ns = ...
 -- a buyer had opened their shop. Catalog rows are matched against the bag variants
 -- and the whole sweep is snapshotted into PriceDB, so item tooltips profit too.
 --
--- The window shows live progress and has a Stop button: stopping clears the fetch
--- queue, ignores whatever is still in flight, and keeps the prices found so far.
+-- The Scan tab shows live progress and has a Stop button: stopping clears the fetch
+-- queue, ignores whatever is still in flight, and keeps the prices found so far. The
+-- scan itself keeps running while the tab (or the whole window) is hidden.
 --========================================================================
 ns.BagScan = ns.BagScan or {}
 
@@ -163,7 +164,7 @@ end
 -- scan underneath broadcasts on the chat channel, which Classic only allows there.
 function ns.BagScan.Start()
     if not ns.channelName then ns.Feedback("Not in a confederation, can't price-check the market.", true); return end
-    if state and state.phase ~= "done" then ns.BagScan.ShowWindow(); return end   -- already running: just surface it
+    if state and state.phase ~= "done" then return end   -- already running
     local items, bankIncluded = collectSellables()
     local order, total = {}, 0
     for key in pairs(items) do order[#order + 1] = key; total = total + 1 end
@@ -185,7 +186,7 @@ function ns.BagScan.Start()
     ns.ScanSellers("")   -- one broadcast; replies land in ns.sellers.results (the shared index)
     local gen = state.gen
     C_Timer.After((ns.QUERY_SETTLE or 5) + 0.5, function() startCatalogPhase(gen) end)
-    ns.BagScan.ShowWindow()
+    refreshWin()
 end
 
 function ns.BagScan.Stop()
@@ -193,14 +194,14 @@ function ns.BagScan.Stop()
 end
 
 --========================================================================
--- The results window: an overlay over the top of the main frame (the compose panel at
--- the bottom stays reachable, so a row click can prefill it). Live progress line, Stop
--- button while running, and one row per sellable variant with your stock, your current
--- listing and the market price range found so far. Click a row to load it into the
--- offer form with the lowest market price as the suggested price.
+-- The Scan tab panel. Lives in the main window's content area; CreateUI builds it and
+-- SelectTab shows it, exactly like the Help and Options panels. A Scan bags button
+-- starts the sweep (its click is the hardware event the channel broadcast needs), a
+-- Stop button halts it, and one row per sellable variant shows your stock, your
+-- current listing and the market price range found so far.
 --========================================================================
 local win
-local ROWS_SHOWN, ROW_H = 11, 20
+local ROWS_SHOWN, ROW_H = 15, 20
 local winRows = {}
 local view = {}          -- sorted vkeys for the scroll list
 local refreshQueued = false
@@ -232,6 +233,9 @@ local function buildView()
 end
 
 local function statusText()
+    if not state then
+        return "Find every sellable item you carry (not soulbound, no quest items; your bank too while its window is open) and see what the confederation currently asks for each. Press Scan bags to start.", 0.7, 0.7, 0.7
+    end
     if state.phase == "sellers" then
         return "Step 1/2: asking the confederation who is selling ...", 1, 0.82, 0
     elseif state.phase == "catalogs" then
@@ -282,50 +286,42 @@ local function renderWinRows()
 end
 
 refreshWin = function()
-    if not win or not win:IsShown() or not state then return end
+    if not win or not win:IsShown() then return end
     if refreshQueued then return end
     refreshQueued = true
     C_Timer.After(0.2, function()
         refreshQueued = false
-        if not win or not win:IsShown() or not state then return end
+        if not win or not win:IsShown() then return end
         local txt, cr, cg, cb = statusText()
         win.status:SetText(txt); win.status:SetTextColor(cr, cg, cb)
-        win.stopBtn:SetShown(state.phase ~= "done")
-        buildView()
+        win.stopBtn:SetShown(state ~= nil and state.phase ~= "done")
+        if state then buildView() else wipe(view) end
         renderWinRows()
     end)
 end
 
-local function createWindow()
+function ns.BagScan.CreatePanel(main)
     if win then return win end
-    local main = _G.GuildFoundMarketFrame
-    if not main then return nil end
 
-    win = CreateFrame("Frame", "GuildFoundMarketBagScan", main, "BackdropTemplate")
-    win:SetSize(640, 336)
-    win:SetPoint("TOP", main, "TOP", 0, -24)
-    win:SetFrameStrata("DIALOG")
-    win:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    win:EnableMouse(true)
+    win = CreateFrame("Frame", "GuildFoundMarketBagScan", main)
+    win:SetPoint("TOPLEFT", 16, -64); win:SetPoint("BOTTOMRIGHT", -16, 14)
 
-    local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOP", 0, -16); title:SetText("Bag scan |cff00ff96market prices|r")
-
-    local close = CreateFrame("Button", nil, win, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", -4, -4)
-    close:SetScript("OnClick", function() win:Hide() end)   -- closing does NOT stop the scan
-
-    win.status = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    win.status:SetPoint("TOPLEFT", 18, -38); win.status:SetPoint("TOPRIGHT", -90, -38)
-    win.status:SetJustifyH("LEFT")
+    local scanBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    scanBtn:SetSize(100, 24); scanBtn:SetPoint("TOPLEFT", 4, -2); scanBtn:SetText("Scan bags")
+    scanBtn:SetScript("OnClick", function() ns.BagScan.Start() end)
+    scanBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Scan bags")
+        GameTooltip:AddLine("Find every sellable item you carry (not soulbound, not quest items; your bank too while it's open) and check what the confederation currently asks for each.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Takes a moment: it asks every online seller for their price list. You can stop it at any time.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    scanBtn:SetScript("OnLeave", GameTooltip_Hide)
 
     win.stopBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    win.stopBtn:SetSize(60, 20); win.stopBtn:SetPoint("TOPRIGHT", -24, -34); win.stopBtn:SetText("Stop")
+    win.stopBtn:SetSize(60, 24); win.stopBtn:SetPoint("LEFT", scanBtn, "RIGHT", 8, 0); win.stopBtn:SetText("Stop")
+    win.stopBtn:Hide()
     win.stopBtn:SetScript("OnClick", function() ns.BagScan.Stop() end)
     win.stopBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -334,16 +330,20 @@ local function createWindow()
     end)
     win.stopBtn:SetScript("OnLeave", GameTooltip_Hide)
 
-    -- column headers
-    local hy = -60
+    win.status = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    win.status:SetPoint("TOPLEFT", 8, -34); win.status:SetPoint("TOPRIGHT", -8, -34)
+    win.status:SetJustifyH("LEFT")
+
+    -- column headers (x = row x + the scroll frame's own offset)
+    local hy = -62
     local function head(text, x, w)
         local h = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         h:SetPoint("TOPLEFT", x, hy); h:SetWidth(w); h:SetJustifyH("LEFT"); h:SetText(text)
     end
-    head("Item", 40, 250); head("You have", 300, 60); head("Your listing", 366, 90); head("Market low - high (sellers)", 462, 160)
+    head("Item", 34, 280); head("You have", 322, 60); head("Your listing", 392, 100); head("Market low - high (sellers)", 502, 190)
 
     win.scroll = CreateFrame("ScrollFrame", "GuildFoundMarketBagScanScroll", win, "FauxScrollFrameTemplate")
-    win.scroll:SetPoint("TOPLEFT", 18, -76); win.scroll:SetSize(586, ROWS_SHOWN * ROW_H)
+    win.scroll:SetPoint("TOPLEFT", 8, -78); win.scroll:SetSize(690, ROWS_SHOWN * ROW_H)
     win.scroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, ROW_H, renderWinRows) end)
     win.scroll:EnableMouseWheel(true)
     win.scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -353,11 +353,11 @@ local function createWindow()
     end)
 
     for i = 1, ROWS_SHOWN do
-        local r = CreateFrame("Frame", nil, win); r:SetSize(586, ROW_H)
+        local r = CreateFrame("Frame", nil, win); r:SetSize(690, ROW_H)
         if i == 1 then r:SetPoint("TOPLEFT", win.scroll, "TOPLEFT", 4, 0)
         else r:SetPoint("TOPLEFT", winRows[i - 1], "BOTTOMLEFT", 0, 0) end
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 0, 0)
-        r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 22, 0); r.name:SetSize(256, ROW_H)
+        r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 22, 0); r.name:SetSize(286, ROW_H)
         r.name.fs = r.name:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name.fs:SetAllPoints(); r.name.fs:SetJustifyH("LEFT")
         r.name:SetScript("OnEnter", function(self)
             if not self.itemLink then return end
@@ -365,9 +365,9 @@ local function createWindow()
             GameTooltip:Show()
         end)
         r.name:SetScript("OnLeave", GameTooltip_Hide)
-        r.have = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.have:SetPoint("LEFT", 282, 0); r.have:SetWidth(56); r.have:SetJustifyH("LEFT")
-        r.listed = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.listed:SetPoint("LEFT", 348, 0); r.listed:SetWidth(92); r.listed:SetJustifyH("LEFT")
-        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 444, 0); r.market:SetSize(140, ROW_H)
+        r.have = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.have:SetPoint("LEFT", 314, 0); r.have:SetWidth(60); r.have:SetJustifyH("LEFT")
+        r.listed = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.listed:SetPoint("LEFT", 384, 0); r.listed:SetWidth(100); r.listed:SetJustifyH("LEFT")
+        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 494, 0); r.market:SetSize(190, ROW_H)
         r.market.fs = r.market:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.market.fs:SetAllPoints(); r.market.fs:SetJustifyH("LEFT")
         r.market:SetScript("OnEnter", function(self)
             local list = self.key and state and state.offers[self.key]
@@ -389,11 +389,4 @@ local function createWindow()
     win:SetScript("OnShow", function() refreshWin() end)
     win:Hide()
     return win
-end
-
-function ns.BagScan.ShowWindow()
-    createWindow()
-    if not win then return end
-    win:Show()
-    refreshWin()
 end
