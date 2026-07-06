@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: COD mailbox send-assist could over-attach or refuse a fulfillable order.** Splitting a
+  stack straight onto the cursor and clicking a mail attachment slot attached the whole source
+  stack instead of the split amount (an order for 6 out of a stack of 7 mailed all 7). An order
+  spanning more than one bag stack was also refused outright even when the stacks combined to
+  cover it. The send-assist now combines matching stacks (largest first) and splits into an empty
+  bag slot before attaching, so the exact ordered quantity goes out every time.
+
 ## 0.18.3
 
 - **Hidden addon channels are kept out of the announce picker.** The version announce on the
