@@ -3719,7 +3719,7 @@ local function buildOptionsPanel()
     -- through to "Other" at the end, so a newly added setting is never silently hidden.
     local GROUPS = {
         { title = "General",             keys = { "minimapButton", "altClickSearch", "showPriceTooltip", "priceFormat", "auxSeed" } },
-        { title = "Selling",             keys = { "trackDefault", "announceShopNote" } },
+        { title = "Selling",             keys = { "trackDefault", "announceShopNote", "scanPriceMode" } },
         { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codCreateLink", "codReplyText", "codSentText" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
         { title = "Network",             keys = { "scanCap" } },

@@ -44,6 +44,23 @@ ns.SettingsSchema = {
         default = false,
     },
     {
+        key = "scanPriceMode",
+        type = "choice",
+        label = "Scan tab listing price",
+        tip = "The price used when you list items straight from the Scan tab (tick the items you want, then press List selected).\n\n"
+            .. "|cffffffffUndercut|r: the lowest market price found, minus 1 copper.\n"
+            .. "|cffffffffAverage|r: a robust market average. Prices far off the middle (less than half or more than double the median) "
+            .. "are dropped first, so one extreme listing can't drag the result.\n"
+            .. "|cffffffffMatch|r: exactly the lowest market price found.\n\n"
+            .. "You can also switch this on the Scan tab itself.",
+        default = "undercut",
+        options = {
+            { value = "undercut", label = "Undercut (lowest - 1c)" },
+            { value = "average",  label = "Average" },
+            { value = "match",    label = "Match lowest" },
+        },
+    },
+    {
         key = "auxSeed",
         label = "Import item names from the aux addon",
         tip = "Optional speed-up, only useful if you also run the |cffffd100aux|r auction addon.\n\n"

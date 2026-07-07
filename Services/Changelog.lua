@@ -20,10 +20,11 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.18.3
-Bag scan with market prices, network health view, adjustable scan size, version announcements
+ns.CHANGELOG = [[Guild Found Market 0.18.4
+Bag scan with market prices and one-click listing, network health view, adjustable scan size, version announcements
 
 - New Scan tab: Scan bags finds every sellable item you carry (bank included while its window is open) and checks what the confederation currently asks for each. Live progress, stoppable at any time; hover the market column for the individual sellers. Each scan also refreshes the price ranges on item tooltips.
+- List straight from the scan: tick scanned items (or select all) and press List selected. The price comes from the scan itself: undercut (1 copper under the lowest), a robust average (extreme prices are ignored first), or match the lowest. Items you already list only get the new price.
 - New Network view (Help tab, next to Debug): your marketplace traffic in plain language, showing server slow-downs, lost or late replies, and whether your scan cap was reached.
 - The scan size is now a slider in Options under Network (50 to 600, was fixed at 150). Client-side only.
 - Announce a version from this overlay: pick guild chat, a whisper, or a chat channel you have joined; the exact line is previewed first and nothing is sent until you press Enter yourself.

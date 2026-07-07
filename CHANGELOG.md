@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.4
+
+- **List items straight from the Scan tab.** Every scanned row that found a market price now has a
+  checkbox (plus a select-all box next to the List column header). Tick the items you want and
+  press List selected: each becomes a listing at a price derived from the scan, in one of three
+  modes switchable on the tab itself and in Options under Selling. Undercut: 1 copper under the
+  lowest market price. Average: a robust average that first drops prices below half or above double
+  the median, so one extreme listing can't drag the result. Match: exactly the lowest. An item you
+  already list keeps its quantity and Bag sync switch and only gets the new price; a new listing
+  goes up for the full scanned count. Hovering a checkbox previews the exact price it would use.
+
 ## 0.18.3
 
 - **Hidden addon channels are kept out of the announce picker.** The version announce on the

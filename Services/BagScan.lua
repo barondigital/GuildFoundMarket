@@ -182,6 +182,7 @@ function ns.BagScan.Start()
         ticker = nil, stopped = false,
     }
     for _, key in ipairs(order) do state.offers[key] = {} end
+    if ns.BagScan.ClearSelection then ns.BagScan.ClearSelection() end   -- ticks belong to the previous scan's prices
     ns.Log(("BAGSCAN: %d sellable variant(s) in bags%s; scanning for online sellers"):format(total, bankIncluded and " + bank" or ""))
     ns.ScanSellers("")   -- one broadcast; replies land in ns.sellers.results (the shared index)
     local gen = state.gen
@@ -205,6 +206,116 @@ local ROWS_SHOWN, ROW_H = 15, 20
 local winRows = {}
 local view = {}          -- sorted vkeys for the scroll list
 local refreshQueued = false
+local selected = {}      -- [vkey] = true: rows ticked for "List selected"; cleared on a new scan
+
+--========================================================================
+-- Listing straight from the scan: tick rows, press List selected, and each ticked item is
+-- listed (or its existing listing re-priced) at the price the configured mode derives from
+-- the market offers the scan found. Only priced offers count; bid-only rows can't be ticked.
+--========================================================================
+local MODES = {
+    { value = "undercut", label = "Undercut", tip = "The lowest market price found, minus 1 copper." },
+    { value = "average",  label = "Average",  tip = "A robust market average: prices far off the middle are dropped first, so one extreme listing can't drag the result." },
+    { value = "match",    label = "Match",    tip = "Exactly the lowest market price found." },
+}
+
+local function modeLabel()
+    local v = ns.GetSetting and ns.GetSetting("scanPriceMode") or "undercut"
+    for _, m in ipairs(MODES) do if m.value == v then return m.label end end
+    return MODES[1].label
+end
+
+-- Robust average: anchor on the median and drop prices more than a factor 2 away from it
+-- (below half, above double the median), then average what's left. A single too-cheap or
+-- too-expensive listing lands outside that band and is ignored, so it can't drag the
+-- result. The band always keeps at least the median itself, so there is always a price.
+local function robustAverage(sorted)
+    local n = #sorted
+    local median = (n % 2 == 1) and sorted[(n + 1) / 2] or (sorted[n / 2] + sorted[n / 2 + 1]) / 2
+    local sum, kept = 0, 0
+    for _, p in ipairs(sorted) do
+        if p >= median / 2 and p <= median * 2 then sum = sum + p; kept = kept + 1 end
+    end
+    return math.max(1, math.floor(sum / kept + 0.5))
+end
+
+-- The unit price the configured mode gives for one scanned variant, or nil while the scan
+-- hasn't seen a priced offer for it (bids don't carry a price to derive anything from).
+local function modePrice(key)
+    local list = state and state.offers[key]
+    if not list then return nil end
+    local prices = {}
+    for _, o in ipairs(list) do
+        if (o.price or 0) > 0 then prices[#prices + 1] = o.price end
+    end
+    if #prices == 0 then return nil end
+    table.sort(prices)
+    local mode = ns.GetSetting and ns.GetSetting("scanPriceMode") or "undercut"
+    if mode == "match" then return prices[1] end
+    if mode == "average" then return robustAverage(prices) end
+    return math.max(1, prices[1] - 1)   -- undercut; floor at 1c, price 0 would mean "bids"
+end
+
+local function selectedCount()
+    local n = 0
+    for _ in pairs(selected) do n = n + 1 end
+    return n
+end
+
+local function updateListBtn()
+    if not win then return end
+    local n = selectedCount()
+    win.listBtn:SetText(n > 0 and ("List selected (%d)"):format(n) or "List selected")
+    win.listBtn:SetEnabled(n > 0)
+    -- the select-all box mirrors the rows: checked only when every listable row is ticked
+    if win.selAll then
+        local elig, sel = 0, 0
+        if state then
+            for key in pairs(state.offers) do
+                if modePrice(key) then
+                    elig = elig + 1
+                    if selected[key] then sel = sel + 1 end
+                end
+            end
+        end
+        win.selAll:SetEnabled(elig > 0)
+        win.selAll:SetChecked(elig > 0 and sel == elig)
+        win.selAll:SetAlpha(elig > 0 and 1 or 0.35)
+    end
+end
+
+function ns.BagScan.ClearSelection()
+    wipe(selected)
+    updateListBtn()
+end
+
+-- List every ticked row: a variant already in My Items keeps its qty (and Bag sync state)
+-- and only gets the new price; anything else becomes a new listing for the full scanned
+-- count. AddOffer re-runs its own stock/soulbound guards, so a stale count just fails soft.
+local function listSelected()
+    if not state then return end
+    local added, updated, failed = 0, 0, 0
+    for key in pairs(selected) do
+        local it = state.items[key]
+        local price = it and modePrice(key)
+        if not price then
+            failed = failed + 1
+        elseif ns.OfferInfo(it.id, it.suffix) ~= nil then
+            if ns.EditOffer(key, nil, price) then updated = updated + 1 else failed = failed + 1 end
+        else
+            if ns.AddOffer(it.id, it.suffix, it.count, price) then added = added + 1 else failed = failed + 1 end
+        end
+    end
+    wipe(selected)
+    local parts = {}
+    if added > 0 then parts[#parts + 1] = ("%d new listing(s)"):format(added) end
+    if updated > 0 then parts[#parts + 1] = ("%d price(s) updated"):format(updated) end
+    if failed > 0 then parts[#parts + 1] = ("%d failed"):format(failed) end
+    ns.Log(("BAGSCAN list (%s): %d added, %d updated, %d failed"):format(modeLabel(), added, updated, failed))
+    ns.Feedback("Scan: " .. (#parts > 0 and table.concat(parts, ", ") or "nothing selected") .. ".", failed > 0)
+    updateListBtn()
+    refreshWin()
+end
 
 local function marketSummary(list)
     local low, high, n, bids = nil, nil, 0, 0
@@ -280,6 +391,10 @@ local function renderWinRows()
                 r.market.fs:SetTextColor(0.45, 0.45, 0.45)
             end
             r.market.key = key
+            r.sel.key = key
+            r.sel:SetEnabled(n > 0)
+            r.sel:SetChecked(selected[key] and true or false)
+            r.sel:SetAlpha(n > 0 and 1 or 0.35)
             r:Show()
         end
     end
@@ -296,6 +411,7 @@ refreshWin = function()
         win.status:SetText(txt); win.status:SetTextColor(cr, cg, cb)
         win.stopBtn:SetShown(state ~= nil and state.phase ~= "done")
         if state then buildView() else wipe(view) end
+        updateListBtn()
         renderWinRows()
     end)
 end
@@ -330,6 +446,52 @@ function ns.BagScan.CreatePanel(main)
     end)
     win.stopBtn:SetScript("OnLeave", GameTooltip_Hide)
 
+    -- List selected + the price-mode picker, top right. The radios mirror the
+    -- scanPriceMode setting, so the Options panel and this row always agree.
+    win.listBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    win.listBtn:SetSize(130, 24); win.listBtn:SetPoint("TOPRIGHT", -4, -2); win.listBtn:SetText("List selected")
+    win.listBtn:SetEnabled(false)
+    win.listBtn:SetScript("OnClick", listSelected)
+    win.listBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("List selected")
+        GameTooltip:AddLine(("List every ticked item at the %s price derived from the scan. "
+            .. "An item you already list keeps its quantity and Bag sync switch; only its price is updated. "
+            .. "New listings go up for the full scanned count."):format(modeLabel():lower()), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    win.listBtn:SetScript("OnLeave", GameTooltip_Hide)
+
+    local modeRadios = {}
+    local prev
+    for i = #MODES, 1, -1 do
+        local m = MODES[i]
+        local rl = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        if prev then rl:SetPoint("RIGHT", prev, "LEFT", -12, 0)
+        else rl:SetPoint("RIGHT", win.listBtn, "LEFT", -10, 0) end
+        rl:SetText(m.label)
+        local rb = CreateFrame("CheckButton", nil, win, "UIRadioButtonTemplate")
+        rb:SetPoint("RIGHT", rl, "LEFT", -3, 0)
+        rb.value = m.value
+        rb:SetHitRectInsets(0, -(rl:GetStringWidth() + 6), 0, 0)
+        rb:SetScript("OnClick", function(self) ns.SetSetting("scanPriceMode", self.value) end)
+        rb:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(m.label)
+            GameTooltip:AddLine(m.tip, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        rb:SetScript("OnLeave", GameTooltip_Hide)
+        modeRadios[#modeRadios + 1] = rb
+        prev = rb
+    end
+    local function syncModeRadios()
+        local v = ns.GetSetting and ns.GetSetting("scanPriceMode") or "undercut"
+        for _, rb in ipairs(modeRadios) do rb:SetChecked(rb.value == v) end
+    end
+    syncModeRadios()
+    if ns.On then ns.On("setting:scanPriceMode", syncModeRadios) end
+
     win.status = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     win.status:SetPoint("TOPLEFT", 8, -34); win.status:SetPoint("TOPRIGHT", -8, -34)
     win.status:SetJustifyH("LEFT")
@@ -340,7 +502,32 @@ function ns.BagScan.CreatePanel(main)
         local h = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         h:SetPoint("TOPLEFT", x, hy); h:SetWidth(w); h:SetJustifyH("LEFT"); h:SetText(text)
     end
-    head("Item", 34, 280); head("You have", 322, 60); head("Your listing", 392, 100); head("Market low - high (sellers)", 502, 190)
+    head("Item", 34, 280); head("You have", 322, 60); head("Your listing", 392, 100); head("Market low - high (sellers)", 502, 160); head("List", 662, 30)
+
+    -- select/deselect all, next to the List column header: ticks every row that has a
+    -- market price to derive a listing price from (grey rows stay untouched)
+    win.selAll = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    win.selAll:SetSize(22, 22); win.selAll:SetPoint("TOPLEFT", 684, hy + 6)
+    win.selAll:SetEnabled(false); win.selAll:SetAlpha(0.35)
+    win.selAll:SetMotionScriptsWhileDisabled(true)
+    win.selAll:SetScript("OnClick", function(self)
+        if self:GetChecked() and state then
+            for key in pairs(state.offers) do
+                if modePrice(key) then selected[key] = true end
+            end
+        else
+            wipe(selected)
+        end
+        updateListBtn()
+        renderWinRows()
+    end)
+    win.selAll:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Select all")
+        GameTooltip:AddLine("Tick or untick every item that has a market price to list at. Items without one can't be selected.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    win.selAll:SetScript("OnLeave", GameTooltip_Hide)
 
     win.scroll = CreateFrame("ScrollFrame", "GuildFoundMarketBagScanScroll", win, "FauxScrollFrameTemplate")
     win.scroll:SetPoint("TOPLEFT", 8, -78); win.scroll:SetSize(690, ROWS_SHOWN * ROW_H)
@@ -367,7 +554,7 @@ function ns.BagScan.CreatePanel(main)
         r.name:SetScript("OnLeave", GameTooltip_Hide)
         r.have = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.have:SetPoint("LEFT", 314, 0); r.have:SetWidth(60); r.have:SetJustifyH("LEFT")
         r.listed = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.listed:SetPoint("LEFT", 384, 0); r.listed:SetWidth(100); r.listed:SetJustifyH("LEFT")
-        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 494, 0); r.market:SetSize(190, ROW_H)
+        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 494, 0); r.market:SetSize(150, ROW_H)
         r.market.fs = r.market:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.market.fs:SetAllPoints(); r.market.fs:SetJustifyH("LEFT")
         r.market:SetScript("OnEnter", function(self)
             local list = self.key and state and state.offers[self.key]
@@ -382,6 +569,31 @@ function ns.BagScan.CreatePanel(main)
             GameTooltip:Show()
         end)
         r.market:SetScript("OnLeave", GameTooltip_Hide)
+        -- tick to include this row in "List selected"; disabled until a priced offer exists
+        -- (bid-only or unpriced rows give the modes nothing to derive a price from)
+        r.sel = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+        r.sel:SetSize(22, 22); r.sel:SetPoint("LEFT", 654, 0)
+        r.sel:SetMotionScriptsWhileDisabled(true)
+        r.sel:SetScript("OnClick", function(self)
+            if self.key then selected[self.key] = self:GetChecked() and true or nil end
+            updateListBtn()
+        end)
+        r.sel:SetScript("OnEnter", function(self)
+            if not self.key then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            local price = modePrice(self.key)
+            if price then
+                local it = state and state.items[self.key]
+                local existing = it and ns.OfferInfo(it.id, it.suffix)
+                GameTooltip:SetText(existing ~= nil and "Update your listing" or "List this item")
+                GameTooltip:AddLine(("%s price: %s"):format(modeLabel(), ns.PriceToStr(price)), 1, 1, 1)
+                GameTooltip:AddLine("Tick, then press List selected.", 0.7, 0.7, 0.7)
+            else
+                GameTooltip:SetText("No priced market offer found (yet), so there is nothing to base a price on.", 1, 1, 1, true)
+            end
+            GameTooltip:Show()
+        end)
+        r.sel:SetScript("OnLeave", GameTooltip_Hide)
         local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.06)
         r:Hide(); winRows[i] = r
     end
