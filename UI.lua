@@ -714,8 +714,8 @@ local function formatCODRow(r, d)
     -- Done = "I mailed it": whisper the buyer that it's on its way, then clear the row.
     r.edit:Show(); r.edit:SetText("Done")
     r.edit:SetScript("OnClick", function()
-        if rec.buyer and rec.buyer ~= "" and ns.CODSentText then
-            local text = ns.CODSentText(rec.buyer, rec.itemID, rec.qty, rec.unit)
+        if rec.buyer and rec.buyer ~= "" and ns.CODSentWhisper then
+            local text = ns.CODSentWhisper(rec.buyer, rec.itemID, rec.qty, rec.unit)
             if text ~= "" then SendChatMessage(text, "WHISPER", nil, rec.buyer) end
         end
         ns.RemoveCODOrder(rec, "done")

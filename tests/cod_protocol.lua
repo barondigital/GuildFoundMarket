@@ -67,6 +67,7 @@ local ns = {
     IsPaused = function() return paused end,
     EnqueueWhisper = function(msg, to) wire[#wire + 1] = { msg = msg, to = to } end,
     CODCancelMarker = function(id, sfx) return ("{{GFMCOD:Me:%d:%d}}"):format(id, sfx or 0) end,
+    CODSentMarker = function() return "{{GFMCOD:sent}}" end,
 }
 
 GuildFoundMarketCharDB = { codOrders = {} }
@@ -198,6 +199,18 @@ settings.codSentText = "Mailed %item x%qty (%total) to %buyer"
 check("sent tokens: filled", ns.CODSentText("Bob", 100, 2, 3000) == "Mailed Item 100 x2 (6000c) to Bob")
 settings.codSentText = ""
 check("sent empty template: no whisper", ns.CODSentText("Bob", 100, 2, 3000) == "")
+
+-- the mailed whisper always carries the sent marker so the buyer's client never re-captures it,
+-- clamped to the 255-char chat limit however long the player made their custom template
+settings.codSentText = "Mailed %item x%qty (%total) to %buyer"
+check("sent whisper: marker appended after the player's text",
+    ns.CODSentWhisper("Bob", 100, 2, 3000) == "Mailed Item 100 x2 (6000c) to Bob {{GFMCOD:sent}}")
+settings.codSentText = ("very long custom text "):rep(20)   -- 440 chars, way past the chat limit
+local long = ns.CODSentWhisper("Bob", 100, 2, 3000)
+check("sent whisper: overlong custom text clamped to the chat limit", #long <= 255)
+check("sent whisper: the marker survives the clamp", long:sub(-#"{{GFMCOD:sent}}") == "{{GFMCOD:sent}}")
+settings.codSentText = ""
+check("sent whisper: empty template still sends nothing", ns.CODSentWhisper("Bob", 100, 2, 3000) == "")
 
 --========================================================================
 -- 11. Outstanding-qty query (CQ/CQR): buyer asks, seller answers from its own list

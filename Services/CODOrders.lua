@@ -205,6 +205,31 @@ function ns.CODSentText(buyer, itemID, qty, unit)
     return fillCODTokens(ns.GetSetting("codSentText"), buyer, itemID, qty, unit)
 end
 
+-- Append a capture-guard marker to a whisper. The templates are player-editable, so the text is
+-- clamped to WoW's 255-character chat limit WITH the marker: however long the custom text, the
+-- marker always survives (truncated off, the buyer's client would re-capture the whisper as a
+-- brand-new order).
+local function withMarker(text, marker)
+    if not marker or marker == "" then return text end
+    local max = 255 - #marker - 1
+    if #text > max then
+        text = text:sub(1, max)
+        -- never leave a split multi-byte character at the cut
+        while #text > 0 and text:byte(-1) >= 128 and text:byte(-1) <= 191 do text = text:sub(1, -2) end
+        if #text > 0 and text:byte(-1) >= 194 then text = text:sub(1, -2) end
+    end
+    return text .. " " .. marker
+end
+
+-- The complete "order mailed" whisper for the Done button: the (player-editable) template filled,
+-- plus the payload-less sent marker so the buyer's client never re-captures it as a new order
+-- ("Mailed your COD: X x2" parses as a COD request otherwise). "" when the template is empty.
+function ns.CODSentWhisper(buyer, itemID, qty, unit)
+    local text = ns.CODSentText(buyer, itemID, qty, unit)
+    if text == "" then return "" end
+    return withMarker(text, ns.CODSentMarker and ns.CODSentMarker())
+end
+
 -- Pending buyer-side requests, so a reply can be matched and a silent seller times out.
 local pending = {}
 local function pkey(seller, id, sfx) return seller .. "~" .. id .. "~" .. (sfx or 0) end
@@ -269,8 +294,7 @@ function ns.CaptureCOD(buyer, itemID, suffix, qty)
     if status ~= "ok" then return end
     local text = ns.CODReplyText(buyer, itemID, acceptedQty, unit)
     if text ~= "" then
-        local marker = ns.CODCancelMarker and (" " .. ns.CODCancelMarker(itemID, suffix)) or ""
-        SendChatMessage(text .. marker, "WHISPER", nil, buyer)
+        SendChatMessage(withMarker(text, ns.CODCancelMarker and ns.CODCancelMarker(itemID, suffix)), "WHISPER", nil, buyer)
     end
     ns.Log(("COD captured from whisper: %s %s x%d"):format(buyer, GetItemInfo(itemID) or ("item:" .. itemID), acceptedQty))
     return true
@@ -383,8 +407,7 @@ ns.OnMessage("CO", function(a, b, c, d, _, _, sender)
     -- even once the listing is fully reserved and no longer clickable in search/browse.
     local text = ns.CODReplyText(buyer, itemID, acceptedQty, unit)
     if text ~= "" then
-        local marker = ns.CODCancelMarker and (" " .. ns.CODCancelMarker(itemID, suffix)) or ""
-        SendChatMessage(text .. marker, "WHISPER", nil, sender)
+        SendChatMessage(withMarker(text, ns.CODCancelMarker and ns.CODCancelMarker(itemID, suffix)), "WHISPER", nil, sender)
     end
     ns.Log(("COD request from %s accepted: %s x%d"):format(buyer, GetItemInfo(itemID) or ("item:" .. itemID), acceptedQty))
 end)

@@ -90,6 +90,13 @@ end
 -- AddMessage and so never passes through the incoming-chat filter that rewrites markers).
 function ns.CODCancelLink(seller, itemID, suffix) return codLink(seller, itemID, suffix) end
 
+-- Wire marker for the "order mailed" whisper. No payload: its only job is telling the receiving
+-- client this is our own transactional text, never a human COD request ("Mailed your COD: X x2"
+-- would otherwise re-capture as an order on a buyer who lists the item too). The capture and
+-- [Create COD] filters skip on the "{{GFMCOD" prefix, so even old clients honour it; shareFilter
+-- below strips it from the displayed line ("sent" can never be a valid cancel payload).
+function ns.CODSentMarker() return "{{GFMCOD:sent}}" end
+
 -- Per-surface spam filter: each chat event maps to a "hide" setting. When that setting is on
 -- the whole shop-link line is suppressed for this player only (local, changes nothing for
 -- anyone else). Surfaces not listed here (e.g. raid) are never hidden, by design.
@@ -123,7 +130,10 @@ local function shareFilter(_, event, msg, ...)
         end
     end
     local changed = false
-    local out = msg:gsub("{{GFM:([^{}|]+)}}", function(name)
+    -- the payload-less "mailed" marker is display noise once it has done its capture-guard job
+    local out, nSent = msg:gsub("%s*{{GFMCOD:sent}}", "")
+    if nSent > 0 then changed = true end
+    out = out:gsub("{{GFM:([^{}|]+)}}", function(name)
         name = name:gsub(":", "")   -- colon is our payload delimiter; real names never contain one
         changed = true
         return ("|cff00ff96|H%s:%s|h[%s's shop]|h|r"):format(SHOP_LINK_NS, name, name)

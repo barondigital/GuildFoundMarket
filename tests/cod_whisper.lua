@@ -162,6 +162,13 @@ ns.HandleCODWhisper(link(950), "Me", true)   -- seed context for the item
 ns.HandleCODWhisper("Got your COD for Thing x2 (40000c) {{GFMCOD:Me:950:0}}", "Me", true)
 check("confirmation whisper is not re-captured", #captured == 0)
 
+-- the seller's "order mailed" whisper (contains "cod" + a qty, carries the payload-less sent
+-- marker) must not capture on a buyer who also lists the item and still has it in context
+reset()
+ns.HandleCODWhisper(link(960), "Seller", true)   -- the item is in conversation context
+ns.HandleCODWhisper("Mailed your COD: Thing x2 (40000c). It's on its way, thanks Buyer! {{GFMCOD:sent}}", "Seller", true)
+check("mailed whisper is not captured as a new order", #captured == 0)
+
 -- context expires after the window
 reset()
 fakeNow = 5000
