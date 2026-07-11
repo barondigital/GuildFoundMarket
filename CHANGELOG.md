@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.19.0
+
+- **The bag scan now finds buyers too.** Scan bags asks the confederation who is buying as well as
+  who is selling: alongside each seller's price catalog it fetches every buyer's want list and
+  matches both against your bags. On the wire that is one extra broadcast plus one directed fetch
+  per buyer, the same shape as the price side. A new Buyers column (coin icon) on each scanned row
+  lights up when the scan found buyers for that item.
+- **Buyers window.** Clicking the coin opens a side window between the main window and the
+  Debug/Network sidebar (an open sidebar shifts right to make room) listing every buyer for that
+  item: the amount they want and the price they pay, best payer on top; "Offers" rows carry no
+  price. Right-click a name to whisper. The window closes with the Scan tab.
+- **Send a COD straight from the buyers window.** A Send button per buyer pre-fills the open
+  mailbox's Send Mail exactly like the COD tab's send-assist: the amount they want, clamped to the
+  unbound copies your bags hold right now, with COD set to their price. You still press the real
+  Send button yourself.
+- **Location columns show the zone.** Player locations now travel as "SubZone, Zone", list columns
+  show just the zone ("Orgrimmar" instead of "The Drag") and hovering the player reveals the full
+  location. Older clients simply display the fuller string.
+- **Fix: the mailed-COD whisper no longer creates a phantom order.** "Mailed your COD: X x2"
+  contains the word cod plus a quantity, so on a buyer who also lists that item it re-captured as a
+  brand-new COD order. All transactional COD whispers now carry a capture-guard marker (clamped
+  into the 255-character chat limit however long your custom template is), which even older clients
+  honour.
+- **Fix: the COD send-assist can split stacks and combine them.** It used to require the whole
+  order in one bag stack, and splitting attached the entire source stack (a 21-item order shipped
+  2x20). Orders are now gathered across stacks, fractured stacks first, with at most one split
+  whose remainder is parked in a free bag slot and attached once it settles, so the mail always
+  carries exactly the ordered amount. Refusals come before the mail frame is touched, with honest
+  messages: how many you actually have, when an order cannot fit one mail's 12 attachment slots,
+  or when no bag slot is free to park the split in.
+
 ## 0.18.4
 
 - **List items straight from the Scan tab.** Every scanned row that found a market price now has a

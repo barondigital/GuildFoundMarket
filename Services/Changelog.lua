@@ -20,15 +20,15 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.18.4
-Bag scan with market prices and one-click listing, network health view, adjustable scan size, version announcements
+ns.CHANGELOG = [[Guild Found Market 0.19.0
+The bag scan now finds buyers per item, with a buyers window and one-click COD mail, plus big COD mailing fixes
 
-- New Scan tab: Scan bags finds every sellable item you carry (bank included while its window is open) and checks what the confederation currently asks for each. Live progress, stoppable at any time; hover the market column for the individual sellers. Each scan also refreshes the price ranges on item tooltips.
-- List straight from the scan: tick scanned items (or select all) and press List selected. The price comes from the scan itself: undercut (1 copper under the lowest), a robust average (extreme prices are ignored first), or match the lowest. Items you already list only get the new price.
-- New Network view (Help tab, next to Debug): your marketplace traffic in plain language, showing server slow-downs, lost or late replies, and whether your scan cap was reached.
-- The scan size is now a slider in Options under Network (50 to 600, was fixed at 150). Client-side only.
-- Announce a version from this overlay: pick guild chat, a whisper, or a chat channel you have joined; the exact line is previewed first and nothing is sent until you press Enter yourself.
-- Fix: the announce picker no longer lists hidden addon channels (like GreenWall's bridge), which mistook announcements for corrupted protocol traffic.]]
+- Scan bags now also asks who is buying: every buyer's want list is fetched alongside the seller catalogs and matched against your bags.
+- New Buyers column on each scanned row (coin icon): click it for a side window with every buyer for that item, the amount they want and what they pay, best payer on top. Right-click a name to whisper.
+- Send a COD straight from that window: a Send button per buyer pre-fills the open mailbox's Send Mail, the amount they want clamped to what your bags hold, COD at their price. You still press the real Send button yourself.
+- Locations now show the zone in list columns (Orgrimmar instead of The Drag); hover the player for the exact spot.
+- Fix: the "Mailed your COD" whisper no longer creates a phantom COD order on a buyer who lists the same item.
+- Fix: the COD send-assist can now combine multiple stacks and split one for the remainder, so any order amount mails correctly; it refuses with honest messages when your bags cannot cover the order or it will not fit one mail.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,
