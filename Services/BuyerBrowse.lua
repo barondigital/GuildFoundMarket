@@ -238,7 +238,10 @@ ns.OnMessage("WL", function(a, _, _, _, _, _, sender)
 end)
 
 -- WK~lid~more~rows: a chunk of a buyer's want list (rows are id:qty:price:suffix:cod;...).
+-- The bag scan fetches want lists over the same message with its own lids; give it first
+-- pick so a sweep never collides with a buyer the Buyers tab has open.
 ns.OnMessage("WK", function(a, b, c)
+    if ns.BagScan and ns.BagScan.HandleWantChunk and ns.BagScan.HandleWantChunk(a, b, c) then return end
     if a ~= activeWLid or not ns.buyers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix, cod = strsplit(":", chunk)

@@ -9,12 +9,14 @@ local ADDON, ns = ...
 --
 -- The market side deliberately rides the EXISTING protocol, because a per-item
 -- search can't loop (channel broadcasts need a hardware event) and would be the
--- noisiest option anyway. Instead: ONE "who's selling" broadcast (sent from the
--- button click itself, so it's legal), then each replying seller's catalog is
--- fetched with the same L~/K~ whispers the Sellers tab uses - directed, timer-safe
--- and throttled by the normal send queue. Every seller answers once, exactly as if
--- a buyer had opened their shop. Catalog rows are matched against the bag variants
--- and the whole sweep is snapshotted into PriceDB, so item tooltips profit too.
+-- noisiest option anyway. Instead: ONE "who's selling" plus ONE "who's buying"
+-- broadcast (both sent from the button click itself, so they're legal), then each
+-- replying seller's catalog is fetched with the same L~/K~ whispers the Sellers tab
+-- uses and each replying buyer's want list with the WL~/WK~ whispers the Buyers tab
+-- uses - directed, timer-safe and throttled by the normal send queue. Catalog rows
+-- are matched against the bag variants (the sweep is snapshotted into PriceDB, so
+-- item tooltips profit too) and want rows the same way, feeding the per-item Buyers
+-- column and its side window.
 --
 -- The Scan tab shows live progress and has a Stop button: stopping clears the fetch
 -- queue, ignores whatever is still in flight, and keeps the prices found so far. The
@@ -31,9 +33,25 @@ local BANK_IDS = { -1, 5, 6, 7, 8, 9, 10, 11 }
 
 local state = nil    -- nil = idle; see Start() for the fields
 local lidSeq = 0
-local refreshWin     -- forward decl (window section below)
+local refreshWin, refreshBuyersWin     -- forward decls (window sections below)
 
 local function vlinkStr(id, suffix) return ("item:%d:0:0:0:0:0:%d"):format(id, suffix or 0) end
+
+-- Unbound copies of one variant currently in the BAGS (bank excluded: mail attachments
+-- can only come from bags). Used to clamp the buyers window's Send button to reality.
+local function unboundInBags(itemID, suffix)
+    suffix = suffix or 0
+    local n = 0
+    for _, bag in ipairs(BAG_IDS) do
+        for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID == itemID and not info.isBound and (ns.Stock.LinkSuffix(info.hyperlink) or 0) == suffix then
+                n = n + (info.stackCount or 1)
+            end
+        end
+    end
+    return n
+end
 
 -- Collect the sellable variants you carry: skip bound copies and quest-class items.
 -- A variant can have both bound and unbound copies; only the unbound ones count.
@@ -74,6 +92,13 @@ local function foundCount()
     return n
 end
 
+-- Variants that got at least one interested buyer so far.
+local function wantFoundCount()
+    local n = 0
+    for _, list in pairs(state.wants) do if #list > 0 then n = n + 1 end end
+    return n
+end
+
 local function finish(stopped)
     if not state or state.phase == "done" then return end
     state.phase = "done"
@@ -83,25 +108,27 @@ local function finish(stopped)
     -- one aggregate snapshot across ALL sellers, so PriceDB gets a real low/high/count
     -- per variant (recording per seller would leave count-1 observations)
     if ns.PriceDB and #state.allRows > 0 then ns.PriceDB.Record(state.allRows) end
-    ns.Log(("BAGSCAN %s: %d/%d sellers answered, prices for %d of %d sellable variants"):format(
-        stopped and "stopped" or "done", state.sellerDone, state.sellerTotal, foundCount(), state.itemTotal))
+    ns.Log(("BAGSCAN %s: %d/%d sellers and %d/%d buyers answered, prices for %d and buyers for %d of %d sellable variants"):format(
+        stopped and "stopped" or "done", state.sellerDone, state.sellerTotal, state.wantDone, state.wantTotal,
+        foundCount(), wantFoundCount(), state.itemTotal))
     refreshWin()
 end
 
--- Ask the next queued sellers for their catalog, up to the concurrency cap.
+-- Ask the next queued fetch jobs (seller catalogs and buyer want lists), up to the
+-- concurrency cap. The lid prefix tells the chunk handlers which kind an answer is.
 local function pump()
     while #state.queue > 0 and inflightCount() < CONCURRENT do
-        local seller = table.remove(state.queue, 1)
+        local job = table.remove(state.queue, 1)
         lidSeq = lidSeq + 1
-        local lid = ns.playerName .. "#BS" .. lidSeq
-        state.inflight[lid] = { seller = seller, deadline = GetTime() + FETCH_WINDOW }
+        local lid = ns.playerName .. (job.kind == "wants" and "#BW" or "#BS") .. lidSeq
+        state.inflight[lid] = { who = job.who, kind = job.kind, deadline = GetTime() + FETCH_WINDOW }
         if ns.NetStats then ns.NetStats.ScanStarted(lid) end
-        ns.EnqueueWhisper("L~" .. lid, seller)
+        ns.EnqueueWhisper((job.kind == "wants" and "WL~" or "L~") .. lid, job.who)
     end
     if #state.queue == 0 and inflightCount() == 0 then finish(false) end
 end
 
--- Watchdog: skip sellers whose catalog never (fully) arrived, keep the pipeline full.
+-- Watchdog: skip players whose answer never (fully) arrived, keep the pipeline full.
 local function tick()
     if not state or state.phase ~= "catalogs" then return end
     local now = GetTime()
@@ -109,8 +136,9 @@ local function tick()
         if now > f.deadline then
             state.inflight[lid] = nil
             state.knownLids[lid] = true   -- swallow chunks that still trickle in for it
-            state.sellerDone = state.sellerDone + 1
-            ns.Log("BAGSCAN: no catalog from " .. f.seller .. " (skipped)")
+            if f.kind == "wants" then state.wantDone = state.wantDone + 1
+            else state.sellerDone = state.sellerDone + 1 end
+            ns.Log(("BAGSCAN: no %s from %s (skipped)"):format(f.kind == "wants" and "want list" or "catalog", f.who))
         end
     end
     pump()
@@ -131,7 +159,7 @@ function ns.BagScan.HandleCatalogChunk(lid, more, rows)
             local sfx = tonumber(suffix) or 0
             state.allRows[#state.allRows + 1] = { id = id, suffix = sfx, price = tonumber(price) or 0 }
             local mine = state.offers[ns.vkey(id, sfx)]
-            if mine then mine[#mine + 1] = { seller = f.seller, qty = tonumber(qty) or 0, price = tonumber(price) or 0 } end
+            if mine then mine[#mine + 1] = { seller = f.who, qty = tonumber(qty) or 0, price = tonumber(price) or 0 } end
         end
     end
     if (tonumber(more) or 0) == 0 then
@@ -144,17 +172,53 @@ function ns.BagScan.HandleCatalogChunk(lid, more, rows)
     return true
 end
 
--- Phase 2: the seller scan settled; queue every answering seller for a catalog fetch.
+-- A WK~lid~more~rows chunk (a buyer's want list). Returns true when the lid is ours, so the
+-- Buyers-tab handler leaves it alone. Rows are id:qty:price:suffix:cod, same as the want list.
+function ns.BagScan.HandleWantChunk(lid, more, rows)
+    if not state then return false end
+    local f = state.inflight[lid]
+    if not f then return state.knownLids[lid] or false end   -- ours but already timed out: swallow it
+    f.deadline = GetTime() + FETCH_WINDOW
+    for chunk in (rows or ""):gmatch("[^;]+") do
+        local id, qty, price, suffix, cod = strsplit(":", chunk)
+        id = tonumber(id)
+        if id then
+            local mine = state.wants[ns.vkey(id, tonumber(suffix) or 0)]
+            if mine then mine[#mine + 1] = { buyer = f.who, qty = tonumber(qty) or 0, price = tonumber(price) or 0, cod = (tonumber(cod) or 0) == 1 } end
+        end
+    end
+    if (tonumber(more) or 0) == 0 then
+        state.inflight[lid] = nil
+        state.knownLids[lid] = true
+        state.wantDone = state.wantDone + 1
+        pump()
+    end
+    refreshWin()
+    if refreshBuyersWin then refreshBuyersWin() end
+    return true
+end
+
+-- Phase 2: the seller and buyer scans settled; queue every answering seller for a catalog
+-- fetch and every answering buyer for a want-list fetch (catalogs first: prices are the
+-- scan's primary output).
 local function startCatalogPhase(gen)
     if not state or state.gen ~= gen or state.phase ~= "sellers" then return end
     state.phase = "catalogs"
     for seller in pairs(ns.sellers.results) do
-        if seller ~= ns.playerName then state.queue[#state.queue + 1] = seller end
+        if seller ~= ns.playerName then state.queue[#state.queue + 1] = { kind = "catalog", who = seller } end
     end
-    table.sort(state.queue)
     state.sellerTotal = #state.queue
-    ns.Log(("BAGSCAN: %d seller(s) answered; fetching catalogs (%d at a time)"):format(state.sellerTotal, CONCURRENT))
-    if state.sellerTotal == 0 then finish(false); return end
+    for buyer in pairs(ns.buyers.results) do
+        if buyer ~= ns.playerName then state.queue[#state.queue + 1] = { kind = "wants", who = buyer } end
+    end
+    state.wantTotal = #state.queue - state.sellerTotal
+    table.sort(state.queue, function(a, b)
+        if a.kind ~= b.kind then return a.kind < b.kind end   -- "catalog" sorts before "wants"
+        return a.who < b.who
+    end)
+    ns.Log(("BAGSCAN: %d seller(s) and %d buyer(s) answered; fetching catalogs and want lists (%d at a time)"):format(
+        state.sellerTotal, state.wantTotal, CONCURRENT))
+    if #state.queue == 0 then finish(false); return end
     state.ticker = C_Timer.NewTicker(0.5, tick)
     pump()
     refreshWin()
@@ -176,15 +240,26 @@ function ns.BagScan.Start()
         gen = GetTime(), phase = "sellers",
         items = items, order = order, itemTotal = total, bankIncluded = bankIncluded,
         offers = {},                       -- [vkey] = { {seller, qty, price}, ... } market offers per bag variant
+        wants = {},                        -- [vkey] = { {buyer, qty, price, cod}, ... } interested buyers per bag variant
         allRows = {},                      -- every catalog row seen (one PriceDB snapshot at the end)
         queue = {}, inflight = {}, knownLids = {},
         sellerTotal = 0, sellerDone = 0,
+        wantTotal = 0, wantDone = 0,
         ticker = nil, stopped = false,
     }
-    for _, key in ipairs(order) do state.offers[key] = {} end
+    for _, key in ipairs(order) do state.offers[key] = {}; state.wants[key] = {} end
     if ns.BagScan.ClearSelection then ns.BagScan.ClearSelection() end   -- ticks belong to the previous scan's prices
-    ns.Log(("BAGSCAN: %d sellable variant(s) in bags%s; scanning for online sellers"):format(total, bankIncluded and " + bank" or ""))
+    ns.Log(("BAGSCAN: %d sellable variant(s) in bags%s; scanning for online sellers and buyers"):format(total, bankIncluded and " + bank" or ""))
     ns.ScanSellers("")   -- one broadcast; replies land in ns.sellers.results (the shared index)
+    ns.ScanBuyers("")    -- second broadcast, same click/hardware event; replies land in ns.buyers.results
+    if ns.selfTest and not ns.IsPaused() then
+        -- dev self-test: you can't whisper yourself a WL, so match your own WTB list locally,
+        -- the same way Search and the Buyers tab inject the own player under self-test
+        for _, it in ipairs(ns.WantList()) do
+            local mine = state.wants[ns.vkey(it.id, it.suffix)]
+            if mine then mine[#mine + 1] = { buyer = ns.playerName, qty = it.qty, price = it.price, cod = it.cod, self = true } end
+        end
+    end
     local gen = state.gen
     C_Timer.After((ns.QUERY_SETTLE or 5) + 0.5, function() startCatalogPhase(gen) end)
     refreshWin()
@@ -348,14 +423,14 @@ local function statusText()
         return "Find every sellable item you carry (not soulbound, no quest items; your bank too while its window is open) and see what the confederation currently asks for each. Press Scan bags to start.", 0.7, 0.7, 0.7
     end
     if state.phase == "sellers" then
-        return "Step 1/2: asking the confederation who is selling ...", 1, 0.82, 0
+        return "Step 1/2: asking the confederation who is selling and who is buying ...", 1, 0.82, 0
     elseif state.phase == "catalogs" then
-        return ("Step 2/2: fetching price catalogs  %d/%d  ·  prices for %d of %d items so far"):format(
-            state.sellerDone, state.sellerTotal, foundCount(), state.itemTotal), 1, 0.82, 0
+        return ("Step 2/2: catalogs %d/%d · want lists %d/%d  ·  prices for %d and buyers for %d of %d items so far"):format(
+            state.sellerDone, state.sellerTotal, state.wantDone, state.wantTotal, foundCount(), wantFoundCount(), state.itemTotal), 1, 0.82, 0
     end
     local verb = state.stopped and "Stopped" or "Done"
-    return ("%s: %d of %d sellers checked  ·  market prices for %d of your %d sellable items."):format(
-        verb, state.sellerDone, state.sellerTotal, foundCount(), state.itemTotal), 0.4, 1, 0.4
+    return ("%s: %d sellers + %d buyers checked  ·  prices for %d and buyers for %d of your %d sellable items."):format(
+        verb, state.sellerDone, state.wantDone, foundCount(), wantFoundCount(), state.itemTotal), 0.4, 1, 0.4
 end
 
 local function renderWinRows()
@@ -395,6 +470,10 @@ local function renderWinRows()
             r.sel:SetEnabled(n > 0)
             r.sel:SetChecked(selected[key] and true or false)
             r.sel:SetAlpha(n > 0 and 1 or 0.35)
+            local wl = state.wants and state.wants[key]
+            r.buyers.key = key
+            r.buyers:SetEnabled(wl ~= nil and #wl > 0)
+            r.buyers:SetAlpha((wl ~= nil and #wl > 0) and 1 or 0.35)
             r:Show()
         end
     end
@@ -502,12 +581,12 @@ function ns.BagScan.CreatePanel(main)
         local h = win:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         h:SetPoint("TOPLEFT", x, hy); h:SetWidth(w); h:SetJustifyH("LEFT"); h:SetText(text)
     end
-    head("Item", 34, 280); head("You have", 322, 60); head("Your listing", 392, 100); head("Market low - high (sellers)", 502, 160); head("List", 662, 30)
+    head("Item", 34, 250); head("You have", 292, 60); head("Your listing", 362, 100); head("Market low - high (sellers)", 472, 160); head("List", 632, 30); head("Buyers", 678, 44)
 
     -- select/deselect all, next to the List column header: ticks every row that has a
     -- market price to derive a listing price from (grey rows stay untouched)
     win.selAll = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
-    win.selAll:SetSize(22, 22); win.selAll:SetPoint("TOPLEFT", 684, hy + 6)
+    win.selAll:SetSize(22, 22); win.selAll:SetPoint("TOPLEFT", 652, hy + 6)
     win.selAll:SetEnabled(false); win.selAll:SetAlpha(0.35)
     win.selAll:SetMotionScriptsWhileDisabled(true)
     win.selAll:SetScript("OnClick", function(self)
@@ -544,7 +623,7 @@ function ns.BagScan.CreatePanel(main)
         if i == 1 then r:SetPoint("TOPLEFT", win.scroll, "TOPLEFT", 4, 0)
         else r:SetPoint("TOPLEFT", winRows[i - 1], "BOTTOMLEFT", 0, 0) end
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 0, 0)
-        r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 22, 0); r.name:SetSize(286, ROW_H)
+        r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 22, 0); r.name:SetSize(256, ROW_H)
         r.name.fs = r.name:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name.fs:SetAllPoints(); r.name.fs:SetJustifyH("LEFT")
         r.name:SetScript("OnEnter", function(self)
             if not self.itemLink then return end
@@ -552,9 +631,9 @@ function ns.BagScan.CreatePanel(main)
             GameTooltip:Show()
         end)
         r.name:SetScript("OnLeave", GameTooltip_Hide)
-        r.have = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.have:SetPoint("LEFT", 314, 0); r.have:SetWidth(60); r.have:SetJustifyH("LEFT")
-        r.listed = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.listed:SetPoint("LEFT", 384, 0); r.listed:SetWidth(100); r.listed:SetJustifyH("LEFT")
-        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 494, 0); r.market:SetSize(150, ROW_H)
+        r.have = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.have:SetPoint("LEFT", 284, 0); r.have:SetWidth(60); r.have:SetJustifyH("LEFT")
+        r.listed = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.listed:SetPoint("LEFT", 354, 0); r.listed:SetWidth(100); r.listed:SetJustifyH("LEFT")
+        r.market = CreateFrame("Button", nil, r); r.market:SetPoint("LEFT", 464, 0); r.market:SetSize(150, ROW_H)
         r.market.fs = r.market:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.market.fs:SetAllPoints(); r.market.fs:SetJustifyH("LEFT")
         r.market:SetScript("OnEnter", function(self)
             local list = self.key and state and state.offers[self.key]
@@ -572,7 +651,7 @@ function ns.BagScan.CreatePanel(main)
         -- tick to include this row in "List selected"; disabled until a priced offer exists
         -- (bid-only or unpriced rows give the modes nothing to derive a price from)
         r.sel = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
-        r.sel:SetSize(22, 22); r.sel:SetPoint("LEFT", 654, 0)
+        r.sel:SetSize(22, 22); r.sel:SetPoint("LEFT", 624, 0)
         r.sel:SetMotionScriptsWhileDisabled(true)
         r.sel:SetScript("OnClick", function(self)
             if self.key then selected[self.key] = self:GetChecked() and true or nil end
@@ -594,11 +673,253 @@ function ns.BagScan.CreatePanel(main)
             GameTooltip:Show()
         end)
         r.sel:SetScript("OnLeave", GameTooltip_Hide)
+        -- Buyers column: a coin button (same icon as My Items' "Find buyers") that opens the
+        -- side window with everyone the scan found wanting this item; dim while nobody does
+        r.buyers = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.buyers:SetSize(20, 20); r.buyers:SetPoint("LEFT", 680, 0)
+        r.buyers:SetMotionScriptsWhileDisabled(true)
+        local coin = r.buyers:CreateTexture(nil, "ARTWORK"); coin:SetSize(14, 14); coin:SetPoint("CENTER")
+        coin:SetTexture("Interface\\MoneyFrame\\UI-GoldIcon")
+        r.buyers:SetScript("OnClick", function(self)
+            if self.key then ns.BagScan.OpenBuyersFor(self.key) end
+        end)
+        r.buyers:SetScript("OnEnter", function(self)
+            if not self.key then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            local list = state and state.wants[self.key]
+            if list and #list > 0 then
+                GameTooltip:SetText(("%d buyer(s) want this item"):format(#list))
+                GameTooltip:AddLine("Click for who they are and what they pay.", 1, 1, 1, true)
+            else
+                GameTooltip:SetText(state and state.phase ~= "done" and "No buyers found yet ..." or "No buyers found for this item.", 1, 1, 1, true)
+            end
+            GameTooltip:Show()
+        end)
+        r.buyers:SetScript("OnLeave", GameTooltip_Hide)
         local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.06)
         r:Hide(); winRows[i] = r
     end
 
     win:SetScript("OnShow", function() refreshWin() end)
+    -- leaving the Scan tab (or closing the main window) takes the buyers side window with it
+    win:SetScript("OnHide", function() ns.BagScan.CloseBuyers() end)
     win:Hide()
     return win
+end
+
+--========================================================================
+-- Buyers side window: who wants one scanned item, and at what price. Opened from a row's
+-- Buyers coin button. It docks where the Debug sidebar does and pushes any open sidebar
+-- (Debug / Network) one spot further right, so the order reads main | buyers | sidebar.
+--========================================================================
+local buyersWin
+local buyersKey = nil            -- vkey the window currently shows
+local BROWS, BROW_H = 17, 20
+local buyersRows = {}
+
+-- Re-anchor the Debug/Network sidebars: beside the buyers window while it is shown, else
+-- back beside the main window. Their toggles call this too, so a sidebar opened later
+-- still lands right of an already-open buyers window.
+function ns.LayoutSidePanels()
+    local main = _G.GuildFoundMarketFrame
+    if not main then return end
+    local anchor = (buyersWin and buyersWin:IsShown()) and buyersWin or main
+    for _, name in ipairs({ "GuildFoundMarketDebug", "GuildFoundMarketNetStats" }) do
+        local p = _G[name]
+        if p then
+            p:ClearAllPoints()
+            p:SetPoint("TOPLEFT", anchor, "TOPRIGHT", 6, 0)
+            p:SetPoint("BOTTOMLEFT", anchor, "BOTTOMRIGHT", 6, 0)
+        end
+    end
+end
+
+-- What a buyer pays, same colours as the Buyers tab: bid-only wants say "Offers",
+-- a priced want is their maximum, orange COD = they accept Cash On Delivery.
+local function wantPriceText(o)
+    if (o.price or 0) <= 0 then return "|cffffd100Offers|r" end
+    return ns.PriceToStr(o.price) .. (o.cod and " |cffff8800COD|r" or " |cff888888max|r")
+end
+
+-- The window's rows, best-paying buyer first (bid-only wants sink to the bottom).
+local function buyersList()
+    local src = buyersKey and state and state.wants[buyersKey]
+    local list = {}
+    if src then for _, o in ipairs(src) do list[#list + 1] = o end end
+    table.sort(list, function(a, b)
+        if (a.price > 0) ~= (b.price > 0) then return a.price > 0 end
+        if a.price ~= b.price then return a.price > b.price end
+        return a.buyer < b.buyer
+    end)
+    return list
+end
+
+local function renderBuyersRows()
+    local list = buyersList()
+    local offset = FauxScrollFrame_GetOffset(buyersWin.scroll)
+    FauxScrollFrame_Update(buyersWin.scroll, #list, BROWS, BROW_H)
+    for i = 1, BROWS do
+        local r, o = buyersRows[i], list[offset + i]
+        if not o then r:Hide() else
+            r.name.fs:SetText(o.self and (o.buyer .. " (you)") or o.buyer)
+            r.name.fs:SetTextColor(o.self and 1 or 0.4, o.self and 0.82 or 1, o.self and 0 or 0.4)
+            r.name.buyer, r.name.isSelf = o.buyer, o.self
+            r.qty:SetText(o.qty or 0)
+            r.price:SetText(wantPriceText(o))
+            r.send.want = o
+            local sendable = (o.price or 0) > 0   -- your own (self-test) row can mail too: full flow rehearsal
+            r.send:SetEnabled(sendable)
+            r.send:SetAlpha(sendable and 1 or 0.4)
+            r:Show()
+        end
+    end
+end
+
+refreshBuyersWin = function()
+    if not (buyersWin and buyersWin:IsShown() and buyersKey and state) then return end
+    local it = state.items[buyersKey]
+    if not it then buyersWin:Hide(); return end
+    buyersWin.icon:SetTexture(GetItemIcon(it.id))
+    buyersWin.title:SetText(GetItemInfo(vlinkStr(it.id, it.suffix)) or ("item:" .. it.id))
+    buyersWin.titleBtn.itemLink = vlinkStr(it.id, it.suffix)
+    local n = #buyersList()
+    if n > 0 then
+        buyersWin.status:SetText(("%d buyer(s) want this item%s"):format(n, state.phase ~= "done" and " · scan still running ..." or ""))
+        buyersWin.status:SetTextColor(0.4, 1, 0.4)
+    else
+        buyersWin.status:SetText(state.phase ~= "done" and "No buyers found yet · scan still running ..." or "No buyers found for this item.")
+        buyersWin.status:SetTextColor(0.7, 0.7, 0.7)
+    end
+    renderBuyersRows()
+end
+
+local function createBuyersWin()
+    if buyersWin then return buyersWin end
+    local main = _G.GuildFoundMarketFrame
+    buyersWin = CreateFrame("Frame", "GuildFoundMarketScanBuyers", main, "BackdropTemplate")
+    buyersWin:SetWidth(380)
+    buyersWin:SetPoint("TOPLEFT", main, "TOPRIGHT", 6, 0)
+    buyersWin:SetPoint("BOTTOMLEFT", main, "BOTTOMRIGHT", 6, 0)
+    buyersWin:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+    })
+    buyersWin:EnableMouse(true)
+
+    local header = buyersWin:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    header:SetPoint("TOP", 0, -16); header:SetText("GFM |cff00ff96Buyers|r")
+
+    local close = CreateFrame("Button", nil, buyersWin, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -4, -4)
+    close:SetScript("OnClick", function() buyersWin:Hide() end)
+
+    -- the scanned item this window is about; hovering shows the exact (variant) tooltip
+    buyersWin.icon = buyersWin:CreateTexture(nil, "ARTWORK")
+    buyersWin.icon:SetSize(16, 16); buyersWin.icon:SetPoint("TOPLEFT", 16, -38)
+    buyersWin.title = buyersWin:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    buyersWin.title:SetPoint("LEFT", buyersWin.icon, "RIGHT", 6, 0)
+    buyersWin.title:SetWidth(310); buyersWin.title:SetJustifyH("LEFT"); buyersWin.title:SetWordWrap(false)
+    buyersWin.titleBtn = CreateFrame("Button", nil, buyersWin)
+    buyersWin.titleBtn:SetPoint("TOPLEFT", 16, -36); buyersWin.titleBtn:SetSize(332, 20)
+    buyersWin.titleBtn:SetScript("OnEnter", function(self)
+        if not self.itemLink then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetHyperlink(self.itemLink); GameTooltip:Show()
+    end)
+    buyersWin.titleBtn:SetScript("OnLeave", GameTooltip_Hide)
+
+    buyersWin.status = buyersWin:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    buyersWin.status:SetPoint("TOPLEFT", 16, -60); buyersWin.status:SetPoint("TOPRIGHT", -16, -60)
+    buyersWin.status:SetJustifyH("LEFT")
+
+    local function head(text, x, w)
+        local h = buyersWin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        h:SetPoint("TOPLEFT", x, -78); h:SetWidth(w); h:SetJustifyH("LEFT"); h:SetText(text)
+    end
+    head("Buyer", 18, 120); head("Wants", 152, 36); head("Pays up to", 190, 100); head("Send", 300, 40)
+
+    buyersWin.scroll = CreateFrame("ScrollFrame", "GuildFoundMarketScanBuyersScroll", buyersWin, "FauxScrollFrameTemplate")
+    buyersWin.scroll:SetPoint("TOPLEFT", 14, -94); buyersWin.scroll:SetSize(328, BROWS * BROW_H)
+    buyersWin.scroll:SetScript("OnVerticalScroll", function(self, o) FauxScrollFrame_OnVerticalScroll(self, o, BROW_H, renderBuyersRows) end)
+    buyersWin.scroll:EnableMouseWheel(true)
+    buyersWin.scroll:SetScript("OnMouseWheel", function(self, delta)
+        local maxOff = math.max(0, #buyersList() - BROWS)
+        local off = math.min(maxOff, math.max(0, FauxScrollFrame_GetOffset(self) - delta))
+        FauxScrollFrame_SetOffset(self, off); self:SetVerticalScroll(off * BROW_H); renderBuyersRows()
+    end)
+
+    for i = 1, BROWS do
+        local r = CreateFrame("Frame", nil, buyersWin); r:SetSize(328, BROW_H)
+        if i == 1 then r:SetPoint("TOPLEFT", buyersWin.scroll, "TOPLEFT", 2, 0)
+        else r:SetPoint("TOPLEFT", buyersRows[i - 1], "BOTTOMLEFT", 0, 0) end
+        r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 0, 0); r.name:SetSize(130, BROW_H)
+        r.name:RegisterForClicks("RightButtonUp")
+        r.name.fs = r.name:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name.fs:SetAllPoints(); r.name.fs:SetJustifyH("LEFT")
+        r.name.fs:SetTextColor(0.4, 1, 0.4)          -- green: they answered the scan, so online
+        r.name:SetScript("OnClick", function(self, button)
+            if button == "RightButton" and self.buyer then
+                ChatFrame_OpenChat("/w " .. self.buyer .. " ")
+            end
+        end)
+        r.name:SetScript("OnEnter", function(self)
+            if not self.buyer then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(ns.PlayerTitle and ns.PlayerTitle(self.buyer) or self.buyer, 1, 1, 1)
+            if self.isSelf then GameTooltip:AddLine("Your own want (self-test)", 0.6, 0.6, 0.6) end
+            GameTooltip:AddLine("Right-click to whisper", 0.6, 0.6, 0.6)
+            GameTooltip:Show()
+        end)
+        r.name:SetScript("OnLeave", GameTooltip_Hide)
+        r.qty = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.qty:SetPoint("LEFT", 136, 0); r.qty:SetWidth(30); r.qty:SetJustifyH("LEFT")
+        r.price = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.price:SetPoint("LEFT", 174, 0); r.price:SetWidth(104); r.price:SetJustifyH("LEFT")
+        -- Send: pre-fill a COD mail to this buyer via the same send-assist the COD tab uses
+        -- (mailbox must be open; it says so itself). Qty = what they want, clamped to the
+        -- unbound copies your bags hold right now; COD money = their price for that amount.
+        r.send = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.send:SetSize(40, 20); r.send:SetPoint("LEFT", 282, 0); r.send:SetText("Send")
+        r.send:SetMotionScriptsWhileDisabled(true)
+        r.send:SetScript("OnClick", function(self)
+            local o = self.want
+            local it = o and buyersKey and state and state.items[buyersKey]
+            if not it then return end
+            local have = unboundInBags(it.id, it.suffix)
+            if have < 1 then ns.Feedback("Your bags hold no unbound copies of this item anymore.", true); return end
+            ns.CODSendAssist({ buyer = o.buyer, itemID = it.id, suffix = it.suffix, qty = math.min(o.qty or 1, have), unit = o.price })
+        end)
+        r.send:SetScript("OnEnter", function(self)
+            local o = self.want
+            if not o then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            if (o.price or 0) <= 0 then
+                GameTooltip:SetText("They take offers only (no price), so there is no COD amount to collect. Whisper them instead.", 1, 1, 1, true)
+            else
+                GameTooltip:SetText("Prepare a COD mail to " .. o.buyer)
+                GameTooltip:AddLine(("Fills the open mailbox's Send Mail: the %d they want (or as many as your bags hold), COD at their price. You still press the real Send button."):format(o.qty or 1), 1, 1, 1, true)
+            end
+            GameTooltip:Show()
+        end)
+        r.send:SetScript("OnLeave", GameTooltip_Hide)
+        local hl = r:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.06)
+        r:Hide(); buyersRows[i] = r
+    end
+
+    buyersWin:SetScript("OnShow", function() ns.LayoutSidePanels() end)
+    buyersWin:SetScript("OnHide", function() ns.LayoutSidePanels() end)
+    buyersWin:Hide()
+    return buyersWin
+end
+
+-- Open (or retarget) the buyers window for one scanned variant. Row buttons only enable
+-- when the scan found buyers, so an empty window never opens by itself.
+function ns.BagScan.OpenBuyersFor(key)
+    if not (state and state.wants and state.wants[key]) then return end
+    createBuyersWin()
+    buyersKey = key
+    buyersWin:Show()
+    refreshBuyersWin()
+end
+
+function ns.BagScan.CloseBuyers()
+    if buyersWin then buyersWin:Hide() end
 end

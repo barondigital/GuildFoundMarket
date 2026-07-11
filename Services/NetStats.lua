@@ -240,5 +240,7 @@ function ns.ToggleNetStats()
     if panel:IsShown() then panel:Hide(); return end
     local dbg = _G.GuildFoundMarketDebug
     if dbg and dbg:IsShown() then dbg:Hide() end   -- shares the sidebar spot beside the window
+    -- the Scan tab's buyers window may hold the spot next to main; dock right of it then
+    if ns.LayoutSidePanels then ns.LayoutSidePanels() end
     panel:Show()
 end

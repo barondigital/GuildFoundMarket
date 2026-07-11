@@ -113,6 +113,8 @@ function ns.ToggleDebug()
     else
         local net = _G.GuildFoundMarketNetStats
         if net and net:IsShown() then net:Hide() end   -- shares the sidebar spot beside the window
+        -- the Scan tab's buyers window may hold the spot next to main; dock right of it then
+        if ns.LayoutSidePanels then ns.LayoutSidePanels() end
         panel:Show(); ns.RefreshDebug()
     end
 end
