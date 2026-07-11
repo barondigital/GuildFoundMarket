@@ -517,7 +517,7 @@ local function resetRow(r)
     r.c1:EnableMouse(true)
     r.c1.fs:SetTextColor(1, 1, 1)
     r.c1.tip = nil
-    r.c1.itemID = nil; r.c1.itemLink = nil; r.c1.player = nil
+    r.c1.itemID = nil; r.c1.itemLink = nil; r.c1.player = nil; r.c1.loc = nil
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
@@ -586,10 +586,11 @@ local function formatBuyRow(r, d)
     end
     r.c2:SetText(d.qty or 0)
     r.c3:SetText(priceText(d.price))
-    r.c4:SetText(d.loc or ""); r.c4:Show()
+    r.c4:SetText(ns.LocZone(d.loc) or ""); r.c4:Show()   -- zone only; the full location shows on hover
     -- hover shows the exact variant (stats), so use the reconstructed link, not the base ID
     r.c1.itemLink = vLink(ns.search.itemID, d.suffix)
     r.c1.player = d.seller   -- seller name; the item hover adds a "Name <Guild>" line below
+    r.c1.loc = d.loc
 end
 
 local function formatMineRow(r, d)
@@ -641,8 +642,9 @@ local function formatSellerRow(r, d)
         r.c1:SetScript("OnClick", function(_, button)
             if button ~= "RightButton" then showOrigin = { tab = "SELLERS", view = "INDEX" }; ns.OpenSeller(d.seller); ns.SetSellersView("SHOW") end
         end)
+        r.c1.loc = d.loc                         -- full "SubZone, Zone" on hover; the column shows the zone
         r.c2:SetText(d.count or 0)
-        r.c4:SetText(d.loc or ""); r.c4:Show()
+        r.c4:SetText(ns.LocZone(d.loc) or ""); r.c4:Show()
         if d.hasNote then
             -- a chat-bubble icon just after the location; click loads the note, then hover shows it
             r.noteBtn.seller = d.seller; r.noteBtn.store = ns.sellers.results
@@ -737,8 +739,9 @@ local function formatBuyerRow(r, d)
             if button == "RightButton" then ChatFrame_OpenChat("/w " .. d.buyer .. " ")
             else showOrigin = { tab = "BUYERS", view = "INDEX" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW") end
         end)
+        r.c1.loc = d.loc                          -- full "SubZone, Zone" on hover; the column shows the zone
         r.c2:SetText(d.count or 0)
-        r.c4:SetText(d.loc or ""); r.c4:Show()
+        r.c4:SetText(ns.LocZone(d.loc) or ""); r.c4:Show()
         if d.hasNote then
             r.noteBtn.seller = d.buyer; r.noteBtn.store = ns.buyers.results
             r.noteBtn:ClearAllPoints()
@@ -759,9 +762,10 @@ local function formatBuyerRow(r, d)
                 showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW")
             end
         end)
+        r.c1.loc = d.loc
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
-        r.c4:SetText(d.loc or ""); r.c4:Show()
+        r.c4:SetText(ns.LocZone(d.loc) or ""); r.c4:Show()
     else   -- "wantitem": one item the open buyer wants
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -2134,11 +2138,14 @@ local function buildRows()
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 -- on an offer/want row the column is a player: add their name + guild below the item
                 if self.player then GameTooltip:AddLine(ns.PlayerTitle(self.player), 1, 1, 1) end
+                if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
                 GameTooltip:Show()
             elseif self.player then
-                -- a pure player cell (Sellers/Buyers index): name + guild as the title, tip below
+                -- a pure player cell (Sellers/Buyers index): name + guild as the title, the full
+                -- location (subzone included; the column shows only the zone) and tip below
                 GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
                 GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+                if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 GameTooltip:Show()
             elseif self.tip then

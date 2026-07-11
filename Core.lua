@@ -126,12 +126,24 @@ end
 local function isPaused() return GuildFoundMarketCharDB and GuildFoundMarketCharDB.paused end
 ns.IsPaused = isPaused
 
+-- Where I am, as "SubZone, Zone" ("The Drag, Orgrimmar"), or just the zone in open
+-- terrain. Travels as one wire field; receivers show the zone in list columns and the
+-- full string on hover (older clients just display the full string everywhere).
 local function liveLoc()
-    local s = GetSubZoneText()
-    if not s or s == "" then s = GetZoneText() or "" end
-    return s:gsub("~", " ")
+    local zone = (GetZoneText() or ""):gsub("~", " ")
+    local sub = (GetSubZoneText() or ""):gsub("~", " ")
+    if sub == "" or sub == zone then return zone end
+    if zone == "" then return sub end
+    return sub .. ", " .. zone
 end
 ns.LiveLoc = liveLoc
+
+-- The zone half of a wire location ("The Drag, Orgrimmar" -> "Orgrimmar"). A location
+-- from an older client has no comma and passes through whole.
+function ns.LocZone(loc)
+    if not loc then return loc end
+    return loc:match(",%s*([^,]+)$") or loc
+end
 
 -- Apply the aux-seed setting onto the field the ItemDB seeding actually reads. Idempotent.
 ns.On("setting:auxSeed", function(on) GuildFoundMarketDB.disableAux = not on end)
