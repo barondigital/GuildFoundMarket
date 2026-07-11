@@ -20,13 +20,13 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.19.0
-The bag scan now finds buyers per item, with a buyers window and one-click COD mail, plus big COD mailing fixes
+ns.CHANGELOG = [[Guild Found Market 0.19.1
+The Buyers tab shows everything wanted, buyers per scanned bag item with one-click COD mail, a complete category browser, and solid COD mailing
 
-- Scan bags now also asks who is buying: every buyer's want list is fetched alongside the seller catalogs and matched against your bags.
-- New Buyers column on each scanned row (coin icon): click it for a side window with every buyer for that item, the amount they want and what they pay, best payer on top. Right-click a name to whisper.
-- Send a COD straight from that window: a Send button per buyer pre-fills the open mailbox's Send Mail, the amount they want clamped to what your bags hold, COD at their price. You still press the real Send button yourself.
-- Locations now show the zone in list columns (Orgrimmar instead of The Drag); hover the player for the exact spot.
+- The Buyers tab now opens on everything the confederation wants to buy: every buyer's want list in one Item/Qty/Price/Buyer view. The item box doubles as a live filter; picking an item still asks the network directly. Refresh re-collects everything.
+- Scan bags also asks who is buying: a Buyers column (coin icon) per scanned item opens a side window with every buyer, the amount they want and what they pay, best payer on top. Right-click a name to whisper; a Send button pre-fills a COD mail at their price, clamped to what your bags hold. The Find buyers coin on My Items opens the same window.
+- The category browser is complete again: Consumable and Reagent are back, and an Armor subclass (all Cloth at once) can be browsed whole, like the Auction House. How many results are shown is a new slider in Options under Network.
+- Locations show the zone in list columns (Orgrimmar instead of The Drag); hover the player for the exact spot.
 - Fix: the "Mailed your COD" whisper no longer creates a phantom COD order on a buyer who lists the same item.
 - Fix: the COD send-assist can now combine multiple stacks and split one for the remainder, so any order amount mails correctly; it refuses with honest messages when your bags cannot cover the order or it will not fit one mail.]]
 

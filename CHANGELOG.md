@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.19.1
+
+- **The Buyers tab opens on everything wanted.** Entering the tab now collects every buyer's full
+  want list up front (one buyer-scan broadcast, then a directed fetch per buyer, the bag scan's
+  shape) and lists all wants as Item | Qty | Price | Buyer rows, item-sortable like the other
+  lists. The search box does two jobs: typing filters the collected wants live, and picking an
+  item from the autocomplete still asks the network directly for that item, refreshing those rows
+  in place. Refresh re-collects everything. The status line warns when the buyer scan hit its
+  size cap.
+- **Find buyers opens the buyers window in place.** The coin button on My Items > WTS rows no
+  longer jumps to the Buyers tab: it shows the replies in the Scan tab's buyers side window,
+  without leaving My Items. Same rules there: best payer on top, right-click to whisper, a Send
+  button per buyer for a COD mail with the wanted amount clamped to your bags. The window closes
+  when you navigate away from the WTS view, mirroring the Scan tab behaviour.
+- **The category browser is complete again.** Classes with a single generic subclass (Consumable,
+  Reagent) had dropped out of the sidebar; they are back as class-level entries that browse the
+  whole category. An Armor subclass (say Cloth) is now browsable whole too: selecting it queries
+  every slot at once, like the Auction House, while still expanding the slot list for narrowing
+  further. Consumable sits below Recipe.
+- **Browse results shown is now a slider.** The category browser showed at most 150 results; that
+  cap is now configurable in Options under Network (50 to 600), applied live to an open result
+  list. Purely client-side.
+
 ## 0.19.0
 
 - **The bag scan now finds buyers too.** Scan bags asks the confederation who is buying as well as
