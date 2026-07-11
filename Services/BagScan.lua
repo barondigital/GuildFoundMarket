@@ -708,12 +708,16 @@ function ns.BagScan.CreatePanel(main)
 end
 
 --========================================================================
--- Buyers side window: who wants one scanned item, and at what price. Opened from a row's
--- Buyers coin button. It docks where the Debug sidebar does and pushes any open sidebar
--- (Debug / Network) one spot further right, so the order reads main | buyers | sidebar.
+-- Buyers side window: who wants one item, and at what price. Two ways in: a scanned row's
+-- Buyers coin button (scan mode: reads the sweep's want matches), or My Items' Find buyers
+-- coin (query mode: fires the same "who wants this item" broadcast the Buyers tab uses and
+-- shows replies as they arrive). It docks where the Debug sidebar does and pushes any open
+-- sidebar (Debug / Network) one spot further right, so the order reads main | buyers | sidebar.
 --========================================================================
 local buyersWin
-local buyersKey = nil            -- vkey the window currently shows
+local buyersKey = nil            -- scan mode: vkey into state.wants
+local buyersItem = nil           -- query mode: { id, suffix }, rows read from ns.buyers.find
+local buyersTicker = nil         -- query mode: short refresh poll while replies trickle in
 local BROWS, BROW_H = 17, 20
 local buyersRows = {}
 
@@ -741,11 +745,27 @@ local function wantPriceText(o)
     return ns.PriceToStr(o.price) .. (o.cod and " |cffff8800COD|r" or " |cff888888max|r")
 end
 
--- The window's rows, best-paying buyer first (bid-only wants sink to the bottom).
+-- The item the window is about: the scanned variant (scan mode) or the queried one.
+local function buyersItemInfo()
+    if buyersKey then return state and state.items[buyersKey] end
+    return buyersItem
+end
+
+-- The window's rows, best-paying buyer first (bid-only wants sink to the bottom). Every row
+-- carries its own suffix: a query answers with every variant of the item a buyer wants.
 local function buyersList()
-    local src = buyersKey and state and state.wants[buyersKey]
     local list = {}
-    if src then for _, o in ipairs(src) do list[#list + 1] = o end end
+    if buyersKey then
+        local src = state and state.wants[buyersKey]
+        local it = state and state.items[buyersKey]
+        if src then for _, o in ipairs(src) do
+            list[#list + 1] = { buyer = o.buyer, qty = o.qty, price = o.price, cod = o.cod, self = o.self, suffix = it and it.suffix or 0 }
+        end end
+    elseif buyersItem and ns.buyers.find.itemID == buyersItem.id then
+        for _, o in pairs(ns.buyers.find.results) do
+            list[#list + 1] = { buyer = o.buyer, qty = o.qty, price = o.price, cod = o.cod, self = o.self, suffix = o.suffix or 0 }
+        end
+    end
     table.sort(list, function(a, b)
         if (a.price > 0) ~= (b.price > 0) then return a.price > 0 end
         if a.price ~= b.price then return a.price > b.price end
@@ -776,18 +796,20 @@ local function renderBuyersRows()
 end
 
 refreshBuyersWin = function()
-    if not (buyersWin and buyersWin:IsShown() and buyersKey and state) then return end
-    local it = state.items[buyersKey]
+    if not (buyersWin and buyersWin:IsShown()) then return end
+    local it = buyersItemInfo()
     if not it then buyersWin:Hide(); return end
     buyersWin.icon:SetTexture(GetItemIcon(it.id))
     buyersWin.title:SetText(GetItemInfo(vlinkStr(it.id, it.suffix)) or ("item:" .. it.id))
     buyersWin.titleBtn.itemLink = vlinkStr(it.id, it.suffix)
+    local busy = (buyersKey and state and state.phase ~= "done")
+        or (buyersItem ~= nil and ns.buyers.find.active) or false
     local n = #buyersList()
     if n > 0 then
-        buyersWin.status:SetText(("%d buyer(s) want this item%s"):format(n, state.phase ~= "done" and " · scan still running ..." or ""))
+        buyersWin.status:SetText(("%d buyer(s) want this item%s"):format(n, busy and " · still asking ..." or ""))
         buyersWin.status:SetTextColor(0.4, 1, 0.4)
     else
-        buyersWin.status:SetText(state.phase ~= "done" and "No buyers found yet · scan still running ..." or "No buyers found for this item.")
+        buyersWin.status:SetText(busy and "Asking the confederation ..." or "No buyers found for this item.")
         buyersWin.status:SetTextColor(0.7, 0.7, 0.7)
     end
     renderBuyersRows()
@@ -881,11 +903,12 @@ local function createBuyersWin()
         r.send:SetMotionScriptsWhileDisabled(true)
         r.send:SetScript("OnClick", function(self)
             local o = self.want
-            local it = o and buyersKey and state and state.items[buyersKey]
+            local it = o and buyersItemInfo()
             if not it then return end
-            local have = unboundInBags(it.id, it.suffix)
+            local suffix = o.suffix or it.suffix or 0   -- the buyer's variant wins (query replies carry it)
+            local have = unboundInBags(it.id, suffix)
             if have < 1 then ns.Feedback("Your bags hold no unbound copies of this item anymore.", true); return end
-            ns.CODSendAssist({ buyer = o.buyer, itemID = it.id, suffix = it.suffix, qty = math.min(o.qty or 1, have), unit = o.price })
+            ns.CODSendAssist({ buyer = o.buyer, itemID = it.id, suffix = suffix, qty = math.min(o.qty or 1, have), unit = o.price })
         end)
         r.send:SetScript("OnEnter", function(self)
             local o = self.want
@@ -905,7 +928,10 @@ local function createBuyersWin()
     end
 
     buyersWin:SetScript("OnShow", function() ns.LayoutSidePanels() end)
-    buyersWin:SetScript("OnHide", function() ns.LayoutSidePanels() end)
+    buyersWin:SetScript("OnHide", function()
+        if buyersTicker then buyersTicker:Cancel(); buyersTicker = nil end
+        ns.LayoutSidePanels()
+    end)
     buyersWin:Hide()
     return buyersWin
 end
@@ -915,11 +941,44 @@ end
 function ns.BagScan.OpenBuyersFor(key)
     if not (state and state.wants and state.wants[key]) then return end
     createBuyersWin()
-    buyersKey = key
+    buyersKey, buyersItem = key, nil
     buyersWin:Show()
     refreshBuyersWin()
 end
 
+-- Find buyers for one item from anywhere (My Items' Find buyers coin): fire the same
+-- "who wants this item" broadcast the Buyers tab uses and show the replies here as they
+-- arrive. MUST be called from a hardware event (the button click) for the broadcast.
+function ns.BagScan.FindBuyers(itemID, suffix)
+    if not itemID then return end
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't find buyers.", true); return end
+    createBuyersWin()
+    buyersKey, buyersItem = nil, { id = itemID, suffix = suffix or 0 }
+    ns.FindBuyersForItem(itemID)
+    buyersWin:Show()
+    refreshBuyersWin()
+    -- WR replies land in ns.buyers.find without telling this window, so poll briefly;
+    -- the ticker stops itself once the query settles or the window moves on
+    if buyersTicker then buyersTicker:Cancel() end
+    local t
+    t = C_Timer.NewTicker(0.3, function()
+        refreshBuyersWin()
+        if not ns.buyers.find.active or not (buyersWin:IsShown() and buyersItem) then
+            t:Cancel()
+            if buyersTicker == t then buyersTicker = nil end
+        end
+    end)
+    buyersTicker = t
+end
+
+-- Leaving the Scan tab only closes the window when it shows scan data; a query opened
+-- from My Items has its own home view (see CloseFindBuyers).
 function ns.BagScan.CloseBuyers()
-    if buyersWin then buyersWin:Hide() end
+    if buyersWin and buyersKey then buyersWin:Hide() end
+end
+
+-- The query window's home is My Items' WTS view: navigating away from it (another
+-- sub-tab or another main tab) closes the window, mirroring the Scan tab behaviour.
+function ns.BagScan.CloseFindBuyers()
+    if buyersWin and buyersItem then buyersWin:Hide() end
 end

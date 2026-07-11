@@ -621,10 +621,10 @@ local function formatMineRow(r, d)
     r.c3:SetText(priceText(d.price))
     r.x:Show(); r.x:SetScript("OnClick", function() ns.RemoveOffer(d.key) end)
     r.edit:Show(); r.edit:SetScript("OnClick", function() ns.LoadOfferForEdit(d.key) end)
-    -- "Find buyers": jump to the Buyers tab and query who wants this item (via the shared
-    -- picker, which on the Buyers tab switches to the FIND view and runs the WQ query)
+    -- "Find buyers": query who wants this item (the same WQ broadcast the Buyers tab
+    -- fires) and show the replies in the buyers side window, without leaving this tab
     r.findBtn:Show(); r.findBtn:SetScript("OnClick", function()
-        ns.SelectTab("BUYERS"); selectSearchItem(d.id)
+        ns.BagScan.FindBuyers(d.id, d.suffix)
     end)
     r.track:Show(); r.track:SetChecked(d.track and true or false)
     r.track:SetScript("OnClick", function(self) ns.SetOfferTrack(d.key, self:GetChecked()) end)
@@ -2213,7 +2213,9 @@ local function buildRows()
         local fb = r.findBtn:CreateTexture(nil, "ARTWORK"); fb:SetSize(14, 14); fb:SetPoint("CENTER")
         fb:SetTexture("Interface\\MoneyFrame\\UI-GoldIcon")
         r.findBtn:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Find buyers for this item"); GameTooltip:Show()
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Find buyers for this item")
+            GameTooltip:AddLine("Asks the confederation and lists them in a side window, with their prices and a COD Send button.", 1, 1, 1, true)
+            GameTooltip:Show()
         end)
         r.findBtn:SetScript("OnLeave", GameTooltip_Hide)
         r.findBtn:Hide()
@@ -3303,6 +3305,8 @@ local function buildWTB()
         if not main then return end
         hideCODQtyPopup()
         local selling = (mode == "SELLING")
+        -- the find-buyers side window lives on the WTS view; switching to WTB/COD closes it
+        if not selling and ns.BagScan and ns.BagScan.CloseFindBuyers then ns.BagScan.CloseFindBuyers() end
         local wtb = (mode == "WTB")
         local cod = (mode == "COD")
         setHeaderColumns(cod and "cod" or "default")   -- COD packs three action buttons on the right
@@ -3858,6 +3862,8 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     local help    = (tab == "HELP")
     local options = (tab == "OPTIONS")
     local scan    = (tab == "SCAN")
+    -- the find-buyers side window lives on My Items' WTS view; leaving the tab closes it
+    if not mine and ns.BagScan and ns.BagScan.CloseFindBuyers then ns.BagScan.CloseFindBuyers() end
     main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)   -- buyers re-shows it via SetBuyersView
     main.ac:Hide()
     main.postPanel:SetShown(mine)
