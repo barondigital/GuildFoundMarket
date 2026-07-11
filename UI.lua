@@ -28,7 +28,9 @@ local pendingCatFilter = nil
 
 -- Buy tab has two sub-modes: item Search (existing) and category Browse (#3).
 local buyMode = "BROWSE"   -- "SEARCH" | "BROWSE" (Browse is the default view)
-local BROWSE_CAP = 150     -- max Browse rows shown; beyond it the user narrows by level range / filter
+-- Max Browse rows shown; beyond it the user narrows by level range / filter. Configurable
+-- in Options under Network (browseCap), like the seller/buyer scan size.
+local function browseCap() return tonumber(ns.GetSetting and ns.GetSetting("browseCap")) or 150 end
 local browseSort = { col = "lvl", asc = false }   -- Browse results sort: "qual"|"lvl"|"price"; default level desc
 local browseSel = { class = nil, sub = nil, slot = nil }   -- selected category (nil = none picked yet)
 local browseExpanded = nil                        -- classID currently expanded in the sidebar (accordion)
@@ -44,7 +46,7 @@ local buySort     = { col = "price", asc = true }   -- Buy search rows: name(sel
 local mineSort    = { col = "name",  asc = true }   -- My Items rows:   item(qual/name)|qty|price; opens alphabetical
 local catalogSort = { col = "name",  asc = true }   -- Seller catalog:  item(qual/name)|qty|price; opens alphabetical
 -- Buyers-side item-list sort states, mirroring the seller-side ones above
-local findBuyersSort     = { col = "price", asc = true }   -- "who wants X" results: name(buyer)|qty|price
+local findBuyersSort     = { col = "name", asc = true }   -- everything-wanted list: item(qual/name)|qty|price
 local wantSort           = { col = "name",  asc = true }   -- My WTB list:        item(qual/name)|qty|price
 local buyerCatalogSort   = { col = "name",  asc = true }   -- one buyer's wants:  item(qual/name)|qty|price
 -- First click on a qty/price/seller column picks this direction; clicking it again toggles.
@@ -136,7 +138,8 @@ end
 -- resolves correctly seller-side. Obsolete and non-tradeable classes are skipped.
 local SKIP_CLASS = { [3] = true, [8] = true, [10] = true, [12] = true, [13] = true, [14] = true }
 -- top-level order mirrors the Auction House browse list, not the numeric class IDs
-local CLASS_ORDER = { 2, 4, 1, 0, 7, 6, 11, 9, 5, 15 }  -- Weapon, Armor, Container, Consumable, Trade Goods, Projectile, Quiver, Recipe, Reagent, Miscellaneous
+-- (except Consumable, which sits below Recipe by explicit preference)
+local CLASS_ORDER = { 2, 4, 1, 7, 6, 11, 9, 0, 5, 15 }  -- Weapon, Armor, Container, Trade Goods, Projectile, Quiver, Recipe, Consumable, Reagent, Miscellaneous
 local browseCats
 local function buildCats()
     if browseCats then return browseCats end
@@ -152,9 +155,11 @@ local function buildCats()
                 subs[#subs + 1] = { id = subID, name = sname }
             end
         end
-        -- require real sub-categorisation: a class with one generic subclass (Consumable,
-        -- Reagent, Junk) is too broad to browse usefully, so we drop it from the sidebar
-        if #subs >= 2 then browseCats[#browseCats + 1] = { id = classID, name = cname, subs = subs } end
+        -- a class with real sub-categorisation becomes an expandable branch; one with a single
+        -- generic subclass (Consumable, Reagent) still browses fine as a class-level leaf that
+        -- queries that one subclass whole, like the Auction House's flat categories
+        if #subs >= 2 then browseCats[#browseCats + 1] = { id = classID, name = cname, subs = subs }
+        elseif #subs == 1 then browseCats[#browseCats + 1] = { id = classID, name = cname, only = subs[1] } end
     end
     local seen = {}
     for _, classID in ipairs(CLASS_ORDER) do seen[classID] = true; addClass(classID) end
@@ -437,6 +442,8 @@ function ns.SetMinimapShown(on)
     end
 end
 ns.On("setting:minimapButton", ns.SetMinimapShown)
+-- moving the Browse-results slider re-cuts an open result list right away
+ns.On("setting:browseCap", function() if ns.RefreshBrowse then ns.RefreshBrowse() end end)
 
 -- Grey + dim the minimap icon while listings are offline (paused), as a live status cue.
 -- Set it straight on the button (most reliable) and also stash iconR/G/B so it survives
@@ -748,24 +755,26 @@ local function formatBuyerRow(r, d)
             r.noteBtn:SetPoint("LEFT", r.c4, "LEFT", (r.c4:GetStringWidth() or 0) + 6, 0)
             r.noteBtn:Show()
         end
-    elseif d.kind == "findbuyer" then
-        local id = ns.buyers.find.itemID
-        r.c1.fs:SetText(d.self and (d.buyer .. " (you)") or d.buyer)
-        r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
-        r.c1.tip = "Click for their wants · right-click to whisper about this item"
-        r.c1.itemLink = id and vLink(id, d.suffix)
+    elseif d.kind == "wantall" then   -- one want in the everything-wanted view: item + who asks
+        r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
+        r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+        r.c1.tip = "Click for " .. (d.buyer or "?") .. "'s wants · right-click to whisper them · ctrl-click to find sellers"
+        r.c1.itemLink = vLink(d.id, d.suffix)
         r.c1.player = d.buyer                     -- the item hover adds a "Name <Guild>" line below
+        local brec = ns.buyers.results[d.buyer]
+        r.c1.loc = brec and brec.loc or nil       -- the buyer's location, from the index scan
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.buyer, id, d.suffix, d.price)
-            else
-                pendingCatFilter = id and itemName(id)   -- open their wants filtered to the item you searched
+            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price)
+            elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id)
+            elseif not d.self then
+                pendingCatFilter = itemName(d.id)   -- open their wants filtered to this item
                 showOrigin = { tab = "BUYERS", view = "FIND" }; ns.OpenBuyer(d.buyer); ns.SetBuyersView("SHOW")
             end
         end)
-        r.c1.loc = d.loc
         r.c2:SetText(d.qty or 0)
         r.c3:SetText(wantPriceText(d.price, d.cod))
-        r.c4:SetText(ns.LocZone(d.loc) or ""); r.c4:Show()
+        r.c4:SetText(d.self and ("|cffffd100" .. d.buyer .. " (you)|r") or ("|cff66ff66" .. d.buyer .. "|r"))
+        r.c4:Show()
     else   -- "wantitem": one item the open buyer wants
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -1229,25 +1238,39 @@ function ns.RefreshBuyers()
 end
 
 --========================================================================
--- refresh: "who wants this item?" results — buy-side mirror of RefreshBuy
+-- refresh: everything the confederation wants (the Buyers tab's default view). Rows come
+-- from the all-wants sweep (plus item-query answers upserted into the same store); the
+-- search box doubles as a live name filter over them.
 --========================================================================
 function ns.RefreshFindBuyers()
+    local filter
     refreshList(currentTab == "BUYERS" and buyersView == "FIND", function()
-        for _, o in pairs(ns.buyers.find.results) do
-            view[#view + 1] = { kind = "findbuyer", buyer = o.buyer, suffix = o.suffix or 0, qty = o.qty, price = o.price, cod = o.cod, loc = o.loc, self = o.self }
+        filter = (main.searchBox:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        for _, o in pairs(ns.buyers.allWants) do
+            if filter == "" or vName(o.id, o.suffix):lower():find(filter, 1, true) then
+                view[#view + 1] = { kind = "wantall", id = o.id, suffix = o.suffix or 0, buyer = o.buyer, qty = o.qty, price = o.price, cod = o.cod, self = o.self }
+            end
         end
-        applyItemHeaderArrows(findBuyersSort, "Buyer", false)
-        sortItemView(view, findBuyersSort, function(d) return d.buyer or "" end)
+        applyItemHeaderArrows(findBuyersSort, "Item", true)
+        sortItemView(view, findBuyersSort, function(d) return vName(d.id, d.suffix) end)
     end, function()
-        local id = ns.buyers.find.itemID
-        if not id then
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Type an item above to find buyers who want it.")
-        elseif ns.buyers.find.active then
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("Looking for buyers of " .. itemName(id) .. " ...")
+        main.status:SetTextColor(0.7, 0.7, 0.7)
+        local scan = ns.buyers.allScan
+        if ns.buyers.find.active then
+            main.status:SetText("Asking who wants " .. itemName(ns.buyers.find.itemID) .. " ...")
+        elseif scan.active then
+            main.status:SetText(scan.total > 0
+                and ("Collecting want lists  %d/%d ..."):format(scan.done, scan.total)
+                or "Asking the confederation who is buying ...")
+        elseif next(ns.buyers.allWants) == nil then
+            main.status:SetText("Nothing is wanted right now. Refresh asks the confederation again.")
         elseif #view == 0 then
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText("No one is looking for " .. itemName(id) .. " right now.")
+            main.status:SetText("No wanted item matches \"" .. (filter or "") .. "\". Pick it from the list to ask the network directly.")
+        elseif ns.buyers.capped then
+            main.status:SetTextColor(1, 0.7, 0.2)
+            main.status:SetText(("%d want(s), but the buyer scan hit its cap: raise Sellers & Buyers scan size in Options > Network for the full picture."):format(#view))
         else
-            main.status:SetTextColor(0.7, 0.7, 0.7); main.status:SetText(("%d buyer(s) want %s; right-click to whisper."):format(#view, itemName(id)))
+            main.status:SetText(("%d want(s): type to filter, pick an item to re-ask for it, right-click to whisper."):format(#view))
         end
     end)
 end
@@ -1302,8 +1325,9 @@ function ns.SetBuyersView(v)
     local index = (v == "INDEX")
     local show  = (v == "SHOW")
     local find  = (v == "FIND")
-    -- INDEX = search buyers by name (+ "Search by item »"); FIND = search an item (+ "« Find
-    -- buyer"); SHOW = one buyer's want list (+ "< Back"). Each mode shows only its own chrome.
+    -- INDEX = search buyers by name (+ "Wanted items »"); FIND = everything wanted, with the
+    -- item box as query + live filter (+ "« Find buyer"); SHOW = one buyer's want list
+    -- (+ "< Back"). Each mode shows only its own chrome.
     main.buyerFilter:SetShown(index); main.buyerFilterLabel:SetShown(index)
     main.buyerRefreshBtn:SetShown(index); main.buyerToItemBtn:SetShown(index)
     main.searchBox:SetShown(find); main.searchLabel:SetShown(find); main.buyerToIndexBtn:SetShown(find)
@@ -1323,7 +1347,7 @@ function ns.SetBuyersView(v)
     if index then
         main.h1:SetText("Buyer"); main.h2:SetText("Wants"); main.h3:SetText(""); main.h4:SetText("Location")
     elseif find then
-        main.h1:SetText("Buyer"); main.h2:SetText("Qty"); main.h3:SetText("Price"); main.h4:SetText("Location")
+        main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price"); main.h4:SetText("Buyer")
     else
         main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("Price"); main.h4:SetText("")
     end
@@ -1383,64 +1407,97 @@ local CLOTH = { unpack(BODY) }; CLOTH[#CLOTH + 1] = "INVTYPE_CLOAK"
 local ACCESSORY = { "INVTYPE_NECK", "INVTYPE_FINGER", "INVTYPE_TRINKET", "INVTYPE_HOLDABLE" }
 local ARMOR_SUB_SLOTS = { [0] = ACCESSORY, [1] = CLOTH, [2] = BODY, [3] = BODY, [4] = BODY }
 
+-- Sidebar row builders. Every leaf both selects and fires the QC query; branches expand.
+
+-- A class with one generic subclass (Consumable, Reagent): a class-level leaf that
+-- queries that subclass whole, like the Auction House's flat categories.
+local function sideClassLeaf(cls)
+    local sel = (browseSel.class == cls.id and browseSel.sub == cls.only.id and not browseSel.slot)
+    sideView[#sideView + 1] = {
+        label = cls.name, indent = 6, selected = sel, r = 1, g = 0.82, b = 0,
+        onClick = function()
+            browseSel.class, browseSel.sub, browseSel.slot = cls.id, cls.only.id, nil
+            browseSel.label = cls.name
+            ns.RefreshSidebar()
+            if ns.BrowseCategory then ns.BrowseCategory(cls.id, cls.only.id) end
+        end,
+    }
+end
+
+-- Armor subclass: selecting it queries the WHOLE subclass (all Cloth), like the Auction
+-- House, and expands the slot leaves for narrowing further. Re-clicking the current
+-- selection only toggles the slot list, without re-querying.
+local function sideArmorSub(cls, sub, slots)
+    local subOpen = (browseExpandedSub == sub.id)
+    local subSel = (browseSel.class == cls.id and browseSel.sub == sub.id and not browseSel.slot)
+    sideView[#sideView + 1] = {
+        label = (subOpen and "- " or "+ ") .. sub.name, indent = 22, selected = subSel,
+        r = subSel and 1 or 0.85, g = subSel and 0.82 or 0.85, b = subSel and 0 or 0.85,
+        onClick = function()
+            -- explicit if/else: `x and nil or y` would never clear it (true and nil -> y)
+            if browseExpandedSub == sub.id then browseExpandedSub = nil else browseExpandedSub = sub.id end
+            if not (browseSel.class == cls.id and browseSel.sub == sub.id and not browseSel.slot) then
+                browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, nil
+                browseSel.label = cls.name .. " > " .. sub.name
+                if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
+            end
+            ns.RefreshSidebar()
+        end,
+    }
+    if not subOpen then return end
+    for _, loc in ipairs(slots) do
+        local label = _G[loc] or loc
+        local s = (browseSel.class == cls.id and browseSel.sub == sub.id and browseSel.slot == loc)
+        sideView[#sideView + 1] = {
+            label = label, indent = 38, selected = s,
+            r = s and 1 or 0.8, g = s and 0.82 or 0.8, b = s and 0 or 0.8,
+            onClick = function()
+                browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, loc
+                browseSel.label = cls.name .. " > " .. sub.name .. " > " .. label
+                ns.RefreshSidebar()
+                if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id, loc) end
+            end,
+        }
+    end
+end
+
+-- Non-Armor subclass: a leaf that queries the whole subclass (no slot level).
+local function sideSubLeaf(cls, sub)
+    local sel = (browseSel.class == cls.id and browseSel.sub == sub.id and not browseSel.slot)
+    sideView[#sideView + 1] = {
+        label = sub.name, indent = 22, selected = sel,
+        r = sel and 1 or 0.85, g = sel and 0.82 or 0.85, b = sel and 0 or 0.85,
+        onClick = function()
+            browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, nil
+            browseSel.label = cls.name .. " > " .. sub.name
+            ns.RefreshSidebar()
+            if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
+        end,
+    }
+end
+
+-- Class branch: a +/- header; expanded, its subclasses follow (Armor's with slot leaves).
+local function sideClassBranch(cls)
+    local expanded = (browseExpanded == cls.id)
+    sideView[#sideView + 1] = {
+        label = (expanded and "- " or "+ ") .. cls.name, indent = 6, r = 1, g = 0.82, b = 0,
+        onClick = function()
+            if browseExpanded == cls.id then browseExpanded = nil else browseExpanded = cls.id end
+            ns.RefreshSidebar()
+        end,
+    }
+    if not expanded then return end
+    for _, sub in ipairs(cls.subs) do
+        local slots = (cls.id == ARMOR_CLASS) and ARMOR_SUB_SLOTS[sub.id] or nil
+        if slots then sideArmorSub(cls, sub, slots) else sideSubLeaf(cls, sub) end
+    end
+end
+
 function ns.RefreshSidebar()
     if not main then return end
     wipe(sideView)
     for _, cls in ipairs(buildCats()) do
-        local expanded = (browseExpanded == cls.id)
-        sideView[#sideView + 1] = {
-            label = (expanded and "- " or "+ ") .. cls.name, indent = 6, r = 1, g = 0.82, b = 0,
-            onClick = function()
-                if browseExpanded == cls.id then browseExpanded = nil else browseExpanded = cls.id end
-                ns.RefreshSidebar()
-            end,
-        }
-        if expanded then
-            for _, sub in ipairs(cls.subs) do
-                local slots = (cls.id == ARMOR_CLASS) and ARMOR_SUB_SLOTS[sub.id] or nil
-                if slots then
-                    -- Armor subclass: a branch that expands to slot leaves (no query on its own)
-                    local subOpen = (browseExpandedSub == sub.id)
-                    sideView[#sideView + 1] = {
-                        label = (subOpen and "- " or "+ ") .. sub.name, indent = 22, r = 0.85, g = 0.85, b = 0.85,
-                        onClick = function()
-                            -- explicit if/else: `x and nil or y` would never clear it (true and nil -> y)
-                            if browseExpandedSub == sub.id then browseExpandedSub = nil else browseExpandedSub = sub.id end
-                            ns.RefreshSidebar()
-                        end,
-                    }
-                    if subOpen then
-                        for _, loc in ipairs(slots) do
-                            local label = _G[loc] or loc
-                            local s = (browseSel.class == cls.id and browseSel.sub == sub.id and browseSel.slot == loc)
-                            sideView[#sideView + 1] = {
-                                label = label, indent = 38, selected = s,
-                                r = s and 1 or 0.8, g = s and 0.82 or 0.8, b = s and 0 or 0.8,
-                                onClick = function()
-                                    browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, loc
-                                    browseSel.label = cls.name .. " > " .. sub.name .. " > " .. label
-                                    ns.RefreshSidebar()
-                                    if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id, loc) end
-                                end,
-                            }
-                        end
-                    end
-                else
-                    -- non-Armor subclass: a leaf that queries the whole subclass (no slot)
-                    local sel = (browseSel.class == cls.id and browseSel.sub == sub.id and not browseSel.slot)
-                    sideView[#sideView + 1] = {
-                        label = sub.name, indent = 22, selected = sel,
-                        r = sel and 1 or 0.85, g = sel and 0.82 or 0.85, b = sel and 0 or 0.85,
-                        onClick = function()
-                            browseSel.class, browseSel.sub, browseSel.slot = cls.id, sub.id, nil
-                            browseSel.label = cls.name .. " > " .. sub.name
-                            ns.RefreshSidebar()
-                            if ns.BrowseCategory then ns.BrowseCategory(cls.id, sub.id) end
-                        end,
-                    }
-                end
-            end
-        end
+        if cls.only then sideClassLeaf(cls) else sideClassBranch(cls) end
     end
     renderSidebarRows()
 end
@@ -1482,8 +1539,9 @@ function ns.RefreshBrowse()
         if na ~= nb then return na < nb end
         return a.seller < b.seller
     end)
-    local capped = #browseView > BROWSE_CAP
-    if capped then for i = #browseView, BROWSE_CAP + 1, -1 do browseView[i] = nil end end
+    local cap = browseCap()
+    local capped = #browseView > cap
+    if capped then for i = #browseView, cap + 1, -1 do browseView[i] = nil end end
     renderBrowseRows()
     main.status:SetTextColor(0.7, 0.7, 0.7)
     if not browseSel.sub then
@@ -1494,7 +1552,7 @@ function ns.RefreshBrowse()
         main.status:SetText("No offers for " .. (browseSel.label or "this category") .. " right now.")
     elseif capped then
         main.status:SetTextColor(1, 0.7, 0.2)
-        main.status:SetText(("Showing %d of %d. Narrow with the level range or filter."):format(BROWSE_CAP, total))
+        main.status:SetText(("Showing %d of %d. Narrow with the level range or filter."):format(cap, total))
     else
         main.status:SetText(("%d offer(s) in %s."):format(total, browseSel.label or "this category"))
     end
@@ -1994,6 +2052,8 @@ local function buildAutocomplete()
             ns.ItemDB.Learn(id); selectItem(id, itemName(id)); return
         end
         selectedSearchID = nil; updateAutocomplete()
+        -- on the Buyers tab the same box doubles as a live filter over the collected wants
+        if currentTab == "BUYERS" and buyersView == "FIND" then ns.RefreshFindBuyers() end
     end)
     main.searchBox:SetScript("OnEscapePressed", function(self) ac:Hide(); self:ClearFocus() end)
     main.searchBox:SetScript("OnArrowPressed", function(self, key)
@@ -2068,7 +2128,7 @@ local function buildHeaders()
             local s = activeItemSort()
             if not s then return end
             if kind == "name" then
-                if s == buySort or s == findBuyersSort then   -- results lists: first column is a plain name (seller/buyer) toggle, no quality
+                if s == buySort then   -- Buy results: first column is a plain seller-name toggle, no quality
                     if s.col == "name" then s.asc = not s.asc else s.col = "name"; s.asc = SORT_DEFAULT_ASC.name end
                 elseif s.itemSorted then       -- already cycling the Item column: advance one step
                     s.col, s.asc = nextItemSort(s)
@@ -2791,21 +2851,28 @@ local function buildBuyerWidgets()
         if main.searchBox then main.searchBox:SetText("") end
     end
     local toItemBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
-    toItemBtn:SetSize(120, 22); toItemBtn:SetPoint("TOPLEFT", 474, -64); toItemBtn:SetText("Search by item »"); toItemBtn:Hide()
-    toItemBtn:SetScript("OnClick", function() clearFind(); ns.SetBuyersView("FIND"); main.searchBox:SetFocus() end)
+    toItemBtn:SetSize(120, 22); toItemBtn:SetPoint("TOPLEFT", 474, -64); toItemBtn:SetText("Wanted items »"); toItemBtn:Hide()
+    toItemBtn:SetScript("OnClick", function()
+        clearFind(); ns.SetBuyersView("FIND"); main.searchBox:SetFocus()
+        if next(ns.buyers.allWants) == nil and ns.ScanAllWants then ns.ScanAllWants() end
+    end)
     main.buyerToItemBtn = toItemBtn
     local toIndexBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     toIndexBtn:SetSize(120, 22); toIndexBtn:SetPoint("TOPLEFT", 474, -64); toIndexBtn:SetText("« Find buyer"); toIndexBtn:Hide()
     toIndexBtn:SetScript("OnClick", function() clearFind(); ns.SetBuyersView("INDEX"); ns.ScanBuyers("") end)
     main.buyerToIndexBtn = toIndexBtn
 
-    -- Refresh on the find view: re-run the item query for the current item
+    -- Refresh on the wanted-items view: re-collect every buyer's want list from the network
+    -- (this click is the hardware event the broadcast underneath needs)
     local findRefreshBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
     findRefreshBtn:SetSize(64, 22); findRefreshBtn:SetPoint("TOPLEFT", 406, -64); findRefreshBtn:SetText("Refresh"); findRefreshBtn:Hide()
-    findRefreshBtn:SetScript("OnClick", function()
-        local id = ns.buyers.find.itemID
-        if id and ns.FindBuyersForItem then ns.FindBuyersForItem(id) end
+    findRefreshBtn:SetScript("OnClick", function() if ns.ScanAllWants then ns.ScanAllWants() end end)
+    findRefreshBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Ask the whole confederation again what they want to buy.", 1, 1, 1, true)
+        GameTooltip:Show()
     end)
+    findRefreshBtn:SetScript("OnLeave", GameTooltip_Hide)
     main.buyerFindRefreshBtn = findRefreshBtn
 
     local buyerBackBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
@@ -3733,7 +3800,7 @@ local function buildOptionsPanel()
         { title = "Selling",             keys = { "trackDefault", "announceShopNote", "scanPriceMode" } },
         { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codCreateLink", "codReplyText", "codSentText" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
-        { title = "Network",             keys = { "scanCap" } },
+        { title = "Network",             keys = { "scanCap", "browseCap" } },
         { title = "Updates",             keys = { "announceChangelog" } },
     }
     local byKey, placed = {}, {}
@@ -3927,8 +3994,10 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     elseif buyers then
         main.searchBox:SetText("")
         main.buyerFilter:SetText("")
-        ns.SetBuyersView("FIND")    -- default to item search (the seller's "who wants this?"); the
-                                    -- buyer scan runs only when you toggle to "Find buyer"
+        ns.SetBuyersView("FIND")    -- default to the everything-wanted view; the tab click is the
+                                    -- hardware event the sweep's broadcast needs
+        -- collect all want lists on first entry; after that the data stands until Refresh
+        if next(ns.buyers.allWants) == nil and ns.ScanAllWants then ns.ScanAllWants() end
     elseif sellers then
         main.sellerFilter:SetText("")    -- fresh entry: clear any leftover name filter
         if goSeller then

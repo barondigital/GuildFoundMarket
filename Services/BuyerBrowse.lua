@@ -14,6 +14,12 @@ local activeWSid = nil   -- id of the active buyer scan
 local activeWLid = nil   -- id of the active per-buyer want-list fetch
 local seq = 0
 
+-- One want row into the shared everything-wanted store (the Buyers tab's default view).
+local function noteWant(buyer, id, suffix, qty, price, cod, self)
+    ns.buyers.allWants[buyer .. "#" .. id .. "#" .. (suffix or 0)] =
+        { buyer = buyer, id = id, suffix = suffix or 0, qty = qty or 0, price = price or 0, cod = cod and true or false, self = self }
+end
+
 --========================================================================
 -- WQ/WR: "who wants this item?" (driven from a Selling row or the Buyers autocomplete)
 --========================================================================
@@ -40,6 +46,7 @@ function ns.FindBuyersForItem(itemID)
             if it.id == itemID then
                 ns.buyers.find.results[ns.playerName .. "#" .. it.suffix] =
                     { buyer = ns.playerName, suffix = it.suffix, qty = it.qty, price = it.price, cod = it.cod, loc = ns.LiveLoc(), self = true }
+                noteWant(ns.playerName, it.id, it.suffix, it.qty, it.price, it.cod, true)
             end
         end
     end
@@ -82,6 +89,8 @@ ns.OnMessage("WR", function(a, b, c, d, e, f, sender, g)
     ns.NoteGuild(sender, g)
     ns.buyers.find.results[s .. "#" .. suffix] =
         { buyer = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "", cod = (tonumber(cod) or 0) == 1 }
+    -- an item query doubles as a per-item refresh of the everything-wanted view
+    noteWant(s, tonumber(b), suffix, tonumber(c), tonumber(d), (tonumber(cod) or 0) == 1)
     ns.ItemDB.Learn(tonumber(b))
     ns.Log(("  buyer %s wants it: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.buyers.find.start or GetTime())))
     if ns.RefreshFindBuyersSoon then ns.RefreshFindBuyersSoon() end
@@ -238,10 +247,11 @@ ns.OnMessage("WL", function(a, _, _, _, _, _, sender)
 end)
 
 -- WK~lid~more~rows: a chunk of a buyer's want list (rows are id:qty:price:suffix:cod;...).
--- The bag scan fetches want lists over the same message with its own lids; give it first
--- pick so a sweep never collides with a buyer the Buyers tab has open.
+-- The bag scan and the all-wants sweep fetch want lists over the same message with their
+-- own lids; give them first pick so neither collides with a buyer the Buyers tab has open.
 ns.OnMessage("WK", function(a, b, c)
     if ns.BagScan and ns.BagScan.HandleWantChunk and ns.BagScan.HandleWantChunk(a, b, c) then return end
+    if ns.HandleAllWantsChunk(a, b, c) then return end
     if a ~= activeWLid or not ns.buyers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix, cod = strsplit(":", chunk)
@@ -259,3 +269,113 @@ ns.OnMessage("WK", function(a, b, c)
     end
     if ns.RefreshBuyerCatalogSoon then ns.RefreshBuyerCatalogSoon() end
 end)
+
+--========================================================================
+-- All-wants sweep: every buyer's full want list in one go, feeding the Buyers tab's
+-- default "everything wanted" view. Same shape as the bag scan's buyer side: ONE buyer
+-- scan broadcast (needs the hardware event of the tab/Refresh click), then a directed
+-- WL~ fetch per answering buyer, concurrency-capped with a timeout watchdog.
+--========================================================================
+local AW_CONCURRENT, AW_WINDOW = 6, 6
+local awQueue, awInflight, awKnown = {}, {}, {}
+local awTicker, awGen = nil, 0
+
+local function awInflightCount()
+    local n = 0
+    for _ in pairs(awInflight) do n = n + 1 end
+    return n
+end
+
+local function awFinish()
+    local scan = ns.buyers.allScan
+    if not scan.active then return end
+    scan.active = false
+    if awTicker then awTicker:Cancel(); awTicker = nil end
+    wipe(awQueue); wipe(awInflight)
+    local n = 0; for _ in pairs(ns.buyers.allWants) do n = n + 1 end
+    ns.Log(("ALL-WANTS done: %d/%d buyers answered, %d want(s)"):format(scan.done, scan.total, n))
+    if ns.RefreshFindBuyers then ns.RefreshFindBuyers() end
+end
+
+local function awPump()
+    while #awQueue > 0 and awInflightCount() < AW_CONCURRENT do
+        local buyer = table.remove(awQueue, 1)
+        seq = seq + 1
+        local lid = ns.playerName .. "#AW" .. seq
+        awInflight[lid] = { buyer = buyer, deadline = GetTime() + AW_WINDOW }
+        if ns.NetStats then ns.NetStats.ScanStarted(lid) end
+        ns.EnqueueWhisper("WL~" .. lid, buyer)
+    end
+    if #awQueue == 0 and awInflightCount() == 0 then awFinish() end
+end
+
+local function awTick()
+    if not ns.buyers.allScan.active then return end
+    local now = GetTime()
+    for lid, f in pairs(awInflight) do
+        if now > f.deadline then
+            awInflight[lid] = nil
+            awKnown[lid] = true   -- swallow chunks that still trickle in for it
+            ns.buyers.allScan.done = ns.buyers.allScan.done + 1
+            ns.Log("ALL-WANTS: no want list from " .. f.buyer .. " (skipped)")
+        end
+    end
+    awPump()
+    if ns.RefreshFindBuyersSoon then ns.RefreshFindBuyersSoon() end
+end
+
+-- Phase 2: the buyer scan settled; fetch every answering buyer's want list.
+local function awStartFetch(gen)
+    if gen ~= awGen or not ns.buyers.allScan.active then return end
+    for buyer in pairs(ns.buyers.results) do
+        if buyer ~= ns.playerName then awQueue[#awQueue + 1] = buyer end
+    end
+    table.sort(awQueue)
+    ns.buyers.allScan.total = #awQueue
+    ns.Log(("ALL-WANTS: %d buyer(s) answered; fetching want lists (%d at a time)"):format(#awQueue, AW_CONCURRENT))
+    if #awQueue == 0 then awFinish(); return end
+    awTicker = C_Timer.NewTicker(0.5, awTick)
+    awPump()
+    if ns.RefreshFindBuyers then ns.RefreshFindBuyers() end
+end
+
+-- A WK chunk answering this sweep. True when the lid is ours, so the other handlers skip it.
+function ns.HandleAllWantsChunk(lid, more, rows)
+    local f = awInflight[lid]
+    if not f then return awKnown[lid] or false end
+    f.deadline = GetTime() + AW_WINDOW
+    for chunk in (rows or ""):gmatch("[^;]+") do
+        local id, qty, price, suffix, cod = strsplit(":", chunk)
+        id = tonumber(id)
+        if id then
+            noteWant(f.buyer, id, tonumber(suffix), tonumber(qty), tonumber(price), (tonumber(cod) or 0) == 1)
+            ns.ItemDB.Learn(id)
+        end
+    end
+    if (tonumber(more) or 0) == 0 then
+        awInflight[lid] = nil
+        awKnown[lid] = true
+        ns.buyers.allScan.done = ns.buyers.allScan.done + 1
+        awPump()
+    end
+    if ns.RefreshFindBuyersSoon then ns.RefreshFindBuyersSoon() end
+    return true
+end
+
+-- Kick off the sweep. MUST be called from a hardware event (tab click, Refresh button):
+-- the buyer scan underneath broadcasts on the chat channel. Keeps whatever it already
+-- holds until the fresh replies overwrite it, so the view never blanks out.
+function ns.ScanAllWants()
+    if not ns.channelName then ns.Feedback("Not in a confederation, can't collect wants.", true); return end
+    if ns.buyers.allScan.active then return end   -- already sweeping
+    awGen = awGen + 1
+    wipe(ns.buyers.allWants); wipe(awKnown)
+    ns.buyers.allScan.active, ns.buyers.allScan.total, ns.buyers.allScan.done = true, 0, 0
+    if ns.selfTest and not ns.IsPaused() then   -- you can't whisper yourself: inject own wants
+        for _, it in ipairs(ns.WantList()) do noteWant(ns.playerName, it.id, it.suffix, it.qty, it.price, it.cod, true) end
+    end
+    ns.ScanBuyers("")   -- one broadcast; replies land in ns.buyers.results (the shared index)
+    local gen = awGen
+    C_Timer.After((ns.QUERY_SETTLE or 5) + 0.5, function() awStartFetch(gen) end)
+    if ns.RefreshFindBuyers then ns.RefreshFindBuyers() end
+end

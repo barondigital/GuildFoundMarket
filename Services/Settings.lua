@@ -166,6 +166,17 @@ ns.SettingsSchema = {
         min = 50, max = 600, step = 10,
     },
     {
+        key = "browseCap",
+        type = "range",
+        label = "Browse results shown",
+        tip = "How many category-browse results are shown at once; anything beyond it is cut off with a \"Showing X of Y\" notice.\n\n"
+            .. "Higher = see more of a big category in one go, at the cost of a heavier list to sort and scroll. "
+            .. "Lower = snappier. Narrowing with the level range or the name filter always beats raising this. "
+            .. "Only affects what YOUR client shows; nothing changes for anyone else.",
+        default = 150,
+        min = 50, max = 600, step = 10,
+    },
+    {
         key = "hideShopGuild",
         label = "Hide shop links in guild chat",
         tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",

@@ -50,10 +50,14 @@ ns.sellers = {
 
 -- Browse-by-buyer state (the buy-side mirror of ns.sellers). `find` holds the "who wants this
 -- item?" results, `results` the buyer index, `catalog` one opened buyer's full want list.
+-- `allWants` is every want across the confederation (the Buyers tab's default view), filled by
+-- the all-wants sweep in BuyerBrowse.lua and upserted by item queries as they answer.
 ns.buyers = {
     results = {},   -- [buyerName] = { count, loc }  index summaries from a scan
     catalog = nil,  -- { buyer, loc, items = {...}, loading }  the open buyer's want list
     find    = { itemID = nil, active = false, results = {} },  -- [buyer#suffix] = { buyer, suffix, qty, price, cod, loc, self }
+    allWants = {},  -- [buyer#id#suffix] = { buyer, id, suffix, qty, price, cod, self }
+    allScan  = { active = false, total = 0, done = 0 },   -- the all-wants sweep's progress
     -- set while a scan runs: scanStart, filter, scanning, count, capped, pendingOpen
 }
 
