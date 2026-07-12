@@ -20,15 +20,14 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.19.1
-The Buyers tab shows everything wanted, buyers per scanned bag item with one-click COD mail, a complete category browser, and solid COD mailing
+ns.CHANGELOG = [[Guild Found Market 0.20.0
+Sellers and buyers now show their SoD Guild Found verification (no tampering recorded), and COD Send refuses unverified recipients
 
-- The Buyers tab now opens on everything the confederation wants to buy: every buyer's want list in one Item/Qty/Price/Buyer view. The item box doubles as a live filter; picking an item still asks the network directly. Refresh re-collects everything.
-- Scan bags also asks who is buying: a Buyers column (coin icon) per scanned item opens a side window with every buyer, the amount they want and what they pay, best payer on top. Right-click a name to whisper; a Send button pre-fills a COD mail at their price, clamped to what your bags hold. The Find buyers coin on My Items opens the same window.
-- The category browser is complete again: Consumable and Reagent are back, and an Armor subclass (all Cloth at once) can be browsed whole, like the Auction House. How many results are shown is a new slider in Options under Network.
-- Locations show the zone in list columns (Orgrimmar instead of The Drag); hover the player for the exact spot.
-- Fix: the "Mailed your COD" whisper no longer creates a phantom COD order on a buyer who lists the same item.
-- Fix: the COD send-assist can now combine multiple stacks and split one for the remainder, so any order amount mails correctly; it refuses with honest messages when your bags cannot cover the order or it will not fit one mail.]]
+- Clients running the SoD Guild Found addon attach their own verification status to the replies GFM already sends. Hover any player anywhere and the tooltip says where they stand: verified, NOT verified (tampering recorded), or unverified when no status was received (older GFM, or no Guild Found addon).
+- Rows are tinted to match: orange for tampering recorded, soft yellow for unknown; verified rows stay clean. Works in Buy results, Sellers/Buyers, the category browser, the COD list and the buyers side window.
+- The COD Send buttons (COD tab and buyers side window) grey out for an unverified recipient, with the reason on hover; the mailbox send-assist refuses too.
+- New option under Guild Found: Check players' Guild Found status (on by default). Needs the SoD Guild Found addon on your own client; without it the checkbox is locked off. Local only, and your own status is still sent to others either way.
+- Fully backward compatible: the status is one appended field on existing messages; older clients ignore it and simply show as unverified here.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

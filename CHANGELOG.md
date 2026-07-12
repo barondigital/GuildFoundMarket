@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.20.0
+
+- **Guild Found verification on every player.** Clients with the SoD Guild Found addon installed
+  attach their own status ("no tampering recorded") to the replies GFM already sends; receivers
+  remember it per name. Hovering a player anywhere (Buy results, Sellers/Buyers, category browse,
+  the buyers side window, catalog headers) shows a status line: verified (green), NOT verified
+  with tampering recorded (orange), or unverified when no status was received (yellow; also what
+  older GFM clients and players without the Guild Found addon show as). Rows get a matching
+  orange or yellow background tint.
+- **COD Send refuses unverified recipients.** With the check on, the Send button on the COD tab
+  and in the buyers side window greys out for a buyer who is not verified, and its hover explains
+  why; the send-assist itself refuses too, whichever path triggers it.
+- **New option: Check players' Guild Found status** (on by default, under Guild Found). It needs
+  the SoD Guild Found addon on your own client; without it the checkbox is locked off and its
+  tooltip says so. Local only: it changes nothing for anyone else.
+- **Fully backward compatible.** The status rides as an appended last field on the existing
+  messages, exactly like the guild tag: older clients ignore it, and their replies simply show
+  as unverified here.
+
 ## 0.19.1
 
 - **The Buyers tab opens on everything wanted.** Entering the tab now collects every buyer's full

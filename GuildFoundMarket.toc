@@ -2,7 +2,7 @@
 ## Title: Guild Found |cff00ff96Market|r
 ## Notes: Private cross-guild marketplace for guild-locked communities. Search live offers; trade face-to-face.
 ## Author: Soepel
-## Version: 0.19.1
+## Version: 0.20.0
 ## SavedVariables: GuildFoundMarketDB
 ## SavedVariablesPerCharacter: GuildFoundMarketCharDB
 ## X-Curse-Project-ID: 1584683
@@ -17,6 +17,7 @@ Services\Config.lua
 Services\Transport.lua
 Services\Protocol.lua
 Services\Guild.lua
+Services\Verified.lua
 Services\Version.lua
 Services\Changelog.lua
 Services\Stock.lua
