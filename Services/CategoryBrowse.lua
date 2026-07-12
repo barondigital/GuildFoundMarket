@@ -93,11 +93,12 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     local qid = a
     C_Timer.After(math.random() * ns.SCAN_JITTER, function()
         local buf = ""
-        -- guild + location appended last (per-seller, repeated on each chunk) so older clients
-        -- read qid/more/rows unchanged. The row budget drops to 150 to leave headroom for the
-        -- two trailing fields + header, keeping the whole line under the ~255-byte chat limit.
-        local guild, loc = ns.MyGuild() or "", ns.LiveLoc()
-        local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s~%s~%s"):format(qid, more, buf, guild, loc), sender); buf = "" end
+        -- guild + location + valid flag appended last (per-seller, repeated on each chunk) so
+        -- older clients read qid/more/rows unchanged. The row budget drops to 150 to leave
+        -- headroom for the trailing fields + header, keeping the whole line under the ~255-byte
+        -- chat limit (the flag adds at most 2 bytes).
+        local guild, loc, valid = ns.MyGuild() or "", ns.LiveLoc(), ns.MyValidFlag()
+        local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s~%s~%s~%s"):format(qid, more, buf, guild, loc, valid), sender); buf = "" end
         for i = 1, #matches do
             local it = matches[i]
             local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
@@ -109,11 +110,12 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
 end)
 
--- QR~qid~more~rows~guild~loc: a category browse reply chunk (rows are id:qty:price:suffix;...).
-ns.OnMessage("QR", function(a, _, c, d, e, _, sender)
+-- QR~qid~more~rows~guild~loc~valid: a category browse reply chunk (rows are id:qty:price:suffix;...).
+ns.OnMessage("QR", function(a, _, c, d, e, f, sender)
     if a ~= activeQCid then return end
     local s = Ambiguate(sender, "short")
     ns.NoteGuild(sender, d)
+    ns.NoteValid(sender, f)
     local loc = e or ""
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix = strsplit(":", chunk)

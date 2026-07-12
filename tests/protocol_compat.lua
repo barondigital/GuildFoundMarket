@@ -11,6 +11,9 @@
 --   * a new seller honours `slot` when present and ignores it when absent or empty.
 --   * the QR reply wire format (id:qty:price:suffix) is unchanged in both directions.
 --   * the dispatcher's unlimited split never lets a trailing field shift earlier ones.
+--   * the Guild Found valid flag rides QR appended LAST (after guild + loc), so 0.19
+--     and older clients read every earlier field unchanged; without FreshSoD the field
+--     is empty and a missing/empty flag never poisons the receiver's cache.
 
 local failures = 0
 local function check(name, cond)
@@ -102,6 +105,7 @@ local function loadModule(path)
     return chunk("GuildFoundMarket", ns)
 end
 loadModule("Services/Protocol.lua")
+loadModule("Services/Verified.lua")   -- real MyValidFlag/NoteValid: CategoryBrowse appends the flag
 loadModule("Services/CategoryBrowse.lua")
 
 -- ids present in the whisper replies the seller queued, parsed from QR rows
@@ -124,12 +128,13 @@ local function reset() sentWhispers = {} end
 do
     local got
     ns.OnMessage("ZZ", function(...) got = { ... } end)
-    ns.DispatchMessage("ZZ~A~B~C~D~E~F~G", "Sender-Realm")
+    ns.DispatchMessage("ZZ~A~B~C~D~E~F~G~H", "Sender-Realm")
     check("dispatch maps a..f positionally", got[1] == "A" and got[6] == "F")
     check("dispatch keeps sender in the 7th slot", got[7] == "Sender-Realm")
     check("dispatch delivers the 7th wire field (G) as the 8th arg", got[8] == "G")
+    check("dispatch delivers the 8th wire field (H) as the 9th arg", got[9] == "H")
     ns.DispatchMessage("ZZ~A", "S")
-    check("dispatch leaves missing fields nil", got[2] == nil and got[8] == nil)
+    check("dispatch leaves missing fields nil", got[2] == nil and got[8] == nil and got[9] == nil)
 end
 
 --========================================================================
@@ -179,13 +184,43 @@ do
     reset()
     ns.DispatchMessage("QC~q1~4~1~0.10.0~INVTYPE_HEAD", "Buyer-Realm")
     local w = sentWhispers[1]
-    local cmd, qid, more, rows, guild, loc = strsplit("~", w.msg)
+    local cmd, qid, more, rows, guild, loc, valid = strsplit("~", w.msg)
     check("reply command is QR", cmd == "QR")
     check("reply echoes the query id", qid == "q1")
     check("reply carries the more flag", more == "0")
     check("reply row is id:qty:price:suffix", rows == "100:2:5000:0")
     check("reply carries the responder's guild", guild == "F R E S H IV")
-    check("reply appends the responder's location last", loc == "Bank, Orgrimmar")
+    check("reply keeps the responder's location at field 5", loc == "Bank, Orgrimmar")
+    check("no FreshSoD: the appended valid flag is empty", valid == "")
+end
+
+--========================================================================
+-- 6b. Guild Found valid flag: appended last on QR, harmless to old clients in both directions
+--========================================================================
+do
+    reset()
+    _G.FreshSoD_AmIVerified = function() return true end   -- the seller runs SoD Guild Found, clean
+    ns.DispatchMessage("QC~q1~4~1~0.10.0~INVTYPE_HEAD", "Buyer-Realm")
+    local _, _, _, rows, guild, loc, valid = strsplit("~", sentWhispers[1].msg)
+    check("valid flag appended after guild + loc (old fields unshifted)",
+        rows == "100:2:5000:0" and guild == "F R E S H IV" and loc == "Bank, Orgrimmar")
+    check("verified seller appends valid=1", valid == "1")
+    _G.FreshSoD_AmIVerified = function() return false end   -- tampering recorded
+    reset()
+    ns.DispatchMessage("QC~q1~4~1~0.10.0~INVTYPE_HEAD", "Buyer-Realm")
+    valid = select(7, strsplit("~", sentWhispers[1].msg))
+    check("tampered seller appends valid=0", valid == "0")
+    _G.FreshSoD_AmIVerified = nil
+
+    -- receiving side: a new-style flag fills the cache; an old-style one (absent) leaves it alone
+    ns.NoteValid("Clean-Realm", "1")
+    ns.NoteValid("Naughty-Realm", "0")
+    ns.NoteValid("Old-Realm", nil)     -- old client: field absent
+    ns.NoteValid("Old2-Realm", "")     -- new client without FreshSoD: field empty
+    check("valid=1 cached as true", ns.ValidOf("Clean") == true)
+    check("valid=0 cached as false", ns.ValidOf("Naughty") == false)
+    check("missing/empty flag stays unknown (shown unverified)",
+        ns.ValidOf("Old") == nil and ns.ValidOf("Old2") == nil)
 end
 
 --========================================================================

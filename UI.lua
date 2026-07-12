@@ -445,6 +445,22 @@ ns.On("setting:minimapButton", ns.SetMinimapShown)
 -- moving the Browse-results slider re-cuts an open result list right away
 ns.On("setting:browseCap", function() if ns.RefreshBrowse then ns.RefreshBrowse() end end)
 
+-- Toggling the Guild Found check re-renders whatever is on screen, so the row tints and
+-- disabled COD Send buttons appear or disappear immediately.
+ns.On("setting:verifiedCheck", function()
+    if refreshActiveItemView then refreshActiveItemView() end
+    if ns.RefreshSellers then ns.RefreshSellers() end
+    if ns.RefreshBuyers then ns.RefreshBuyers() end
+    if ns.RefreshBrowse then ns.RefreshBrowse() end
+end)
+
+-- The Guild Found verification line on a player tooltip (a no-op while the check is off).
+local function addValidLine(tt, player)
+    if not (player and ns.ValidLine) then return end
+    local txt, r, g, b = ns.ValidLine(player)
+    if txt then tt:AddLine(txt, r, g, b, true) end
+end
+
 -- Grey + dim the minimap icon while listings are offline (paused), as a live status cue.
 -- Set it straight on the button (most reliable) and also stash iconR/G/B so it survives
 -- LibDBIcon refreshes.
@@ -518,8 +534,19 @@ local function applyRowColumns(r, mode)
     r.c4:ClearAllPoints(); r.c4:SetPoint("LEFT", c.c4[1], 0); r.c4:SetWidth(c.c4[2])
 end
 
+-- Tint a row's background by the player's Guild Found status (yellow = unknown, orange =
+-- tampering recorded); clears the tint when they're verified or the check is off.
+local function applyValidTint(r, player)
+    if not r.validBG then return end
+    local cr, cg, cb, ca
+    if player and ns.ValidTint then cr, cg, cb, ca = ns.ValidTint(player) end
+    if cr then r.validBG:SetColorTexture(cr, cg, cb, ca); r.validBG:Show()
+    else r.validBG:Hide() end
+end
+
 local function resetRow(r)
     r.icon:Hide()
+    if r.validBG then r.validBG:Hide() end
     applyRowColumns(r, "default")   -- COD rows override to their tighter layout in formatCODRow
     r.c1:EnableMouse(true)
     r.c1.fs:SetTextColor(1, 1, 1)
@@ -532,6 +559,7 @@ local function resetRow(r)
     r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit"); r.edit.tip = nil   -- COD rows relabel it "Done"; reset so a reused row never keeps that
     r.codEdit:Hide(); r.codEdit:SetScript("OnClick", nil)
     r.codSend:Hide(); r.codSend:SetScript("OnClick", nil)
+    r.codSend:SetEnabled(true); r.codSend:SetAlpha(1); r.codSend.tip = nil
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
@@ -548,6 +576,7 @@ local function makeHeaderHover(header)
         if not self.player then return end
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
         GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+        addValidLine(GameTooltip, self.player)
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
@@ -598,6 +627,7 @@ local function formatBuyRow(r, d)
     r.c1.itemLink = vLink(ns.search.itemID, d.suffix)
     r.c1.player = d.seller   -- seller name; the item hover adds a "Name <Guild>" line below
     r.c1.loc = d.loc
+    applyValidTint(r, d.seller)
 end
 
 local function formatMineRow(r, d)
@@ -641,6 +671,7 @@ end
 -- Sellers tab: either an index row (a seller) or, in the show view, one of their items.
 local function formatSellerRow(r, d)
     resetRow(r)
+    applyValidTint(r, d.seller)
     if d.kind == "seller" then
         r.c1.fs:SetText(d.seller)
         r.c1.fs:SetTextColor(0.4, 1, 0.4)        -- green: online right now
@@ -700,6 +731,7 @@ end
 local function formatCODRow(r, d)
     resetRow(r)
     applyRowColumns(r, "cod")   -- pull columns left so Buyer clears the Send/Edit/Done buttons
+    applyValidTint(r, d.buyer)
     local rec = d.rec
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
@@ -716,7 +748,15 @@ local function formatCODRow(r, d)
     r.c2:SetText(d.qty or 1)
     r.c3:SetText((d.price or 0) > 0 and GetCoinTextureString(d.price) or "|cff888888-|r")
     r.c4:SetText(d.buyer or ""); r.c4:Show()
-    r.codSend:Show(); r.codSend:SetScript("OnClick", function() if ns.CODSendAssist then ns.CODSendAssist(rec) end end)
+    r.codSend:Show()
+    -- The Guild Found check refuses to prepare mail to an unverified buyer: the button greys
+    -- out and its hover explains why (resetRow restores it for the next row).
+    local blocked = ns.CODSendBlocked and ns.CODSendBlocked(d.buyer)
+    if blocked then
+        r.codSend:SetEnabled(false); r.codSend:SetAlpha(0.4); r.codSend.tip = blocked
+    else
+        r.codSend:SetScript("OnClick", function() if ns.CODSendAssist then ns.CODSendAssist(rec) end end)
+    end
     r.codEdit:Show(); r.codEdit:SetScript("OnClick", function() if ns.LoadCODForEdit then ns.LoadCODForEdit(rec) end end)
     -- Done = "I mailed it": whisper the buyer that it's on its way, then clear the row.
     r.edit:Show(); r.edit:SetText("Done")
@@ -737,6 +777,7 @@ end
 -- Buyers tab row: an index buyer, a "who wants X" result, or one of an open buyer's wants.
 local function formatBuyerRow(r, d)
     resetRow(r)
+    applyValidTint(r, d.buyer)
     if d.kind == "buyer" then
         r.c1.fs:SetText(d.self and (d.buyer .. " (you)") or d.buyer)
         r.c1.fs:SetTextColor(d.self and 1 or 0.4, d.self and 0.82 or 1, d.self and 0 or 0.4)
@@ -791,6 +832,7 @@ end
 
 -- Browse results row: Item (quality-coloured) | Qual swatch | Lvl | Qty | Price | Seller.
 local function formatBrowseRow(r, d)
+    applyValidTint(r, d.seller)
     local q, lvl = itemQualLevel(d.id, d.suffix)
     r.icon:SetTexture(GetItemIcon(d.id))
     r.c1.fs:SetText(vName(d.id, d.suffix))
@@ -2185,6 +2227,9 @@ local function buildRows()
         local r = CreateFrame("Frame", nil, main); r:SetSize(720, ROW_H)
         if i == 1 then r:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
         else r:SetPoint("TOPLEFT", rows[i - 1], "BOTTOMLEFT", 0, 0) end
+        -- Guild Found status tint, below the hover highlight so both stay visible together
+        r.validBG = r:CreateTexture(nil, "BACKGROUND", nil, -2)
+        r.validBG:SetAllPoints(); r.validBG:Hide()
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(18, 18); r.icon:SetPoint("LEFT", 4, 0)
         r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 26, 0); r.c1:SetSize(280, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
@@ -2197,7 +2242,10 @@ local function buildRows()
                 else GameTooltip:SetItemByID(self.itemID) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 -- on an offer/want row the column is a player: add their name + guild below the item
-                if self.player then GameTooltip:AddLine(ns.PlayerTitle(self.player), 1, 1, 1) end
+                if self.player then
+                    GameTooltip:AddLine(ns.PlayerTitle(self.player), 1, 1, 1)
+                    addValidLine(GameTooltip, self.player)
+                end
                 if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
                 GameTooltip:Show()
             elseif self.player then
@@ -2205,6 +2253,7 @@ local function buildRows()
                 -- location (subzone included; the column shows only the zone) and tip below
                 GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
                 GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+                addValidLine(GameTooltip, self.player)
                 if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 GameTooltip:Show()
@@ -2220,19 +2269,22 @@ local function buildRows()
         r.c4 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c4:SetPoint("LEFT", 524, 0); r.c4:SetWidth(190); r.c4:SetJustifyH("LEFT")
         r.x = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.x:SetSize(24, 20); r.x:SetPoint("RIGHT", -2, 0); r.x:SetText("X")
         r.edit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.edit:SetSize(40, 20); r.edit:SetPoint("RIGHT", r.x, "LEFT", -2, 0); r.edit:SetText("Edit"); r.edit:Hide()
-        -- optional hover tip on the X / Done buttons (set per row via .tip, e.g. COD rows explain the difference)
-        for _, b in ipairs({ r.x, r.edit }) do
+        -- COD rows only: an Edit button left of the Done button that loads the row back into the
+        -- add form. Shares findBtn's slot (never shown on the same row, so no overlap).
+        r.codEdit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codEdit:SetSize(40, 20); r.codEdit:SetPoint("RIGHT", r.edit, "LEFT", -2, 0); r.codEdit:SetText("Edit"); r.codEdit:Hide()
+        -- COD rows only: a Send button (mailbox send-assist) left of Edit. Motion scripts stay on
+        -- while disabled so a Guild Found block can still explain itself on hover.
+        r.codSend = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codSend:SetSize(44, 20); r.codSend:SetPoint("RIGHT", r.codEdit, "LEFT", -2, 0); r.codSend:SetText("Send"); r.codSend:Hide()
+        r.codSend:SetMotionScriptsWhileDisabled(true)
+        -- optional hover tip on the X / Done / Send buttons (set per row via .tip, e.g. COD rows
+        -- explain the difference, and a blocked Send explains the Guild Found refusal)
+        for _, b in ipairs({ r.x, r.edit, r.codSend }) do
             b:SetScript("OnEnter", function(self)
                 if not self.tip then return end
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(self.tip, 1, 1, 1, true); GameTooltip:Show()
             end)
             b:SetScript("OnLeave", GameTooltip_Hide)
         end
-        -- COD rows only: an Edit button left of the Done button that loads the row back into the
-        -- add form. Shares findBtn's slot (never shown on the same row, so no overlap).
-        r.codEdit = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codEdit:SetSize(40, 20); r.codEdit:SetPoint("RIGHT", r.edit, "LEFT", -2, 0); r.codEdit:SetText("Edit"); r.codEdit:Hide()
-        -- COD rows only: a Send button (mailbox send-assist) left of Edit.
-        r.codSend = CreateFrame("Button", nil, r, "UIPanelButtonTemplate"); r.codSend:SetSize(44, 20); r.codSend:SetPoint("RIGHT", r.codEdit, "LEFT", -2, 0); r.codSend:SetText("Send"); r.codSend:Hide()
         -- chat-bubble icon for a player's note (Sellers and Buyers index rows). Positioned after
         -- the location by the formatter, which also sets self.store (the index table to read/cache
         -- in). The note text is fetched on hover (click to retry a failed load); state read live by name.
@@ -2430,6 +2482,9 @@ local function buildBrowse()
         local r = CreateFrame("Frame", nil, main); r:SetSize(542, ROW_H)
         if i == 1 then r:SetPoint("TOPLEFT", browseScroll, "TOPLEFT", 0, 0)
         else r:SetPoint("TOPLEFT", browseRows[i - 1], "BOTTOMLEFT", 0, 0) end
+        -- Guild Found status tint, below the hover highlight so both stay visible together
+        r.validBG = r:CreateTexture(nil, "BACKGROUND", nil, -2)
+        r.validBG:SetAllPoints(); r.validBG:Hide()
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 0, 0)
         r.c1 = CreateFrame("Button", nil, r); r.c1:SetPoint("LEFT", 20, 0); r.c1:SetSize(212, ROW_H); r.c1:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r.c1.fs = r.c1:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.c1.fs:SetAllPoints(); r.c1.fs:SetJustifyH("LEFT")
@@ -2451,6 +2506,7 @@ local function buildBrowse()
             if not self.player then return end
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
             GameTooltip:SetText(ns.PlayerTitle(self.player), 1, 1, 1)
+            addValidLine(GameTooltip, self.player)
             if self.loc and self.loc ~= "" then GameTooltip:AddLine(self.loc, 0.7, 0.7, 0.7, true) end
             GameTooltip:AddLine("Click to see their items", 0.6, 0.6, 0.6, true)
             GameTooltip:Show()
@@ -3692,11 +3748,15 @@ local function buildOptionsPanel()
 
     local function renderCheck(s)
         local cb = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", X, y); cb:SetSize(26, 26); cb.key = s.key
+        cb:SetPoint("TOPLEFT", X, y); cb:SetSize(26, 26); cb.key = s.key; cb.schema = s
         local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 1); lbl:SetText(s.label)
+        cb.lbl = lbl
         -- extend the click/hover area over the label so it behaves like the checkbox (tooltip + toggle)
         cb:SetHitRectInsets(0, -(lbl:GetStringWidth() + 8), 0, 0)
+        -- a locked control (enabledIf false, e.g. missing dependency) still shows its tooltip,
+        -- which carries the status line explaining WHY it's locked
+        cb:SetMotionScriptsWhileDisabled(true)
         cb:SetScript("OnClick", function(self) ns.SetSetting(self.key, self:GetChecked()) end)
         cb:SetScript("OnEnter", function(self) showTip(self, s) end)
         cb:SetScript("OnLeave", GameTooltip_Hide)
@@ -3799,6 +3859,7 @@ local function buildOptionsPanel()
         { title = "General",             keys = { "minimapButton", "altClickSearch", "showPriceTooltip", "priceFormat", "auxSeed" } },
         { title = "Selling",             keys = { "trackDefault", "announceShopNote", "scanPriceMode" } },
         { title = "Cash On Delivery",    keys = { "codAccept", "codWhisperCapture", "codCreateLink", "codReplyText", "codSentText" } },
+        { title = "Guild Found",         keys = { "verifiedCheck" } },
         { title = "Shop link visibility", keys = { "hideShopGuild", "hideShopParty", "hideShopWhisper", "hideShopChannels" } },
         { title = "Network",             keys = { "scanCap", "browseCap" } },
         { title = "Updates",             keys = { "announceChangelog" } },
@@ -3824,7 +3885,14 @@ local function buildOptionsPanel()
     -- pull every control from the store; called on entering the tab and on any change
     -- elsewhere (e.g. a slash command), so the panel always mirrors the live settings.
     function ns.RefreshOptions()
-        for _, cb in ipairs(optChecks) do cb:SetChecked(ns.GetSetting(cb.key)) end
+        for _, cb in ipairs(optChecks) do
+            -- a setting with an unmet enabledIf is locked: shown unchecked and unclickable
+            -- (the stored value survives, so it comes back on when the dependency appears)
+            local locked = cb.schema.enabledIf and not cb.schema.enabledIf()
+            cb:SetEnabled(not locked)
+            cb.lbl:SetTextColor(locked and 0.5 or 1, locked and 0.5 or 1, locked and 0.5 or 1)
+            cb:SetChecked(not locked and ns.GetSetting(cb.key))
+        end
         for _, rb in ipairs(optRadios) do rb:SetChecked(ns.GetSetting(rb.key) == rb.value) end
         for _, eb in ipairs(optEdits) do
             if not eb:HasFocus() then eb:SetText(ns.GetSetting(eb.key) or "") end   -- don't stomp mid-edit

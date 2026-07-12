@@ -13,6 +13,8 @@ local ADDON, ns = ...
 -- tip    = wrapped description shown on mouseover (may contain colour codes).
 -- status = optional fn returning (text, r, g, b): a live status line appended to the
 --          tooltip, e.g. whether an optional dependency is actually installed.
+-- enabledIf = optional fn; when it returns false the Options control is locked (shown
+--          unchecked and unclickable), for settings that need a missing dependency.
 -- type   = "choice" for a multi-option setting (needs `options` = { {value, label}, ... });
 --          "range" for a numeric slider (needs `min`, `max`, optional `step`);
 --          omitted means a boolean toggle.
@@ -145,6 +147,26 @@ ns.SettingsSchema = {
         label = "Add a Create COD link to buyer whispers",
         tip = "When a buyer whispers you an item link for one of your listings, append a clickable [Create COD] to the message. Click it to place a COD order for that buyer and item (a small popup asks the quantity).\n\n"
             .. "Only affects what you see, and only for items you currently list.",
+        default = true,
+    },
+    {
+        key = "verifiedCheck",
+        label = "Check players' Guild Found status",
+        tip = "Show whether sellers and buyers are verified by the |cffffd100SoD Guild Found|r addon "
+            .. "(no tampering recorded on their character).\n\n"
+            .. "Every GFM client with that addon installed attaches its own status to the replies you "
+            .. "already receive. With this check on, a player who is not verified (or whose status is "
+            .. "unknown: older GFM, or no Guild Found addon) gets a tinted row and an explanation on "
+            .. "mouseover, and the COD Send buttons refuse to prepare mail to them.\n\n"
+            .. "Needs the SoD Guild Found addon on YOUR client too; without it this option is locked. "
+            .. "Local only: it changes nothing for anyone else.",
+        status = function()
+            if ns.VerifiedAvailable and ns.VerifiedAvailable() then
+                return "SoD Guild Found addon detected: this check can be used.", 0.4, 1, 0.4
+            end
+            return "SoD Guild Found addon not installed: this check is locked off.", 1, 0.45, 0
+        end,
+        enabledIf = function() return ns.VerifiedAvailable and ns.VerifiedAvailable() or false end,
         default = true,
     },
     {

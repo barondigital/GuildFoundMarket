@@ -787,9 +787,16 @@ local function renderBuyersRows()
             r.qty:SetText(o.qty or 0)
             r.price:SetText(wantPriceText(o))
             r.send.want = o
-            local sendable = (o.price or 0) > 0   -- your own (self-test) row can mail too: full flow rehearsal
+            -- your own (self-test) row can mail too: full flow rehearsal. An unverified buyer
+            -- (Guild Found check) blocks the button; its hover explains which reason applies.
+            local sendable = (o.price or 0) > 0 and not (ns.CODSendBlocked and ns.CODSendBlocked(o.buyer))
             r.send:SetEnabled(sendable)
             r.send:SetAlpha(sendable and 1 or 0.4)
+            if r.validBG then
+                local cr, cg, cb, ca
+                if ns.ValidTint then cr, cg, cb, ca = ns.ValidTint(o.buyer) end
+                if cr then r.validBG:SetColorTexture(cr, cg, cb, ca); r.validBG:Show() else r.validBG:Hide() end
+            end
             r:Show()
         end
     end
@@ -875,6 +882,9 @@ local function createBuyersWin()
         local r = CreateFrame("Frame", nil, buyersWin); r:SetSize(328, BROW_H)
         if i == 1 then r:SetPoint("TOPLEFT", buyersWin.scroll, "TOPLEFT", 2, 0)
         else r:SetPoint("TOPLEFT", buyersRows[i - 1], "BOTTOMLEFT", 0, 0) end
+        -- Guild Found status tint (same yellow/orange scheme as the main window's rows)
+        r.validBG = r:CreateTexture(nil, "BACKGROUND", nil, -2)
+        r.validBG:SetAllPoints(); r.validBG:Hide()
         r.name = CreateFrame("Button", nil, r); r.name:SetPoint("LEFT", 0, 0); r.name:SetSize(130, BROW_H)
         r.name:RegisterForClicks("RightButtonUp")
         r.name.fs = r.name:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name.fs:SetAllPoints(); r.name.fs:SetJustifyH("LEFT")
@@ -888,6 +898,10 @@ local function createBuyersWin()
             if not self.buyer then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(ns.PlayerTitle and ns.PlayerTitle(self.buyer) or self.buyer, 1, 1, 1)
+            if ns.ValidLine then
+                local txt, cr, cg, cb = ns.ValidLine(self.buyer)
+                if txt then GameTooltip:AddLine(txt, cr, cg, cb, true) end
+            end
             if self.isSelf then GameTooltip:AddLine("Your own want (self-test)", 0.6, 0.6, 0.6) end
             GameTooltip:AddLine("Right-click to whisper", 0.6, 0.6, 0.6)
             GameTooltip:Show()
@@ -914,7 +928,10 @@ local function createBuyersWin()
             local o = self.want
             if not o then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            if (o.price or 0) <= 0 then
+            local blocked = ns.CODSendBlocked and ns.CODSendBlocked(o.buyer)
+            if blocked then
+                GameTooltip:SetText(blocked, 1, 1, 1, true)
+            elseif (o.price or 0) <= 0 then
                 GameTooltip:SetText("They take offers only (no price), so there is no COD amount to collect. Whisper them instead.", 1, 1, 1, true)
             else
                 GameTooltip:SetText("Prepare a COD mail to " .. o.buyer)

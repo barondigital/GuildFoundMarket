@@ -133,16 +133,18 @@ ns.OnMessage("S", function(a, b, c, _, _, _, sender)
         -- stays tiny (full protocol headroom) and the note text is fetched on demand (NQ/NR)
         -- only when a buyer clicks the bubble. Old clients ignore the extra field.
         local flag = (ns.GetShopNote and ns.GetShopNote() ~= "") and "1" or ""
-        -- guild appended last so older clients read sid/count/loc/hasNote unchanged
-        ns.EnqueueWhisper(("C~%s~%d~%s~%s~%s"):format(sid, n, loc, flag, ns.MyGuild() or ""), sender)
+        -- guild + valid flag appended last so older clients read sid/count/loc/hasNote unchanged
+        ns.EnqueueWhisper(("C~%s~%d~%s~%s~%s~%s"):format(sid, n, loc, flag, ns.MyGuild() or "", ns.MyValidFlag()), sender)
     end)
 end)
 
--- C~sid~count~loc~hasNote~guild: a seller's summary in reply to our scan (hasNote + guild last).
-ns.OnMessage("C", function(a, b, c, d, e, _, sender)
+-- C~sid~count~loc~hasNote~guild~valid: a seller's summary in reply to our scan (hasNote, guild
+-- and the valid flag appended in that order).
+ns.OnMessage("C", function(a, b, c, d, e, f, sender)
     if a ~= activeSid then return end
     local s = Ambiguate(sender, "short")
     ns.NoteGuild(sender, e)
+    ns.NoteValid(sender, f)
     if not ns.sellers.results[s] then
         if (ns.sellers.count or 0) >= ns.ScanCap() then ns.sellers.capped = true; return end
         ns.sellers.count = (ns.sellers.count or 0) + 1

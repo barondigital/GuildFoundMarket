@@ -96,6 +96,10 @@ local parkToken = 0
 -- Pre-fill the Send-Mail frame for a COD order. Call from the row's Send button (hardware event).
 function ns.CODSendAssist(rec)
     if not rec then return end
+    -- Guild Found check: every Send path funnels through here, so an unverified recipient is
+    -- refused even when a caller forgot to grey its own button.
+    local blocked = ns.CODSendBlocked and ns.CODSendBlocked(rec.buyer)
+    if blocked then ns.Feedback(blocked, true); return end
     if not (atMailbox and MailFrame and MailFrame:IsShown()) then
         ns.Feedback("Open a mailbox first, then press Send on the order.", true); return
     end
