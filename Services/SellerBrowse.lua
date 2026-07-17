@@ -181,10 +181,12 @@ ns.OnMessage("L", function(a, _, _, _, _, _, sender)
 end)
 
 -- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix;...).
--- The bag scan fetches catalogs over the same message with its own lids; give it first
--- pick so a sweep never collides with a catalog the Sellers tab has open.
+-- The bag scan and the want scan fetch catalogs over the same message with their own
+-- lids; give them first pick so a sweep never collides with a catalog the Sellers tab
+-- has open.
 ns.OnMessage("K", function(a, b, c)
     if ns.BagScan and ns.BagScan.HandleCatalogChunk(a, b, c) then return end
+    if ns.WantScan and ns.WantScan.HandleCatalogChunk(a, b, c) then return end
     if a ~= activeLid or not ns.sellers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
         local id, qty, price, suffix = strsplit(":", chunk)

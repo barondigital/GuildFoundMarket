@@ -193,13 +193,16 @@ local function coinShort(c)
 end
 ns.CoinText = coinShort   -- plaintext coins for outgoing whispers (texture strings don't render there)
 
--- Open a whisper to `name`, pre-filled with the item link + price and a trailing
--- space so the buyer can append a question: "/w Name [Item]@1g2s45c "
-local function whisperItem(name, itemID, suffix, price)
+-- Open a whisper to `name`, pre-filled with the item link + price and a trailing space so
+-- the sender can append a question: "/w Name [WTB] [Item]@1g2s45c ". The tag states the
+-- SENDER's intent: whispering a seller means you buy ([WTB]), whispering a buyer means you
+-- sell ([WTS]), so the receiver instantly knows which side of the trade this is.
+local function whisperItem(name, itemID, suffix, price, tag)
     local link = (itemID and vLink(itemID, suffix)) or ("[" .. itemName(itemID) .. "]")
     local body = (price and price > 0) and (link .. "@" .. coinShort(price) .. " ") or (link .. " ")
-    ChatFrame_OpenChat("/w " .. name .. " " .. body)
+    ChatFrame_OpenChat("/w " .. name .. " " .. (tag and ("[" .. tag .. "] ") or "") .. body)
 end
+ns.WhisperItem = whisperItem   -- the scan side windows (BagScan/WantScan) prefill the same way
 
 -- Alt-click on a listing requests a COD over the addon protocol. The request is silent by design:
 -- the seller's own client queues the order and sends back their configured confirmation whisper
@@ -612,7 +615,7 @@ local function formatBuyRow(r, d)
         r.c1.fs:SetText(d.seller .. tag)
         r.c1.tip = "Click for items · Alt-click to request a COD · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, ns.search.itemID, d.suffix, d.price)
+            if button == "RightButton" then whisperItem(d.seller, ns.search.itemID, d.suffix, d.price, "WTB")
             elseif IsAltKeyDown() then promptCODQty(d.seller, ns.search.itemID, d.suffix, d.price)
             else
                 pendingCatFilter = itemName(ns.search.itemID)   -- open their shop filtered to the item you searched
@@ -695,7 +698,7 @@ local function formatSellerRow(r, d)
         r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
         r.c1.tip = "Ctrl-click to compare · Alt-click to request a COD · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
+            if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price, "WTB")
             elseif IsAltKeyDown() then promptCODQty(d.seller, d.id, d.suffix, d.price)
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
@@ -805,7 +808,7 @@ local function formatBuyerRow(r, d)
         local brec = ns.buyers.results[d.buyer]
         r.c1.loc = brec and brec.loc or nil       -- the buyer's location, from the index scan
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price)
+            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price, "WTS")
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id)
             elseif not d.self then
                 pendingCatFilter = itemName(d.id)   -- open their wants filtered to this item
@@ -822,7 +825,7 @@ local function formatBuyerRow(r, d)
         r.c1.tip = "Right-click to whisper " .. (d.buyer or "") .. " · ctrl-click to find sellers"
         r.c1.itemLink = vLink(d.id, d.suffix)
         r.c1:SetScript("OnClick", function(_, button)
-            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price)
+            if button == "RightButton" then whisperItem(d.buyer, d.id, d.suffix, d.price, "WTS")
             elseif IsControlKeyDown() then ns.SelectTab("BUY"); selectSearchItem(d.id) end
         end)
         r.c2:SetText(d.qty or 0)
@@ -840,7 +843,7 @@ local function formatBrowseRow(r, d)
     r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1.tip = "Ctrl-click to find who else sells this · Alt-click to request a COD · right-click to whisper"
     r.c1:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price)
+        if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price, "WTB")
         elseif IsAltKeyDown() then promptCODQty(d.seller, d.id, d.suffix, d.price)
         elseif IsControlKeyDown() then setBuyMode("SEARCH"); selectSearchItem(d.id) end
     end)
@@ -3266,6 +3269,24 @@ local function buildWTB()
     main.wtbFilter = wtbFilter
     addClearButton(wtbFilter, function(b) b:SetText(""); ns.RefreshWant() end)
 
+    -- Scan sellers: one click sweeps the market for everything on your WTB list; results
+    -- open in the sellers side window (right of the main window, like the scan tab's
+    -- buyers window). Sits where the announce icon lives on the Selling view.
+    local wtbScanBtn = CreateFrame("Button", nil, main, "UIPanelButtonTemplate")
+    wtbScanBtn:SetSize(100, 22); wtbScanBtn:SetPoint("TOPRIGHT", -14, -64); wtbScanBtn:Hide()
+    wtbScanBtn:SetText("Scan sellers")
+    wtbScanBtn:SetScript("OnClick", function() ns.WantScan.Start() end)
+    wtbScanBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Scan sellers")
+        GameTooltip:AddLine("Find who currently sells the items on your WTB list, and at what price. Results open in a window next to this one.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Takes a moment: it asks every online seller for their price list. You can stop it at any time; leaving this view closes the window.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    wtbScanBtn:SetScript("OnLeave", GameTooltip_Hide)
+    main.wtbScanBtn = wtbScanBtn
+
     --==================== WTB compose panel (item via autocomplete, qty, price, COD) ====
     local panel = CreateFrame("Frame", nil, main)
     panel:SetPoint("BOTTOMLEFT", 16, 14); panel:SetPoint("BOTTOMRIGHT", -16, 14); panel:SetHeight(74); panel:Hide()
@@ -3428,10 +3449,12 @@ local function buildWTB()
         if not main then return end
         hideCODQtyPopup()
         local selling = (mode == "SELLING")
-        -- the find-buyers side window lives on the WTS view; switching to WTB/COD closes it
-        if not selling and ns.BagScan and ns.BagScan.CloseFindBuyers then ns.BagScan.CloseFindBuyers() end
         local wtb = (mode == "WTB")
         local cod = (mode == "COD")
+        -- the find-buyers side window lives on the WTS view; switching to WTB/COD closes it
+        if not selling and ns.BagScan and ns.BagScan.CloseFindBuyers then ns.BagScan.CloseFindBuyers() end
+        -- the sellers side window lives on the WTB view; switching away closes it
+        if not wtb and ns.WantScan and ns.WantScan.CloseWindow then ns.WantScan.CloseWindow() end
         setHeaderColumns(cod and "cod" or "default")   -- COD packs three action buttons on the right
         main.mineSellBtn.sel:SetShown(selling); main.mineWtbBtn.sel:SetShown(wtb); main.mineCodBtn.sel:SetShown(cod)
         main.postPanel:SetShown(selling); main.wtbPanel:SetShown(wtb); main.codPanel:SetShown(cod)
@@ -3440,6 +3463,7 @@ local function buildWTB()
         if main.announceDestPopup then main.announceDestPopup:Hide() end
         if main.announceWAC then main.announceWAC:Hide() end
         main.mineFilter:SetShown(selling); main.wtbFilter:SetShown(wtb)
+        main.wtbScanBtn:SetShown(wtb)
         main.mineFilterLabel:SetShown(not cod)   -- COD has no filter box
         ac:Hide()
         if main.codPanelAC then main.codPanelAC:Hide() end
@@ -3999,6 +4023,8 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     local scan    = (tab == "SCAN")
     -- the find-buyers side window lives on My Items' WTS view; leaving the tab closes it
     if not mine and ns.BagScan and ns.BagScan.CloseFindBuyers then ns.BagScan.CloseFindBuyers() end
+    -- the sellers side window lives on My Items' WTB view; leaving the tab closes it
+    if not mine and ns.WantScan and ns.WantScan.CloseWindow then ns.WantScan.CloseWindow() end
     main.searchBox:SetShown(buy); main.searchLabel:SetShown(buy)   -- buyers re-shows it via SetBuyersView
     main.ac:Hide()
     main.postPanel:SetShown(mine)
@@ -4032,7 +4058,7 @@ function ns.SelectTab(tab, goSeller, goLoc, findSeller)
     main.pauseBtn:SetShown(mine)
     main.mineSellBtn:SetShown(mine); main.mineWtbBtn:SetShown(mine); main.mineCodBtn:SetShown(mine)
     main.mineFilterLabel:SetShown(mine)
-    if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbPanel:Hide(); main.codPanel:Hide()
+    if not mine then main.mineFilter:Hide(); main.wtbFilter:Hide(); main.wtbScanBtn:Hide(); main.wtbPanel:Hide(); main.codPanel:Hide()
         if main.codPanelAC then main.codPanelAC:Hide() end
         if main.codPanelBAC then main.codPanelBAC:Hide() end end
     main.announceBtn:SetShown(mine)

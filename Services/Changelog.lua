@@ -20,14 +20,12 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.20.0
-Sellers and buyers now show their SoD Guild Found verification (no tampering recorded), and COD Send refuses unverified recipients
+ns.CHANGELOG = [[Guild Found Market 0.21.0
+Your WTB list can scan the market for sellers with one click, item whispers open with WTB or WTS to show your side, and Bag sync stops counting soulbound copies
 
-- Clients running the SoD Guild Found addon attach their own verification status to the replies GFM already sends. Hover any player anywhere and the tooltip says where they stand: verified, NOT verified (tampering recorded), or unverified when no status was received (older GFM, or no Guild Found addon).
-- Rows are tinted to match: orange for tampering recorded, soft yellow for unknown; verified rows stay clean. Works in Buy results, Sellers/Buyers, the category browser, the COD list and the buyers side window.
-- The COD Send buttons (COD tab and buyers side window) grey out for an unverified recipient, with the reason on hover; the mailbox send-assist refuses too.
-- New option under Guild Found: Check players' Guild Found status (on by default). Needs the SoD Guild Found addon on your own client; without it the checkbox is locked off. Local only, and your own status is still sent to others either way.
-- Fully backward compatible: the status is one appended field on existing messages; older clients ignore it and simply show as unverified here.]]
+- Scan sellers on My Items > WTB: one button sweeps the market for everything on your WTB list and opens a sellers window next to the main one. Each wanted item is a header with everyone selling it below, stock and price, cheapest first. Live progress, a Stop button, right-click a seller to whisper. Leaving the WTB view closes the window and stops the scan; every price seen feeds your item tooltips.
+- Item whispers state your intent: whispering a seller pre-fills [WTB], whispering a buyer pre-fills [WTS], followed by the item link and the discussed price. The buyers and sellers side windows pre-fill the item too instead of an empty whisper.
+- Bag sync fix: bound (soulbound or quest-bound) copies no longer count. A copy that turns soulbound, for example by equipping a BoE, drops out of your listed quantity on the next bag update. A bank snapshot from before this update corrects on your next bank visit.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

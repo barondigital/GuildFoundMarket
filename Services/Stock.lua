@@ -6,7 +6,9 @@ local ADDON, ns = ...
 -- Bags are always readable, so they're counted live. The bank and the mailbox can only be
 -- read while their window is open, so we keep a snapshot of each (a count per variant) plus
 -- the time we last saw it. ns.Stock.Count sums bags(live) + bank + mail, which is exactly what
--- a "Follow my bags" (Bag sync) listing tracks. Persisted in GuildFoundMarketCharDB.stock.
+-- a "Follow my bags" (Bag sync) listing tracks. Only tradeable copies count: bound items are
+-- excluded from the bag and bank scans (the mail API exposes no bound flag, but a bound item
+-- in the inbox is a support-ticket rarity). Persisted in GuildFoundMarketCharDB.stock.
 --
 -- A snapshot is only ever refreshed while its source is open (the SetBankOpen/SetMailOpen
 -- flags gate it): scanning the bank while away returns nothing, and overwriting the snapshot
@@ -42,12 +44,15 @@ ns.Stock.LinkSuffix = linkSuffix
 
 -- Scan a set of container IDs into a { "itemID:suffix" = total } table. The suffix is read per
 -- slot from the item link, so random-enchant variants count separately (same key as offers).
+-- Bound copies (soulbound or quest-bound) are skipped: they can't be traded or mailed, so a
+-- Bag-sync listing must not count them. A copy that BECOMES bound (equipping a BoE) drops out
+-- of the totals on the next scan, exactly like a copy that left the bags.
 local function scanContainers(ids)
     local counts = {}
     for _, bag in ipairs(ids) do
         for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
             local info = C_Container.GetContainerItemInfo(bag, slot)
-            if info and info.itemID then
+            if info and info.itemID and not info.isBound then
                 local key = vkey(info.itemID, linkSuffix(info.hyperlink))
                 counts[key] = (counts[key] or 0) + (info.stackCount or 1)
             end

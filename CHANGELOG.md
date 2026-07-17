@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.21.0
+
+- **Scan sellers on My Items > WTB.** One click sweeps the market for everything on your WTB
+  list: one "who's selling" broadcast, then each answering seller's catalog is fetched with the
+  same directed whispers the Sellers tab uses (6 in flight, silent sellers skipped by a
+  watchdog). Results open in a sellers side window right of the main window: a header row per
+  wanted item, under it every seller found with their stock and price, cheapest priced offer
+  first and bid-only ones last, with the Guild Found tint and right-click to whisper. The window
+  shows live progress and has a Stop button; the whole sweep is snapshotted into the local price
+  DB, so item tooltips profit too. The window is owned by the WTB view: navigating away (or
+  closing it, or closing the main window) closes it and stops a scan still running, keeping the
+  prices found so far.
+- **Bag sync no longer counts bound copies.** A tracked ("follow my bags") listing kept counting
+  a copy that became soulbound, for example by equipping a BoE, so its quantity never dropped.
+  The bag and bank scans now skip bound (soulbound or quest-bound) copies entirely: a copy that
+  turns bound leaves the totals on the next scan, exactly like a copy that left the bags. An
+  existing bank snapshot corrects itself on your next bank visit; the Bag sync checkbox's
+  quantity prefill counts only tradeable copies too. (Mail exposes no bound flag, but a bound
+  item in the inbox is a support-ticket rarity.)
+- **Item whispers announce your side.** Every right-click item whisper now opens pre-filled with
+  the sender's intent: whispering a seller starts with [WTB] (you are buying), whispering a
+  buyer starts with [WTS] (you are selling), followed by the item link and the discussed price
+  as before. The buyers and sellers side windows, which used to pre-fill only the name, now
+  include the tag, item link and price as well.
+
 ## 0.20.0
 
 - **Guild Found verification on every player.** Clients with the SoD Guild Found addon installed

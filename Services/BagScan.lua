@@ -721,13 +721,15 @@ local buyersTicker = nil         -- query mode: short refresh poll while replies
 local BROWS, BROW_H = 17, 20
 local buyersRows = {}
 
--- Re-anchor the Debug/Network sidebars: beside the buyers window while it is shown, else
--- back beside the main window. Their toggles call this too, so a sidebar opened later
--- still lands right of an already-open buyers window.
+-- Re-anchor the Debug/Network sidebars: beside the buyers window (or the want scan's
+-- sellers window) while one is shown, else back beside the main window. Their toggles
+-- call this too, so a sidebar opened later still lands right of an already-open window.
 function ns.LayoutSidePanels()
     local main = _G.GuildFoundMarketFrame
     if not main then return end
-    local anchor = (buyersWin and buyersWin:IsShown()) and buyersWin or main
+    local anchor = main
+    if buyersWin and buyersWin:IsShown() then anchor = buyersWin
+    elseif ns.WantScan and ns.WantScan.ShownWindow and ns.WantScan.ShownWindow() then anchor = ns.WantScan.ShownWindow() end
     for _, name in ipairs({ "GuildFoundMarketDebug", "GuildFoundMarketNetStats" }) do
         local p = _G[name]
         if p then
@@ -783,7 +785,7 @@ local function renderBuyersRows()
         if not o then r:Hide() else
             r.name.fs:SetText(o.self and (o.buyer .. " (you)") or o.buyer)
             r.name.fs:SetTextColor(o.self and 1 or 0.4, o.self and 0.82 or 1, o.self and 0 or 0.4)
-            r.name.buyer, r.name.isSelf = o.buyer, o.self
+            r.name.buyer, r.name.isSelf, r.name.want = o.buyer, o.self, o
             r.qty:SetText(o.qty or 0)
             r.price:SetText(wantPriceText(o))
             r.send.want = o
@@ -889,8 +891,13 @@ local function createBuyersWin()
         r.name:RegisterForClicks("RightButtonUp")
         r.name.fs = r.name:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); r.name.fs:SetAllPoints(); r.name.fs:SetJustifyH("LEFT")
         r.name.fs:SetTextColor(0.4, 1, 0.4)          -- green: they answered the scan, so online
+        -- right-click: whisper the buyer, pre-filled [WTS] + the item (you're the seller here)
         r.name:SetScript("OnClick", function(self, button)
-            if button == "RightButton" and self.buyer then
+            if button ~= "RightButton" or not self.buyer then return end
+            local o, it = self.want, buyersItemInfo()
+            if it and ns.WhisperItem then
+                ns.WhisperItem(self.buyer, it.id, (o and o.suffix) or it.suffix, o and o.price, "WTS")
+            else
                 ChatFrame_OpenChat("/w " .. self.buyer .. " ")
             end
         end)

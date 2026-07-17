@@ -6,6 +6,7 @@
 -- It loads the REAL Services/Stock.lua against a stubbed WoW API (bags/bank via C_Container,
 -- mail via the GetInbox* family) and asserts:
 --   * bag/bank/mail scans count per exact variant (itemID:suffix), summing stacks;
+--   * bound (soulbound/quest-bound) copies never count: they can't be traded or mailed;
 --   * a single mail with several item attachments is fully counted (the "package" case);
 --   * Count totals bags(live) + bank snapshot + mail snapshot;
 --   * a snapshot is only refreshed while its source is open, so walking away never wipes it;
@@ -52,10 +53,10 @@ C_Container = {
     GetContainerItemInfo = function(bag, slot) local b = CONT[bag]; return b and b[slot] or nil end,
 }
 local function clearContainers() for k in pairs(CONT) do CONT[k] = nil end end
-local function setSlot(bag, slot, id, suffix, count)
+local function setSlot(bag, slot, id, suffix, count, bound)
     CONT[bag] = CONT[bag] or { n = 0 }
     if slot > CONT[bag].n then CONT[bag].n = slot end
-    CONT[bag][slot] = { itemID = id, hyperlink = link(id, suffix), stackCount = count }
+    CONT[bag][slot] = { itemID = id, hyperlink = link(id, suffix), stackCount = count, isBound = bound or false }
 end
 
 -- mail inbox: MAIL[i] = { [j] = {itemID, count, link} }; one mail can hold several attachments
@@ -95,11 +96,19 @@ do
     setSlot(0, 2, 100, 0, 2)      -- +2x plain item 100 -> 5
     setSlot(0, 3, 100, 137, 1)    -- 1x item 100, suffix 137 (separate variant)
     setSlot(1, 1, 200, 0, 1)
+    setSlot(0, 4, 100, 0, 4, true)    -- a soulbound copy of item 100: must not count
+    setSlot(1, 2, 201, 0, 1, true)    -- an only-bound variant: must not appear at all
     local bags = ns.Stock.BagTotals()
     check("bags sum stacks of same variant", bags["100:0"] == 5)
     check("bags keep suffix variants apart", bags["100:137"] == 1)
     check("bags count across bag containers", bags["200:0"] == 1)
+    check("bags skip a bound copy", bags["100:0"] == 5)
+    check("bags skip an only-bound variant entirely", bags["201:0"] == nil)
     check("Count uses live bags", ns.Stock.Count(100, 0) == 5)
+    -- the copy BECOMES bound (equipping a BoE): the next scan drops it from the totals
+    setSlot(0, 2, 100, 0, 2, true)
+    check("a copy turning bound leaves the totals", ns.Stock.BagTotals()["100:0"] == 3)
+    setSlot(0, 2, 100, 0, 2)          -- restore for the sections below
 end
 
 --========================================================================
@@ -109,6 +118,7 @@ do
     clearContainers()
     setSlot(-1, 1, 300, 0, 4)     -- main bank
     setSlot(5, 1, 301, 0, 2)      -- a bank bag
+    setSlot(5, 2, 302, 0, 6, true)   -- a soulbound stack parked in the bank: must not count
 
     ns.Stock.RefreshBank()        -- bank closed: must be a no-op
     check("bank refresh ignored while closed", ns.Stock.BankCounts()["300:0"] == nil)
@@ -116,6 +126,7 @@ do
     ns.Stock.SetBankOpen(true)
     ns.Stock.RefreshBank()
     check("bank scanned while open", ns.Stock.BankCounts()["300:0"] == 4 and ns.Stock.BankCounts()["301:0"] == 2)
+    check("bank skips a bound stack", ns.Stock.BankCounts()["302:0"] == nil)
     check("Count includes the bank snapshot", ns.Stock.Count(300, 0) == 4)
 
     ns.Stock.SetBankOpen(false)
