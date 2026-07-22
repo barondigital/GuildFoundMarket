@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.1
+
+- **Updated for game client 1.15.9.** The TOC interface version is now 11509, so the addon
+  loads again without the "Load out of date AddOns" checkbox.
+
 ## 0.21.0
 
 - **Scan sellers on My Items > WTB.** One click sweeps the market for everything on your WTB

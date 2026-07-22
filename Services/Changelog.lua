@@ -20,9 +20,10 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.21.0
-Your WTB list can scan the market for sellers with one click, item whispers open with WTB or WTS to show your side, and Bag sync stops counting soulbound copies
+ns.CHANGELOG = [[Guild Found Market 0.21.1
+Updated for game client 1.15.9 so GFM loads without the out-of-date checkbox; the 0.21 line adds the WTB seller scan, WTB/WTS whisper tags and a Bag sync that skips soulbound copies
 
+- Updated for game client 1.15.9: the addon is no longer flagged as out of date.
 - Scan sellers on My Items > WTB: one button sweeps the market for everything on your WTB list and opens a sellers window next to the main one. Each wanted item is a header with everyone selling it below, stock and price, cheapest first. Live progress, a Stop button, right-click a seller to whisper. Leaving the WTB view closes the window and stops the scan; every price seen feeds your item tooltips.
 - Item whispers state your intent: whispering a seller pre-fills [WTB], whispering a buyer pre-fills [WTS], followed by the item link and the discussed price. The buyers and sellers side windows pre-fill the item too instead of an empty whisper.
 - Bag sync fix: bound (soulbound or quest-bound) copies no longer count. A copy that turns soulbound, for example by equipping a BoE, drops out of your listed quantity on the next bag update. A bank snapshot from before this update corrects on your next bank visit.]]
