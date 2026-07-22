@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.21.2
+
+- **Tooltip error on client 1.15.9 fixed.** Hovering a wrapped tooltip (the version button,
+  scan Stop buttons, COD Send hints and more) threw `bad argument #5 to 'SetText'`. The calls
+  passed the wrap flag in the alpha slot; older clients silently ignored that, 1.15.9 validates
+  it. All ten call sites now pass the full `r, g, b, alpha, wrap` argument list, and as a bonus
+  those long tooltips now actually wrap as intended.
+
 ## 0.21.1
 
 - **Updated for game client 1.15.9.** The TOC interface version is now 11509, so the addon

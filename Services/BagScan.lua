@@ -520,7 +520,7 @@ function ns.BagScan.CreatePanel(main)
     win.stopBtn:SetScript("OnClick", function() ns.BagScan.Stop() end)
     win.stopBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Stop the scan. Prices found so far are kept.", 1, 1, 1, true)
+        GameTooltip:SetText("Stop the scan. Prices found so far are kept.", 1, 1, 1, 1, true)
         GameTooltip:Show()
     end)
     win.stopBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -668,7 +668,7 @@ function ns.BagScan.CreatePanel(main)
                 GameTooltip:AddLine(("%s price: %s"):format(modeLabel(), ns.PriceToStr(price)), 1, 1, 1)
                 GameTooltip:AddLine("Tick, then press List selected.", 0.7, 0.7, 0.7)
             else
-                GameTooltip:SetText("No priced market offer found (yet), so there is nothing to base a price on.", 1, 1, 1, true)
+                GameTooltip:SetText("No priced market offer found (yet), so there is nothing to base a price on.", 1, 1, 1, 1, true)
             end
             GameTooltip:Show()
         end)
@@ -691,7 +691,7 @@ function ns.BagScan.CreatePanel(main)
                 GameTooltip:SetText(("%d buyer(s) want this item"):format(#list))
                 GameTooltip:AddLine("Click for who they are and what they pay.", 1, 1, 1, true)
             else
-                GameTooltip:SetText(state and state.phase ~= "done" and "No buyers found yet ..." or "No buyers found for this item.", 1, 1, 1, true)
+                GameTooltip:SetText(state and state.phase ~= "done" and "No buyers found yet ..." or "No buyers found for this item.", 1, 1, 1, 1, true)
             end
             GameTooltip:Show()
         end)
@@ -937,9 +937,9 @@ local function createBuyersWin()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             local blocked = ns.CODSendBlocked and ns.CODSendBlocked(o.buyer)
             if blocked then
-                GameTooltip:SetText(blocked, 1, 1, 1, true)
+                GameTooltip:SetText(blocked, 1, 1, 1, 1, true)
             elseif (o.price or 0) <= 0 then
-                GameTooltip:SetText("They take offers only (no price), so there is no COD amount to collect. Whisper them instead.", 1, 1, 1, true)
+                GameTooltip:SetText("They take offers only (no price), so there is no COD amount to collect. Whisper them instead.", 1, 1, 1, 1, true)
             else
                 GameTooltip:SetText("Prepare a COD mail to " .. o.buyer)
                 GameTooltip:AddLine(("Fills the open mailbox's Send Mail: the %d they want (or as many as your bags hold), COD at their price. You still press the real Send button."):format(o.qty or 1), 1, 1, 1, true)
