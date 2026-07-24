@@ -20,14 +20,11 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.21.2
-Fixes the tooltip error on client 1.15.9 and the out-of-date flag; the 0.21 line adds the WTB seller scan, WTB/WTS whisper tags and a Bag sync that skips soulbound copies
+ns.CHANGELOG = [[Guild Found Market 0.22.0
+Adds BYOM tags for craft-on-request listings (buyer brings the materials) and a Browse that opens straight on the category of the item you searched
 
-- Fixed the tooltip error client 1.15.9 introduced (bad argument #5 to SetText when hovering the version button, scan Stop buttons and other wrapped tooltips).
-- Updated for game client 1.15.9: the addon is no longer flagged as out of date.
-- Scan sellers on My Items > WTB: one button sweeps the market for everything on your WTB list and opens a sellers window next to the main one. Each wanted item is a header with everyone selling it below, stock and price, cheapest first. Live progress, a Stop button, right-click a seller to whisper. Leaving the WTB view closes the window and stops the scan; every price seen feeds your item tooltips.
-- Item whispers state your intent: whispering a seller pre-fills [WTB], whispering a buyer pre-fills [WTS], followed by the item link and the discussed price. The buyers and sellers side windows pre-fill the item too instead of an empty whisper.
-- Bag sync fix: bound (soulbound or quest-bound) copies no longer count. A copy that turns soulbound, for example by equipping a BoE, drops out of your listed quantity on the next bag update. A bank snapshot from before this update corrects on your next bank visit.]]
+- BYOM (bring your own materials): craft-on-request sellers can flag a listing so buyers see an orange [BYOM] tag in search results, category browse and shop catalogs, with a tooltip explaining the buyer supplies the mats. Set it in the compose panel or in the new BYOM column on My Items next to Bag sync. Only offered on items your character can craft; open each profession window once so GFM learns your recipes. Older clients interoperate unchanged.
+- Browse jumps to your searched item: searching an item on Buy and clicking Browse lands on that item's own category (and armor slot), sidebar expanded and query fired, once per search. The new option "Browse filters on your searched item" (default on) also pre-fills the name filter with the item; off lands on the full category unfiltered.]]
 
 -- Encode for the wire: drop the `~` field delimiter and turn newlines into a token that survives
 -- chat, so the text can ride the tilde-delimited protocol. Chunks are concatenated before decode,

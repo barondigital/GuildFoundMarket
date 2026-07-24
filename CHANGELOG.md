@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.22.0
+
+- **BYOM: mark a craftable as "bring your own materials".** A seller who crafts on request can
+  flag such a listing; buyers see an orange `[BYOM]` tag on it in search results, category
+  browse and shop catalogs, with a tooltip explaining the seller crafts it but the buyer
+  supplies the mats. The flag is set with a checkbox in the compose panel (greyed out on items
+  you can't craft) or per listing in a new BYOM column on My Items, next to Bag sync. It only
+  applies to items your character can actually craft: GFM learns your recipes whenever a
+  profession window is open, so open each profession once. On the wire the flag rides
+  append-only (a 5th row column on catalogs and browse replies, a 9th search-reply field), so
+  older clients interoperate unchanged and unflagged rows stay byte-identical.
+- **Browse opens on your searched item's category.** Searching an item on Buy and clicking
+  Browse now lands directly on that item's own class and subclass (and armor slot when it has
+  one), with the sidebar expanded and the query fired, instead of the last category you
+  browsed. It jumps once per search, so a category you pick by hand afterwards sticks. The new
+  option "Browse filters on your searched item" (default on) also pre-fills the name filter
+  with the searched item; turn it off to land on the full category unfiltered.
+
 ## 0.21.2
 
 - **Tooltip error on client 1.15.9 fixed.** Hovering a wrapped tooltip (the version button,

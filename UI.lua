@@ -534,6 +534,7 @@ local function setHeaderColumns(mode)
     -- the BYOM header only lives on My Items › Selling; every layout pass hides it and the
     -- Selling chrome re-shows it, so no other tab has to know it exists
     if main.h5 then main.h5:Hide() end
+    if main.h5Hover then main.h5Hover:Hide() end
 end
 local function applyRowColumns(r, mode)
     local c = COLS[mode]
@@ -2221,6 +2222,22 @@ local function buildHeaders()
     -- BYOM column (My Items › Selling only): shown by the Selling chrome, hidden centrally
     -- by setHeaderColumns on every layout pass
     main.h5 = header(588); main.h5:SetText("BYOM"); main.h5:Hide()
+    -- hover explainer on the header: rows without a known recipe show no checkbox at all,
+    -- so this is where a seller learns the profession window must be opened once
+    local h5Hover = CreateFrame("Button", nil, main)
+    h5Hover:SetAllPoints(main.h5)
+    h5Hover:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("BYOM: bring your own materials")
+        GameTooltip:AddLine("Mark a listing you craft on request: buyers see an orange [BYOM] tag telling them to bring the materials.", 1, 1, 1, true)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("The checkbox only appears on items this character can craft.", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine("Open each of your profession windows once so GFM learns your recipes.", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    h5Hover:SetScript("OnLeave", GameTooltip_Hide)
+    h5Hover:Hide()
+    main.h5Hover = h5Hover
 
     -- clickable overlays on the index Name/Count headers (Sellers and Buyers); shown only in
     -- the matching index view (see SetSellersView/SetBuyersView). Toggle asc/desc on repeat.
@@ -2430,7 +2447,7 @@ local function buildRows()
         r.track:Hide()
         -- "BYOM" column (My Items rows only): per-listing "bring your own materials" toggle,
         -- under the h5 header. Only shown for items this character can craft (or listings
-        -- already flagged); wired per-row in formatMineRow.
+        -- already flagged); the h5 header hover explains the recipe scan for the rest.
         r.byom = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
         r.byom:SetSize(24, 24); r.byom:SetPoint("LEFT", 584, 0)
         r.byom:RegisterForClicks("LeftButtonUp")
@@ -2438,6 +2455,7 @@ local function buildRows()
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetText("BYOM: bring your own materials")
             GameTooltip:AddLine("On: buyers see an orange [BYOM] tag on this listing telling them you craft it on request and they supply the mats.", 1, 1, 1, true)
+            GameTooltip:AddLine("Shown only on items this character can craft; recipes are learned whenever a profession window is open.", 0.8, 0.8, 0.8, true)
             GameTooltip:Show()
         end)
         r.byom:SetScript("OnLeave", GameTooltip_Hide)
@@ -2771,6 +2789,7 @@ local function buildPostPanel()
     local byomLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     byomLabel:SetPoint("LEFT", byomCheck, "RIGHT", 2, 1); byomLabel:SetText("BYOM")
     byomCheck:SetHitRectInsets(0, -(byomLabel:GetStringWidth() + 6), 0, 0)
+    byomCheck:SetMotionScriptsWhileDisabled(true)   -- the disabled box must still explain itself on hover
     byomCheck:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("BYOM: bring your own materials")
@@ -2778,16 +2797,15 @@ local function buildPostPanel()
         if not self:IsEnabled() then
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine("Only available on items this character can craft.", 1, 0.53, 0, true)
-            if not (ns.Crafts and ns.Crafts.HasAny()) then
-                GameTooltip:AddLine("Open your profession window once so your recipes are known.", 0.8, 0.8, 0.8, true)
-            end
+            GameTooltip:AddLine("Open each of your profession windows once so GFM learns your recipes.", 0.8, 0.8, 0.8, true)
         end
         GameTooltip:Show()
     end)
     byomCheck:SetScript("OnLeave", GameTooltip_Hide)
 
-    -- Enable the checkbox only when the drafted item is craftable by this character; an edit
-    -- of a listing already flagged BYOM stays enabled (see above). Greys the label with it.
+    -- Enable the checkbox only when the drafted item is craftable by this character; the
+    -- disabled (greyed) state stays visible so its hover can explain the recipe scan. An edit
+    -- of a listing already flagged BYOM stays enabled so the flag can always be turned off.
     function applyByom(keepChecked)
         local can = draft.itemID and ns.Crafts and ns.Crafts.Knows(draft.itemID) or false
         if keepChecked then can = true end
@@ -3613,7 +3631,7 @@ local function buildWTB()
             main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("COD"); main.h4:SetText("Buyer")
         else
             main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
-            main.h5:SetShown(selling)
+            main.h5:SetShown(selling); main.h5Hover:SetShown(selling)
         end
         updateCODBadge()
         updateSharedSortHeaders()
