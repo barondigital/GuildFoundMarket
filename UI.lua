@@ -35,6 +35,7 @@ local browseSort = { col = "lvl", asc = false }   -- Browse results sort: "qual"
 local browseSel = { class = nil, sub = nil, slot = nil }   -- selected category (nil = none picked yet)
 local browseExpanded = nil                        -- classID currently expanded in the sidebar (accordion)
 local browseExpandedSub = nil                     -- Armor subID expanded to its slot leaves (3rd level)
+local lastBrowseJumpItem = nil                    -- searched item Browse last auto-jumped to (jump once per search)
 local browseRows, browseView = {}, {}             -- the 6-column results table
 local sideRows, sideView = {}, {}                 -- the category sidebar tree
 local setBuyMode                                  -- forward declaration (defined with the other refreshers)
@@ -356,6 +357,7 @@ end
 local function selectSearchItem(id, name)
     if not main then return end
     selectedSearchID = id
+    lastBrowseJumpItem = nil   -- a fresh search re-arms the Browse auto-jump for this item
     main.searchBox:SetText(name or itemName(id)); main.searchBox:SetCursorPosition(0); main.searchBox:ClearFocus()
     main.ac:Hide()
     if currentTab == "BUYERS" then   -- the same picker, but it finds buyers of the item
@@ -1561,6 +1563,50 @@ local function sideClassBranch(cls)
     end
 end
 
+-- Jump Browse straight to `itemID`'s own category, as if its sidebar leaf was clicked:
+-- select class + subclass (and the armor slot leaf when the item has one), expand the
+-- tree to show the selection, and fire the query. Returns false when the item's category
+-- isn't in the sidebar (item info not cached, or a skipped class), leaving the previous
+-- browse state untouched.
+local function jumpBrowseToItem(itemID)
+    local cid, sid = select(12, GetItemInfo(itemID))
+    if not cid then return false end
+    for _, cls in ipairs(buildCats()) do
+        if cls.id ~= cid then
+            -- keep scanning
+        elseif cls.only then
+            if cls.only.id ~= sid then return false end
+            browseSel.class, browseSel.sub, browseSel.slot = cid, sid, nil
+            browseSel.label = cls.name
+            browseExpanded, browseExpandedSub = nil, nil
+            ns.BrowseCategory(cid, sid)
+            return true
+        else
+            for _, sub in ipairs(cls.subs) do
+                if sub.id == sid then
+                    -- narrow to the item's equip slot only when that slot is a real sidebar
+                    -- leaf of this armor subclass (a shield or tabard has none: whole subclass)
+                    local slot
+                    local slots = (cid == ARMOR_CLASS) and ARMOR_SUB_SLOTS[sid]
+                    if slots then
+                        local es = ns.EquipSlot(itemID)
+                        for _, loc in ipairs(slots) do
+                            if loc == es then slot = es; break end
+                        end
+                    end
+                    browseSel.class, browseSel.sub, browseSel.slot = cid, sid, slot
+                    browseSel.label = cls.name .. " > " .. sub.name .. (slot and (" > " .. (_G[slot] or slot)) or "")
+                    browseExpanded, browseExpandedSub = cid, slot and sid or nil
+                    ns.BrowseCategory(cid, sid, slot)
+                    return true
+                end
+            end
+            return false
+        end
+    end
+    return false
+end
+
 function ns.RefreshSidebar()
     if not main then return end
     wipe(sideView)
@@ -1645,6 +1691,13 @@ setBuyMode = function(mode)
     updateSharedSortHeaders()   -- show the item-column overlays in Search, hide them in Browse
     if browse then
         for i = 1, ROWS do rows[i]:Hide() end          -- clear the search table's rows
+        -- coming from a search with an item picked: land on that item's own category instead
+        -- of the last browsed one (once per search), pre-filtering the list to the item when
+        -- the browseFilterSearched setting is on
+        if ns.search.itemID and ns.search.itemID ~= lastBrowseJumpItem and jumpBrowseToItem(ns.search.itemID) then
+            lastBrowseJumpItem = ns.search.itemID
+            main.browseFilter:SetText(ns.GetSetting("browseFilterSearched") and itemName(ns.search.itemID) or "")
+        end
         ns.RefreshSidebar(); ns.RefreshBrowse()
     else
         for i = 1, ROWS do browseRows[i]:Hide() end    -- clear the browse table's rows

@@ -199,6 +199,14 @@ ns.SettingsSchema = {
         min = 50, max = 600, step = 10,
     },
     {
+        key = "browseFilterSearched",
+        label = "Browse filters on your searched item",
+        tip = "Switching from Search to Browse with an item searched always lands Browse on that item's own category.\n\n"
+            .. "With this on, the name filter is also pre-filled with the searched item, so you start from just that item across all sellers. "
+            .. "Turn it off to land on the full category unfiltered.",
+        default = true,
+    },
+    {
         key = "hideShopGuild",
         label = "Hide shop links in guild chat",
         tip = "Suppress incoming \"shop is open\" announce lines in guild and officer chat. Only hides them for you; it changes nothing for anyone else.",
