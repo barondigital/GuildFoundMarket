@@ -168,7 +168,9 @@ ns.OnMessage("L", function(a, _, _, _, _, _, sender)
     local function flush(more) ns.EnqueueWhisper(("K~%s~%d~%s"):format(lid, more, buf), sender); buf = "" end
     for i = 1, #list do
         local it = list[i]
-        local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
+        -- id:qty:price:suffix, plus ":1" only on a BYOM listing (append-only: old clients
+        -- strsplit four names and drop the tail, same trick as the want list's cod field)
+        local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix) .. (it.byom and ":1" or "")
         if #buf + #p + 1 > 180 then flush(1) end
         buf = (buf == "") and p or (buf .. ";" .. p)
     end
@@ -180,7 +182,7 @@ ns.OnMessage("L", function(a, _, _, _, _, _, sender)
     ns.Log(("sent my catalog (%d items) to %s"):format(#list, Ambiguate(sender, "short")))
 end)
 
--- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix;...).
+-- K~lid~more~rows: a chunk of a seller's catalog (rows are id:qty:price:suffix[:byom];...).
 -- The bag scan and the want scan fetch catalogs over the same message with their own
 -- lids; give them first pick so a sweep never collides with a catalog the Sellers tab
 -- has open.
@@ -189,11 +191,11 @@ ns.OnMessage("K", function(a, b, c)
     if ns.WantScan and ns.WantScan.HandleCatalogChunk(a, b, c) then return end
     if a ~= activeLid or not ns.sellers.catalog then return end
     for chunk in (c or ""):gmatch("[^;]+") do
-        local id, qty, price, suffix = strsplit(":", chunk)
+        local id, qty, price, suffix, byom = strsplit(":", chunk)
         id = tonumber(id)
         if id then
             local sfx = tonumber(suffix) or 0
-            ns.sellers.catalog.items[ns.vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0 }
+            ns.sellers.catalog.items[ns.vkey(id, sfx)] = { id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0, byom = byom == "1" or nil }
             ns.ItemDB.Learn(id)
         end
     end

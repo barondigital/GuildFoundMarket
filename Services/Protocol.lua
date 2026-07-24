@@ -11,11 +11,11 @@ local ADDON, ns = ...
 -- fixed (notably suffix-last on R/K/QR). Any future format change must stay readable by old
 -- clients (e.g. append-only fields), which is why centralizing it lives here.
 --
--- Handlers receive (a, b, c, d, e, f, sender, g, h): the six payload fields, then the sender,
--- then the seventh and eighth payload fields `g` and `h` last. Keeping `sender` in its original
--- 7th slot lets every existing handler stay untouched; only those that opted into an appended
--- field read the later args. `g` is how the guild tag rides along and `h` carries the Guild
--- Found valid flag (both append-only, ignored by old clients).
+-- Handlers receive (a, b, c, d, e, f, sender, g, h, i): the six payload fields, then the sender,
+-- then the seventh, eighth and ninth payload fields `g`, `h` and `i` last. Keeping `sender` in
+-- its original 7th slot lets every existing handler stay untouched; only those that opted into
+-- an appended field read the later args. `g` is how the guild tag rides along, `h` carries the
+-- Guild Found valid flag and `i` the BYOM flag on R (all append-only, ignored by old clients).
 --========================================================================
 local handlers = {}
 
@@ -31,8 +31,8 @@ local SCAN_REPLIES = { R = true, C = true, K = true, QR = true, WR = true, WC = 
 
 -- Split an incoming line and route it to the registered handler (if any).
 function ns.DispatchMessage(text, sender)
-    local cmd, a, b, c, d, e, f, g, h = strsplit("~", text)
+    local cmd, a, b, c, d, e, f, g, h, i = strsplit("~", text)
     if SCAN_REPLIES[cmd] and ns.NetStats then ns.NetStats.NoteReply(a) end
     local fn = handlers[cmd]
-    if fn then fn(a, b, c, d, e, f, sender, g, h) end
+    if fn then fn(a, b, c, d, e, f, sender, g, h, i) end
 end

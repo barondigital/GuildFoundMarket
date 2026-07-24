@@ -40,7 +40,7 @@ local function bagBoundState(itemID)
 end
 
 
-function ns.AddOffer(itemID, suffix, qty, price, track)
+function ns.AddOffer(itemID, suffix, qty, price, track, byom)
     if not ns.channelName then ns.Feedback("No confederation config in your guild info, can't offer.", true); return end
     if not itemID then ns.Feedback("Pick an item first.", true); return end
     suffix = suffix or 0
@@ -54,11 +54,14 @@ function ns.AddOffer(itemID, suffix, qty, price, track)
     if sawCopy and not sawTradeable then
         ns.Feedback("That item is soulbound, so it can't be traded or listed.", true); return
     end
-    offers()[vkey(itemID, suffix)] = { id = itemID, suffix = suffix, qty = qty, price = price, track = track }
+    -- byom = "bring your own materials": a craftable made on request, the buyer supplies the
+    -- mats. Rides every outward listing as a 1-char append-only field and renders as a tag.
+    offers()[vkey(itemID, suffix)] = { id = itemID, suffix = suffix, qty = qty, price = price, track = track, byom = byom and true or nil }
     ns.ItemDB.Learn(itemID)
     if ns.RefreshMine then ns.RefreshMine() end
-    ns.Feedback(("Offering %s x%d%s%s."):format(GetItemInfo(itemID) or ("item:" .. itemID), qty,
-        price == 0 and " (bids)" or "", track and " (following your bags)" or ""), false)
+    ns.Feedback(("Offering %s x%d%s%s%s."):format(GetItemInfo(itemID) or ("item:" .. itemID), qty,
+        price == 0 and " (bids)" or "", track and " (following your bags)" or "",
+        byom and " (BYOM: buyer brings mats)" or ""), false)
     ns.Log(("OFFER added: %s x%d @ %s%s"):format(GetItemInfo(itemID) or ("item:" .. itemID), qty,
         price == 0 and "bid" or (price .. "c"), track and " [track]" or ""))
     if track and ns.SyncTrackedOffersSoon then ns.SyncTrackedOffersSoon() end   -- reconcile to bags at once
@@ -69,7 +72,7 @@ end
 -- the seller is just adjusting numbers on a listing they already own, and stock often
 -- lives on a bank alt or in a vault they aren't standing at (the whole reason editing
 -- exists instead of remove + re-list). The item/variant itself is never changed here.
-function ns.EditOffer(key, qty, price, track)
+function ns.EditOffer(key, qty, price, track, byom)
     local o = offers()[key]
     if not o then ns.Feedback("That listing no longer exists.", true); return end
     -- qty 0 is allowed and means "parked": the listing stays in My Items but is hidden from
@@ -79,6 +82,7 @@ function ns.EditOffer(key, qty, price, track)
     o.qty = math.max(0, qty or o.qty or 0)
     o.price = math.max(0, price or 0)
     if track ~= nil then o.track = track and true or false end   -- "follow my bags" switch for this listing
+    if byom ~= nil then o.byom = byom and true or nil end        -- "bring your own materials" tag
     if ns.RefreshMine then ns.RefreshMine() end
     local name = GetItemInfo(o.id) or ("item:" .. (o.id or "?"))
     if o.qty == 0 then
@@ -115,7 +119,7 @@ end
 -- never verify it against bags/bank: sellers may keep stock on a bank alt, items go
 -- in and out during play, and every trade is arranged face to face in whispers anyway.
 -- So we never auto-edit or auto-remove offers; the seller owns their listings (and the
--- pause toggle hides them all at once). Returns an array of { id, suffix, qty, price }.
+-- pause toggle hides them all at once). Returns an array of { id, suffix, qty, price, byom }.
 --
 -- qty 0 = a "parked" listing: kept in the seller's My Items but hidden from everyone else,
 -- so we skip it here. This is the single gate for that: every outward path (search,
@@ -134,7 +138,7 @@ local function offerList()
             local avail = o.qty
             if o.track and ns.CODCommitted then avail = o.qty - ns.CODCommitted(id, suffix) end
             if avail > 0 then
-                list[#list + 1] = { id = id, suffix = suffix, qty = avail, price = o.price }
+                list[#list + 1] = { id = id, suffix = suffix, qty = avail, price = o.price, byom = o.byom and true or nil }
             end
         end
     end
@@ -150,6 +154,16 @@ function ns.OfferInfo(itemID, suffix)
     local o = offers()[vkey(itemID, suffix)]
     if not o then return nil end
     return o.qty or 0, o.track and true or false, o.price
+end
+
+-- Flip the BYOM ("bring your own materials") tag on a listing straight from its My Items row
+-- checkbox. Mirrors SetOfferTrack; the row only shows the box for craftable items.
+function ns.SetOfferByom(key, on)
+    local o = offers()[key]
+    if not o then return end
+    o.byom = on and true or nil
+    ns.Log(("OFFER byom %s: %s"):format(on and "on" or "off", GetItemInfo(o.id) or ("item:" .. (o.id or "?"))))
+    if ns.RefreshMine then ns.RefreshMine() end
 end
 
 -- Auto-sync every "tracked" listing to its stock count. Only offers with track=true are

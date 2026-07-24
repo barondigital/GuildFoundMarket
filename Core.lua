@@ -174,6 +174,10 @@ frame:RegisterEvent("BANKFRAME_OPENED")          -- bank/mail stock snapshots (n
 frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 frame:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
+frame:RegisterEvent("TRADE_SKILL_SHOW")          -- known-craftables snapshot (ns.Crafts, BYOM gate)
+frame:RegisterEvent("TRADE_SKILL_UPDATE")
+frame:RegisterEvent("CRAFT_SHOW")
+frame:RegisterEvent("CRAFT_UPDATE")
 frame:RegisterEvent("MAIL_SHOW")
 frame:RegisterEvent("MAIL_CLOSED")
 frame:RegisterEvent("MAIL_INBOX_UPDATE")
@@ -264,6 +268,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     elseif event == "PLAYERBANKSLOTS_CHANGED" or event == "PLAYERBANKBAGSLOTS_CHANGED" then
         if ns.Stock then ns.Stock.RefreshBankSoon() end
+
+    elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_UPDATE"
+        or event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" then
+        if ns.Crafts then ns.Crafts.LearnSoon() end
 
     elseif event == "MAIL_SHOW" then
         if ns.Stock then ns.Stock.SetMailOpen(true); ns.Stock.RefreshMailSoon() end

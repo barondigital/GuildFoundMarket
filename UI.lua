@@ -529,6 +529,9 @@ local function setHeaderColumns(mode)
     main.h2:ClearAllPoints(); main.h2:SetPoint("TOPLEFT", c.h2, -96)
     main.h3:ClearAllPoints(); main.h3:SetPoint("TOPLEFT", c.h3, -96)
     main.h4:ClearAllPoints(); main.h4:SetPoint("TOPLEFT", c.h4, -96)
+    -- the BYOM header only lives on My Items › Selling; every layout pass hides it and the
+    -- Selling chrome re-shows it, so no other tab has to know it exists
+    if main.h5 then main.h5:Hide() end
 end
 local function applyRowColumns(r, mode)
     local c = COLS[mode]
@@ -558,6 +561,7 @@ local function resetRow(r)
     r.c1:SetScript("OnClick", nil)
     r.c2:SetText(""); r.c3:SetText("")
     r.c4:SetText(""); r.c4:Hide()
+    r.c1.byom = nil
     r.x:Hide(); r.x:SetScript("OnClick", nil); r.x.tip = nil
     r.edit:Hide(); r.edit:SetScript("OnClick", nil); r.edit:SetText("Edit"); r.edit.tip = nil   -- COD rows relabel it "Done"; reset so a reused row never keeps that
     r.codEdit:Hide(); r.codEdit:SetScript("OnClick", nil)
@@ -566,6 +570,7 @@ local function resetRow(r)
     r.noteBtn:Hide(); r.noteBtn.seller = nil; r.noteBtn.store = nil
     r.findBtn:Hide(); r.findBtn:SetScript("OnClick", nil)
     r.track:Hide(); r.track:SetScript("OnClick", nil)
+    r.byom:Hide(); r.byom:SetScript("OnClick", nil)
     r.itemID = nil
 end
 
@@ -596,12 +601,18 @@ function ns.SetHeaderPlayer(hover, header, name)
     hover:Show()
 end
 
+-- BYOM ("bring your own materials"): the tag a flagged listing wears in every buyer-facing
+-- row, explained in full on the item hover (see the shared c1 OnEnter).
+local BYOM_TAG = " |cffff8800[BYOM]|r"
+local BYOM_TIP = "BYOM: bring your own materials. The seller crafts this on request; you supply the mats."
+
 local function formatBuyRow(r, d)
     resetRow(r)
     -- every result is from an online seller (offline sellers can't respond); the item is
     -- implied by the search, so tag the row with the random-enchant suffix (if any)
     local tag = suffixTag(ns.search.itemID, d.suffix)
     tag = tag ~= "" and (" |cff888888" .. tag .. "|r") or ""
+    if d.byom then tag = tag .. BYOM_TAG; r.c1.byom = true end
     if d.self then
         -- our own offer, injected locally so we can see our price rank (#6): no point
         -- whispering or browsing ourselves, so left-click jumps to My Items to adjust.
@@ -638,6 +649,7 @@ local function formatMineRow(r, d)
     local parked = (d.qty or 0) <= 0   -- qty 0 = hidden from others, shown only here
     r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
     r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+    r.c1.byom = d.byom
     r.c1.tip = parked
         and "Parked (qty 0): hidden from others, only you see it. Edit and set a qty above 0 to go live. · Ctrl-click to find who else sells this"
         or "Ctrl-click to find who else sells this · shift-click to drop into your open chat message"
@@ -668,6 +680,12 @@ local function formatMineRow(r, d)
     end)
     r.track:Show(); r.track:SetChecked(d.track and true or false)
     r.track:SetScript("OnClick", function(self) ns.SetOfferTrack(d.key, self:GetChecked()) end)
+    -- BYOM checkbox only where the tag can mean something: an item this character can craft
+    -- (or a listing already flagged, so it can always be turned off)
+    if d.byom or (ns.Crafts and ns.Crafts.Knows(d.id)) then
+        r.byom:Show(); r.byom:SetChecked(d.byom and true or false)
+        r.byom:SetScript("OnClick", function(self) ns.SetOfferByom(d.key, self:GetChecked()) end)
+    end
     r.itemID = d.id
 end
 
@@ -695,7 +713,8 @@ local function formatSellerRow(r, d)
         end
     else
         r.icon:SetTexture(GetItemIcon(d.id)); r.icon:Show()
-        r.c1.fs:SetText(vLink(d.id, d.suffix) or vName(d.id, d.suffix))
+        r.c1.fs:SetText((vLink(d.id, d.suffix) or vName(d.id, d.suffix)) .. (d.byom and BYOM_TAG or ""))
+        r.c1.byom = d.byom
         r.c1.tip = "Ctrl-click to compare · Alt-click to request a COD · right-click to whisper"
         r.c1:SetScript("OnClick", function(_, button)
             if button == "RightButton" then whisperItem(d.seller, d.id, d.suffix, d.price, "WTB")
@@ -838,8 +857,9 @@ local function formatBrowseRow(r, d)
     applyValidTint(r, d.seller)
     local q, lvl = itemQualLevel(d.id, d.suffix)
     r.icon:SetTexture(GetItemIcon(d.id))
-    r.c1.fs:SetText(vName(d.id, d.suffix))
+    r.c1.fs:SetText(vName(d.id, d.suffix) .. (d.byom and BYOM_TAG or ""))
     r.c1.fs:SetTextColor(qualityRGB(q))
+    r.c1.byom = d.byom
     r.c1.itemLink = vLink(d.id, d.suffix)
     r.c1.tip = "Ctrl-click to find who else sells this · Alt-click to request a COD · right-click to whisper"
     r.c1:SetScript("OnClick", function(_, button)
@@ -982,7 +1002,7 @@ function ns.RefreshBuy()
     refreshList(currentTab == "BUY" and buyMode == "SEARCH", function()
         -- results are keyed by seller+variant; a seller can return several random-enchant variants
         for _, o in pairs(ns.search.results) do
-            view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self }
+            view[#view + 1] = { seller = o.seller, suffix = o.suffix or 0, qty = o.qty, price = o.price, loc = o.loc, self = o.self, byom = o.byom }
         end
         applyItemHeaderArrows(buySort, "Seller", false)
         sortItemView(view, buySort, function(d) return d.seller or "" end)
@@ -1014,7 +1034,7 @@ function ns.RefreshMine()
             if filter == "" or vName(id, suffix):lower():find(filter, 1, true) then
                 if (o.qty or 0) <= 0 then parked = (parked or 0) + 1 end
                 local cod = (o.track and ns.CODCommitted) and ns.CODCommitted(id, suffix) or 0
-                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, track = o.track, key = key, codHold = cod, q = (itemQualLevel(id, suffix)) }
+                view[#view + 1] = { id = id, suffix = suffix, qty = o.qty, price = o.price, track = o.track, byom = o.byom, key = key, codHold = cod, q = (itemQualLevel(id, suffix)) }
             end
         end
         applyItemHeaderArrows(mineSort, "Item", true)
@@ -1039,6 +1059,9 @@ function ns.RefreshMine()
         end
     end)
 end
+
+-- new recipes learned (a profession window was open): craftable rows may gain their BYOM box
+ns.On("crafts:learned", function() ns.RefreshMine() end)
 
 --========================================================================
 -- refresh: Sellers index (list of online sellers, client-side name filter)
@@ -1124,7 +1147,7 @@ function ns.RefreshSellerCatalog()
                 hasItems = true
                 local suffix = it.suffix or 0
                 if filter == "" or vName(it.id, suffix):lower():find(filter, 1, true) then
-                    view[#view + 1] = { kind = "item", id = it.id, suffix = suffix, qty = it.qty, price = it.price, seller = cat.seller, q = (itemQualLevel(it.id, suffix)) }
+                    view[#view + 1] = { kind = "item", id = it.id, suffix = suffix, qty = it.qty, price = it.price, seller = cat.seller, byom = it.byom, q = (itemQualLevel(it.id, suffix)) }
                 end
             end
             applyItemHeaderArrows(catalogSort, "Item", true)
@@ -1562,7 +1585,7 @@ function ns.RefreshBrowse()
         local slotOK = (not browseSel.slot) or ns.EquipSlot(o.id) == browseSel.slot   -- drop old sellers' over-replies
         if nameOK and lvlOK and slotOK then
             total = total + 1
-            browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, loc = o.loc, self = o.self, q = q, lvl = lvl }
+            browseView[#browseView + 1] = { id = o.id, suffix = o.suffix, qty = o.qty, price = o.price, seller = o.seller, loc = o.loc, self = o.self, byom = o.byom, q = q, lvl = lvl }
         end
     end
     local col, asc = browseSort.col, browseSort.asc
@@ -2142,6 +2165,9 @@ local function buildHeaders()
     -- column headers
     local function header(x) local fs = main:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); fs:SetPoint("TOPLEFT", x, -96); return fs end
     main.h1 = header(28); main.h2 = header(322); main.h3 = header(384); main.h4 = header(524)
+    -- BYOM column (My Items › Selling only): shown by the Selling chrome, hidden centrally
+    -- by setHeaderColumns on every layout pass
+    main.h5 = header(588); main.h5:SetText("BYOM"); main.h5:Hide()
 
     -- clickable overlays on the index Name/Count headers (Sellers and Buyers); shown only in
     -- the matching index view (see SetSellersView/SetBuyersView). Toggle asc/desc on repeat.
@@ -2243,6 +2269,7 @@ local function buildRows()
                 -- itemID does not, so prefer the link when we have one
                 if self.itemLink then GameTooltip:SetHyperlink(self.itemLink)
                 else GameTooltip:SetItemByID(self.itemID) end
+                if self.byom then GameTooltip:AddLine(BYOM_TIP, 1, 0.53, 0, true) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 -- on an offer/want row the column is a player: add their name + guild below the item
                 if self.player then
@@ -2348,7 +2375,21 @@ local function buildRows()
         end)
         r.track:SetScript("OnLeave", GameTooltip_Hide)
         r.track:Hide()
-        addRowHighlight(r, r.c1, r.x, r.edit, r.codEdit, r.codSend, r.noteBtn, r.findBtn, r.track)
+        -- "BYOM" column (My Items rows only): per-listing "bring your own materials" toggle,
+        -- under the h5 header. Only shown for items this character can craft (or listings
+        -- already flagged); wired per-row in formatMineRow.
+        r.byom = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+        r.byom:SetSize(24, 24); r.byom:SetPoint("LEFT", 584, 0)
+        r.byom:RegisterForClicks("LeftButtonUp")
+        r.byom:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText("BYOM: bring your own materials")
+            GameTooltip:AddLine("On: buyers see an orange [BYOM] tag on this listing telling them you craft it on request and they supply the mats.", 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        r.byom:SetScript("OnLeave", GameTooltip_Hide)
+        r.byom:Hide()
+        addRowHighlight(r, r.c1, r.x, r.edit, r.codEdit, r.codSend, r.noteBtn, r.findBtn, r.track, r.byom)
         r:Hide(); rows[i] = r
     end
 end
@@ -2494,6 +2535,7 @@ local function buildBrowse()
         r.c1:SetScript("OnEnter", function(self)
             if self.itemLink then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetHyperlink(self.itemLink)
+                if self.byom then GameTooltip:AddLine(BYOM_TIP, 1, 0.53, 0, true) end
                 if self.tip then GameTooltip:AddLine(self.tip, 0.6, 0.6, 0.6, true) end
                 GameTooltip:Show()
             end
@@ -2580,6 +2622,8 @@ local function buildPostPanel()
     -- forward decl: defined once the qty box + "Follow my bags" checkbox exist below. Mirrors
     -- the checkbox onto the qty box (fills the live bag count and greys it out while tracking).
     local applyTrack
+    -- forward decl: gates the BYOM checkbox on "this character can craft the drafted item".
+    local applyByom
 
     local slot = CreateFrame("Button", "GuildFoundMarketSlot", panel, "ItemButtonTemplate")
     slot:SetPoint("LEFT", 4, 0); slot:SetSize(36, 36)
@@ -2600,6 +2644,7 @@ local function buildPostPanel()
             ns.ItemDB.Learn(id)
             SetItemButtonTexture(slot, GetItemIcon(id)); SetItemButtonCount(slot, GetItemCount(id, true))
             if applyTrack then applyTrack() end   -- a tracked new offer shows the live bag count
+            if applyByom then applyByom() end     -- open or close the BYOM gate for this item
         end
     end
     slot:SetScript("OnClick", setDraft); slot:SetScript("OnReceiveDrag", setDraft)
@@ -2662,6 +2707,45 @@ local function buildPostPanel()
         if not editingKey then trackCheck:SetChecked(ns.GetSetting("trackDefault") and true or false); applyTrack() end
     end)
 
+    -- BYOM ("bring your own materials"): marks a craftable made on request, the buyer supplies
+    -- the mats. Only offered for items this character can craft (ns.Crafts learns them whenever
+    -- a profession window is open), which keeps the tag off dropped/farmed items where it would
+    -- be meaningless. Editing a listing that already carries the flag keeps the box enabled so
+    -- it can always be turned off, even if the recipe set is stale.
+    local byomCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+    byomCheck:SetPoint("BOTTOMLEFT", 440, 6); byomCheck:SetSize(26, 26)
+    main.byomCheck = byomCheck
+    local byomLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    byomLabel:SetPoint("LEFT", byomCheck, "RIGHT", 2, 1); byomLabel:SetText("BYOM")
+    byomCheck:SetHitRectInsets(0, -(byomLabel:GetStringWidth() + 6), 0, 0)
+    byomCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("BYOM: bring your own materials")
+        GameTooltip:AddLine("For a craftable you make on request: buyers see an orange [BYOM] tag on this listing telling them to supply the materials.", 1, 1, 1, true)
+        if not self:IsEnabled() then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("Only available on items this character can craft.", 1, 0.53, 0, true)
+            if not (ns.Crafts and ns.Crafts.HasAny()) then
+                GameTooltip:AddLine("Open your profession window once so your recipes are known.", 0.8, 0.8, 0.8, true)
+            end
+        end
+        GameTooltip:Show()
+    end)
+    byomCheck:SetScript("OnLeave", GameTooltip_Hide)
+
+    -- Enable the checkbox only when the drafted item is craftable by this character; an edit
+    -- of a listing already flagged BYOM stays enabled (see above). Greys the label with it.
+    function applyByom(keepChecked)
+        local can = draft.itemID and ns.Crafts and ns.Crafts.Knows(draft.itemID) or false
+        if keepChecked then can = true end
+        if can then byomCheck:Enable(); byomLabel:SetTextColor(1, 1, 1)
+        else byomCheck:SetChecked(false); byomCheck:Disable(); byomLabel:SetTextColor(0.5, 0.5, 0.5) end
+    end
+    applyByom()   -- initial state: no draft item yet, so disabled
+    -- new recipes learned while the panel is open (a profession window was opened): the gate
+    -- may open for the drafted item; keep the current tick if it was already allowed
+    ns.On("crafts:learned", function() applyByom(byomCheck:GetChecked()) end)
+
     -- The input accepts BOTH notations (parsePrice reads coins and decimal alike), same as the
     -- WTB field. The priceFormat setting only chooses the FILL format: the example in the label,
     -- the edit prefill (priceToStr), and reformatting the current value when the setting changes.
@@ -2689,6 +2773,7 @@ local function buildPostPanel()
         qtyBox:SetText("1"); priceBox:SetText("")
         trackCheck:SetChecked(ns.GetSetting("trackDefault") and true or false)
         applyTrack()
+        applyByom()
         offerBtn:SetText("Offer")
     end
 
@@ -2696,10 +2781,11 @@ local function buildPostPanel()
     local function submitOffer()
         local qty, price = tonumber(qtyBox:GetText()) or 1, parsePrice(priceBox:GetText())
         local track = trackCheck:GetChecked() and true or false
+        local byom = byomCheck:GetChecked() and true or false
         if editingKey then
-            -- editing only changes qty/price/track; the item/variant stays the listing's own
-            if ns.EditOffer(editingKey, qty, price, track) then clearDraft() end
-        elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price, track) then
+            -- editing only changes qty/price/track/byom; the item/variant stays the listing's own
+            if ns.EditOffer(editingKey, qty, price, track, byom) then clearDraft() end
+        elseif ns.AddOffer(draft.itemID, draft.suffix or 0, qty, price, track, byom) then
             clearDraft()
         end
     end
@@ -2722,6 +2808,8 @@ local function buildPostPanel()
         priceBox:SetText(priceToStr(o.price))
         trackCheck:SetChecked(o.track and true or false)
         applyTrack()   -- if tracked, greys the qty box and shows the live bag count
+        applyByom(o.byom and true or false)   -- an already-flagged listing stays editable
+        byomCheck:SetChecked(o.byom and true or false)
         offerBtn:SetText("Update")
         priceBox:SetFocus(); priceBox:HighlightText()   -- price is the field most edits change
     end
@@ -3472,6 +3560,7 @@ local function buildWTB()
             main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText("COD"); main.h4:SetText("Buyer")
         else
             main.h1:SetText("Item"); main.h2:SetText("Qty"); main.h3:SetText(wtb and "Price" or "Price/unit"); main.h4:SetText(wtb and "" or "Bag sync")
+            main.h5:SetShown(selling)
         end
         updateCODBadge()
         updateSharedSortHeaders()

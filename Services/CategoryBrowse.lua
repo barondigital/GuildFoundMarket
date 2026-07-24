@@ -49,7 +49,7 @@ function ns.BrowseCategory(classID, subClassID, slot)
         local cid, sub = itemCategory(it.id)
         if cid == classID and sub == subClassID and (not slot or ns.EquipSlot(it.id) == slot) then
             ns.browseResults[ns.playerName .. "#" .. it.id .. "#" .. it.suffix] =
-                { seller = ns.playerName, id = it.id, suffix = it.suffix, qty = it.qty, price = it.price, loc = ns.LiveLoc(), self = true }
+                { seller = ns.playerName, id = it.id, suffix = it.suffix, qty = it.qty, price = it.price, loc = ns.LiveLoc(), self = true, byom = it.byom }
         end
     end
     if ns.RefreshBrowse then ns.RefreshBrowse() end
@@ -101,7 +101,8 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
         local function flush(more) ns.EnqueueWhisper(("QR~%s~%d~%s~%s~%s~%s"):format(qid, more, buf, guild, loc, valid), sender); buf = "" end
         for i = 1, #matches do
             local it = matches[i]
-            local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix)   -- id:qty:price:suffix (suffix last)
+            -- id:qty:price:suffix, plus ":1" only on a BYOM listing (append-only, see the catalog)
+            local p = ("%d:%d:%d:%d"):format(it.id, it.qty, it.price, it.suffix) .. (it.byom and ":1" or "")
             if #buf + #p + 1 > 150 then flush(1) end
             buf = (buf == "") and p or (buf .. ";" .. p)
         end
@@ -110,7 +111,7 @@ ns.OnMessage("QC", function(a, b, c, d, e, _, sender)
     ns.Log(("answered %s's category browse (%d match(es))"):format(Ambiguate(sender, "short"), #matches))
 end)
 
--- QR~qid~more~rows~guild~loc~valid: a category browse reply chunk (rows are id:qty:price:suffix;...).
+-- QR~qid~more~rows~guild~loc~valid: a category browse reply chunk (rows are id:qty:price:suffix[:byom];...).
 ns.OnMessage("QR", function(a, _, c, d, e, f, sender)
     if a ~= activeQCid then return end
     local s = Ambiguate(sender, "short")
@@ -118,12 +119,12 @@ ns.OnMessage("QR", function(a, _, c, d, e, f, sender)
     ns.NoteValid(sender, f)
     local loc = e or ""
     for chunk in (c or ""):gmatch("[^;]+") do
-        local id, qty, price, suffix = strsplit(":", chunk)
+        local id, qty, price, suffix, byom = strsplit(":", chunk)
         id = tonumber(id)
         if id then
             local sfx = tonumber(suffix) or 0
             ns.browseResults[s .. "#" .. id .. "#" .. sfx] =
-                { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0, loc = loc }
+                { seller = s, id = id, suffix = sfx, qty = tonumber(qty) or 0, price = tonumber(price) or 0, loc = loc, byom = byom == "1" or nil }
             ns.ItemDB.Learn(id)
         end
     end

@@ -21,6 +21,7 @@ Services\Verified.lua
 Services\Version.lua
 Services\Changelog.lua
 Services\Stock.lua
+Services\Crafts.lua
 Services\Offers.lua
 Services\Wants.lua
 Services\CODOrders.lua

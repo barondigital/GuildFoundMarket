@@ -35,7 +35,7 @@ function ns.Search(itemID)
         if it.id == itemID then
             mineCount = mineCount + 1
             ns.search.results[ns.playerName .. "#" .. it.suffix] =
-                { seller = ns.playerName, suffix = it.suffix, qty = it.qty, price = it.price, loc = ns.LiveLoc(), self = true }
+                { seller = ns.playerName, suffix = it.suffix, qty = it.qty, price = it.price, loc = ns.LiveLoc(), self = true, byom = it.byom }
         end
     end
     if mineCount == 0 and ns.selfTest then
@@ -72,9 +72,9 @@ ns.OnMessage("Q", function(a, b, c, _, _, _, sender)
     local answered = 0
     for _, it in ipairs(ns.OfferList()) do
         if it.id == itemID then
-            -- guild + valid flag appended last (7th/8th field) so older clients read suffix at
-            -- field 6 unchanged and drop the tail
-            ns.EnqueueWhisper(("R~%s~%d~%d~%d~%s~%d~%s~%s"):format(a, it.id, it.qty, it.price, ns.LiveLoc(), it.suffix, ns.MyGuild() or "", ns.MyValidFlag()), sender)
+            -- guild + valid flag + byom appended last (7th/8th/9th field) so older clients read
+            -- suffix at field 6 unchanged and drop the tail
+            ns.EnqueueWhisper(("R~%s~%d~%d~%d~%s~%d~%s~%s~%s"):format(a, it.id, it.qty, it.price, ns.LiveLoc(), it.suffix, ns.MyGuild() or "", ns.MyValidFlag(), it.byom and "1" or ""), sender)
             answered = answered + 1
         end
     end
@@ -83,15 +83,16 @@ ns.OnMessage("Q", function(a, b, c, _, _, _, sender)
     end
 end)
 
--- R~qid~itemID~qty~price~loc~suffixID~guild~valid: an offer in reply to our search (suffix LAST
--- so 0.6.0 clients read qty/price/loc correctly; guild then valid appended for the same reason).
-ns.OnMessage("R", function(a, b, c, d, e, f, sender, g, h)
+-- R~qid~itemID~qty~price~loc~suffixID~guild~valid~byom: an offer in reply to our search (suffix
+-- LAST so 0.6.0 clients read qty/price/loc correctly; guild, valid then byom appended for the
+-- same reason).
+ns.OnMessage("R", function(a, b, c, d, e, f, sender, g, h, i)
     if a ~= activeQid or tonumber(b) ~= ns.search.itemID then return end
     local suffix = tonumber(f) or 0
     local s = Ambiguate(sender, "short")
     ns.NoteGuild(sender, g)
     ns.NoteValid(sender, h)
-    ns.search.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "" }
+    ns.search.results[s .. "#" .. suffix] = { seller = s, suffix = suffix, qty = tonumber(c) or 0, price = tonumber(d) or 0, loc = e or "", byom = i == "1" or nil }
     ns.ItemDB.Learn(tonumber(b))
     ns.Log(("  offer from %s: %sx @ %sc (%+.1fs)"):format(s, tostring(c), tostring(d), GetTime() - (ns.search.start or GetTime())))
     if ns.RefreshBuySoon then ns.RefreshBuySoon() end

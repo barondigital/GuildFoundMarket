@@ -14,6 +14,8 @@
 --   * the Guild Found valid flag rides QR appended LAST (after guild + loc), so 0.19
 --     and older clients read every earlier field unchanged; without FreshSoD the field
 --     is empty and a missing/empty flag never poisons the receiver's cache.
+--   * the BYOM flag rides a QR row as an appended 5th column on flagged listings ONLY,
+--     so unflagged rows stay byte-identical and old clients drop the extra column.
 
 local failures = 0
 local function check(name, cond)
@@ -128,13 +130,14 @@ local function reset() sentWhispers = {} end
 do
     local got
     ns.OnMessage("ZZ", function(...) got = { ... } end)
-    ns.DispatchMessage("ZZ~A~B~C~D~E~F~G~H", "Sender-Realm")
+    ns.DispatchMessage("ZZ~A~B~C~D~E~F~G~H~I", "Sender-Realm")
     check("dispatch maps a..f positionally", got[1] == "A" and got[6] == "F")
     check("dispatch keeps sender in the 7th slot", got[7] == "Sender-Realm")
     check("dispatch delivers the 7th wire field (G) as the 8th arg", got[8] == "G")
     check("dispatch delivers the 8th wire field (H) as the 9th arg", got[9] == "H")
+    check("dispatch delivers the 9th wire field (I) as the 10th arg", got[10] == "I")
     ns.DispatchMessage("ZZ~A", "S")
-    check("dispatch leaves missing fields nil", got[2] == nil and got[8] == nil and got[9] == nil)
+    check("dispatch leaves missing fields nil", got[2] == nil and got[8] == nil and got[10] == nil)
 end
 
 --========================================================================
@@ -234,6 +237,33 @@ do
     check("QC keeps class/sub before ver (old clients read these)", cmd == "QC" and class == "4" and sub == "1")
     check("QC keeps ver at field 4", ver == "0.10.0")
     check("QC appends slot last", slot == "INVTYPE_HEAD")
+end
+
+--========================================================================
+-- 8. BYOM flag: appended 5th row column on flagged listings only, both directions
+--========================================================================
+do
+    -- seller side: only the flagged listing's row grows a ":1" tail
+    reset()
+    local plainOfferList = ns.OfferList
+    ns.OfferList = function()
+        return {
+            { id = 101, qty = 1, price = 8000, suffix = 0, byom = true },
+            { id = 102, qty = 1, price = 9000, suffix = 0 },
+        }
+    end
+    ns.DispatchMessage("QC~q1~4~1~0.10.0~INVTYPE_CHEST", "Buyer-Realm")
+    local rows = select(4, strsplit("~", sentWhispers[1].msg))
+    check("BYOM listing's row appends :1", rows:find("101:1:8000:0:1", 1, true) ~= nil)
+    check("unflagged listing's row stays byte-identical", rows:find("102:1:9000:0;", 1, true) or rows:find("102:1:9000:0$") ~= nil)
+    ns.OfferList = plainOfferList
+
+    -- buyer side: the 5th column parses into byom; its absence stays nil (old seller)
+    ns.BrowseCategory(4, 1)
+    local qid = sentBroadcasts[#sentBroadcasts]:gsub("^" .. ns.CHAT_TAG, ""):match("^QC~([^~]+)")
+    ns.DispatchMessage(("QR~%s~0~101:1:8000:0:1;102:1:9000:0~Guild~Loc~"):format(qid), "Seller-Realm")
+    check("row with 5th column parses byom=true", ns.browseResults["Seller#101#0"].byom == true)
+    check("row without 5th column leaves byom nil", ns.browseResults["Seller#102#0"].byom == nil)
 end
 
 io.write(failures == 0 and "\nAll protocol compat checks passed.\n"
