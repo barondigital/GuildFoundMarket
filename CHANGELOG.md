@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.22.1
+
+- **Shift-click into the search box works again on client 1.15.9.** The update moved
+  Blizzard's shift-click paths (bags, character tab, chat links) onto `ChatFrameUtil.InsertLink`;
+  the old global GFM hooked survives only as an alias nobody calls, so the hook silently never
+  fired. GFM now hooks both paths, fixing shift-click into the Buy/Buyers search box and into
+  the shop note box.
+- **No more stack-split popup on a consumed shift-click.** When the search box, Browse filter
+  or note box takes a shift-clicked stackable bag item, the stack-split dialog Blizzard's bag
+  handler falls through to is closed immediately, since the click was meant as a link.
+- **Shift-click fills the Browse filter too.** With the Browse filter focused, shift-clicking
+  an item inserts its name (names are what the filter matches), pre-selected so typing
+  replaces it.
+- **The Buy tab auto-focuses its input.** Entering the tab or switching sub-mode puts the
+  cursor in the search box (Search) or the name filter (Browse), with existing text
+  pre-selected. Picking an item still releases focus, so movement keys stay free after a pick.
+
 ## 0.22.0
 
 - **BYOM: mark a craftable as "bring your own materials".** A seller who crafts on request can

@@ -20,9 +20,10 @@ local ADDON, ns = ...
 -- newlines encoded, so it survives the tilde-delimited wire and the chat transport.
 --========================================================================
 
-ns.CHANGELOG = [[Guild Found Market 0.22.0
-Adds BYOM tags for craft-on-request listings (buyer brings the materials) and a Browse that opens straight on the category of the item you searched
+ns.CHANGELOG = [[Guild Found Market 0.22.1
+Fixes shift-clicking an item into the search box on client 1.15.9; the 0.22 line adds BYOM tags for craft-on-request listings and a Browse that opens on your searched item's category
 
+- Fixed for client 1.15.9: shift-clicking an item into the Buy/Buyers search box (or the shop note box) works again, and no stack-split popup appears when GFM takes the click. Shift-click also fills the Browse name filter now, and the Buy tab auto-focuses its search or filter box.
 - BYOM (bring your own materials): craft-on-request sellers can flag a listing so buyers see an orange [BYOM] tag in search results, category browse and shop catalogs, with a tooltip explaining the buyer supplies the mats. Set it in the compose panel or in the new BYOM column on My Items next to Bag sync. Only offered on items your character can craft; open each profession window once so GFM learns your recipes. Older clients interoperate unchanged.
 - Browse jumps to your searched item: searching an item on Buy and clicking Browse lands on that item's own category (and armor slot), sidebar expanded and query fired, once per search. The new option "Browse filters on your searched item" (default on) also pre-fills the name filter with the item; off lands on the full category unfiltered.]]
 

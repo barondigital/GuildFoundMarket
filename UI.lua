@@ -358,6 +358,9 @@ local function selectSearchItem(id, name)
     if not main then return end
     selectedSearchID = id
     lastBrowseJumpItem = nil   -- a fresh search re-arms the Browse auto-jump for this item
+    -- switch modes BEFORE writing the box: setBuyMode auto-focuses the search box on entering
+    -- the Search view, and a picked item wants the focus cleared (the ClearFocus below wins)
+    if currentTab ~= "BUYERS" and setBuyMode and buyMode ~= "SEARCH" then setBuyMode("SEARCH") end
     main.searchBox:SetText(name or itemName(id)); main.searchBox:SetCursorPosition(0); main.searchBox:ClearFocus()
     main.ac:Hide()
     if currentTab == "BUYERS" then   -- the same picker, but it finds buyers of the item
@@ -365,7 +368,6 @@ local function selectSearchItem(id, name)
         if ns.FindBuyersForItem then ns.FindBuyersForItem(id) end
         return
     end
-    if setBuyMode and buyMode ~= "SEARCH" then setBuyMode("SEARCH") end   -- a picked search item always lands in the Search view
     ns.Search(id)
 end
 
@@ -602,6 +604,30 @@ function ns.SetHeaderPlayer(hover, header, name)
     hover.player = name
     hover:SetWidth(math.max(1, header:GetStringWidth() or 1))
     hover:Show()
+end
+
+-- Run `fn(link)` after every chat-link insert. Client 1.15.9 moved the chat code into
+-- mixins: Blizzard's own shift-click paths (bags, character tab, chat links, ...) now call
+-- ChatFrameUtil.InsertLink, and the old global ChatEdit_InsertLink survives only as a
+-- deprecated alias other addons may still call. Hook both; a single insert only ever passes
+-- through one of them (the alias captured the original function, not the hooked table slot).
+local function hookInsertLink(fn)
+    if type(ChatFrameUtil) == "table" and type(ChatFrameUtil.InsertLink) == "function" then
+        hooksecurefunc(ChatFrameUtil, "InsertLink", fn)
+    end
+    if type(ChatEdit_InsertLink) == "function" then
+        hooksecurefunc("ChatEdit_InsertLink", fn)
+    end
+end
+
+-- When a GFM box consumes a shift-click on a stackable bag item, Blizzard's bag handler
+-- still falls through to the stack-split dialog: it skips the split only when the insert
+-- reported success, and a post-hook cannot change that return value. The dialog opens right
+-- after our hook ran, so cancel it one frame later, and only when we actually took the click.
+local function cancelPendingStackSplit()
+    C_Timer.After(0, function()
+        if StackSplitFrame and StackSplitFrame:IsShown() then StackSplitFrame:Hide() end
+    end)
 end
 
 -- BYOM ("bring your own materials"): the tag a flagged listing wears in every buyer-facing
@@ -1700,9 +1726,11 @@ setBuyMode = function(mode)
             main.browseFilter:SetText(ns.GetSetting("browseFilterSearched") and itemName(ns.search.itemID) or "")
         end
         ns.RefreshSidebar(); ns.RefreshBrowse()
+        main.browseFilter:SetFocus(); main.browseFilter:HighlightText()
     else
         for i = 1, ROWS do browseRows[i]:Hide() end    -- clear the browse table's rows
         ns.RefreshBuy()
+        main.searchBox:SetFocus(); main.searchBox:HighlightText()
     end
 end
 
@@ -2157,13 +2185,22 @@ local function buildAutocomplete()
     end
 
     -- broad shift-click support: chat links, bags, character tab, merchant, AtlasLoot…
-    -- all funnel through ChatEdit_InsertLink. Capture it when our search box is focused.
+    -- all funnel through the insert-link path. Capture it when our search box is focused.
     if not ns._linkHooked then
         ns._linkHooked = true
-        hooksecurefunc("ChatEdit_InsertLink", function(link)
-            if not (main and main:IsShown() and (currentTab == "BUY" or currentTab == "BUYERS") and main.searchBox and main.searchBox:HasFocus()) then return end
+        hookInsertLink(function(link)
+            if not (main and main:IsShown()) then return end
             local id = link and tonumber(tostring(link):match("Hitem:(%d+)"))
-            if id then ns.ItemDB.Learn(id); selectSearchItem(id) end
+            if not id then return end
+            if (currentTab == "BUY" or currentTab == "BUYERS") and main.searchBox and main.searchBox:HasFocus() then
+                ns.ItemDB.Learn(id); selectSearchItem(id); cancelPendingStackSplit()
+            elseif currentTab == "BUY" and main.browseFilter and main.browseFilter:HasFocus() then
+                -- the Browse filter matches item NAMES, so insert the clicked item's name,
+                -- not the raw link (its escape codes would never match anything)
+                ns.ItemDB.Learn(id)
+                main.browseFilter:SetText(itemName(id)); main.browseFilter:HighlightText()
+                cancelPendingStackSplit()
+            end
         end)
     end
     main.searchBox:SetScript("OnTextChanged", function(self, user)
@@ -2677,13 +2714,14 @@ local function buildPostPanel()
     noteBox:SetScript("OnLeave", GameTooltip_Hide)
     -- Shift-click an item anywhere to drop its link into the note (buyers see the items you sell).
     -- Honour the 240-byte cap: refuse a link that won't fit rather than letting it be silently cut.
-    hooksecurefunc("ChatEdit_InsertLink", function(link)
+    hookInsertLink(function(link)
         if link and noteBox:HasFocus() then
             if #(noteBox:GetText() or "") + #link > 240 then
                 ns.Feedback("That item link won't fit in your shop note.", true)
             else
                 noteBox:Insert(link)
             end
+            cancelPendingStackSplit()   -- the click was meant as a link, not a split
         end
     end)
     main.noteBox = noteBox
